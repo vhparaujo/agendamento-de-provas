@@ -110,7 +110,23 @@ como opção alternativa secundária; o padrão é manual.
 - **CAMPUS→polo**: casa com `Polo.nome` por string exata (mesma origem do seed).
 
 Todo upload registra auditoria (`ImportacaoCsv`: tipo, arquivo, linhas, quem, quando).
-Importação **idempotente** (upsert por matrícula/orgUnitId; re-subir não duplica).
+Importação **idempotente**: upsert por `[matricula, curso]` (alunos) e `orgUnitId`
+(turmas). Re-subir o mesmo arquivo atualiza, nunca duplica.
+
+**Endpoints** (todos exigem JWT de admin):
+- `POST /api/importacao/alunos` — multipart: `arquivo` (.csv) + `modalidade`
+  (`EAD|SEMI|MODULAR|PRESENCIAL`, o dropdown da aba de origem)
+- `POST /api/importacao/turmas` — multipart: `arquivo`
+- `GET /api/importacao` — histórico de auditoria
+
+**Linha rejeitada não interrompe a importação.** O resto entra e a resposta traz
+`rejeitadas[]` (nº da linha, RA, motivo), `statusDesconhecidos[]` e
+`polosNaoEncontrados[]`. Nada é descartado em silêncio — mas nada é inventado
+também: sem CAMPUS não há como definir o polo, e polo é obrigatório para alocar
+sala. O admin corrige a planilha e reenvia.
+
+**Encoding é detectado, não presumido**: latin1 (arquivos atuais) ou UTF-8/BOM
+(se a planilha for reexportada). Ler errado quebraria o casamento do polo por nome.
 
 **Turmas vazias = comportamento seguro.** Enquanto não houver turmas importadas, o
 default é **bloquear agendamento** (não liberar prova para disciplina errada),

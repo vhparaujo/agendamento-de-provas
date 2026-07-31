@@ -7,6 +7,8 @@ import { AppService } from './app.service';
 import { AuthModule } from './auth/module/auth.module';
 import { validateEnv } from './config/env.validation';
 import { PrismaModule } from './database/prisma.module';
+import { ImportacaoModule } from './importacao/module/importacao.module';
+import { TurmaModule } from './turma/module/turma.module';
 
 @Module({
   imports: [
@@ -19,6 +21,8 @@ import { PrismaModule } from './database/prisma.module';
     AuthModule,
     AdminModule,
     AlunoModule,
+    ImportacaoModule,
+    TurmaModule,
   ],
   controllers: [AppController],
   providers: [AppService],
