@@ -1,0 +1,372 @@
+// ============================================================================
+// schema.prisma — Portal de Agendamento de Provas (UCB)
+// ============================================================================
+// Fonte de verdade da modelagem. DTOs, services e controllers derivam daqui.
+//
+// FLUXO DO ALUNO:
+// - Entra via LTI 1.3 (sem senha). A matricula chega no launch.
+// - Matricula cruza com AlunoImportado (CSV) -> modalidade + polo.
+// - Ve as FAIXAS (horarios) do polo dele que tenham vaga para a modalidade dele.
+// - As disciplinas agendaveis = disciplinas do aluno na Valence ∩ TurmaImportada
+//   (3o CSV de turmas reais com prova). NAO sao todas as disciplinas do aluno.
+// - Escolhe UMA faixa. O sistema aloca numa sala daquela faixa+modalidade,
+//   preenchendo em ordem (enche uma sala antes da proxima).
+// - A reserva vale para TODAS as disciplinas agendaveis dele.
+//
+// MODELO DE SALAS/FAIXAS/MODALIDADE (nucleo):
+// - Sala e FISICA e NEUTRA: polo + nome + capacidade. Sem modalidade fixa.
+// - Faixa e um HORARIO NEUTRO: polo + data + horaInicio + horaFim. Sem modalidade.
+// - SalaFaixa liga Sala + Faixa + Modalidade + vagas. A MODALIDADE VIVE AQUI.
+//   Uma sala fisica pode ser Presencial numa faixa e EaD em outra; dentro de
+//   uma faixa ela fica travada numa modalidade. Admin monta isso ao criar a faixa.
+//
+// CADASTRO:
+// - Polos    -> SEED (prisma/seed-polos.ts), extraidos do CSV de alunos.
+//               Nome unico = chave de casamento. Populam o dropdown de salas.
+// - Salas    -> CADASTRO MANUAL pelo admin (nome + capacidade + polo via dropdown).
+//               Import por CSV existe so como opcao alternativa secundaria.
+// - Alunos   -> CSV. RA=matricula, ALUNO=nome, CURSO=curso (exibicao),
+//               STATUS CURSO=ativo (so "Ativo" agenda), CAMPUS=polo.
+//               Modalidade vem do dropdown no upload (aba EaD/Semi/Hibrido).
+// - Turmas   -> CSV. Turmas/disciplinas reais que TERAO prova. Filtro final.
+//
+// PERIODO DE AGENDAMENTO:
+// - Admin abre/fecha e define dataFechamento (fecha so por data/hora).
+// - Linha do tempo do agendamento != datas das provas (faixas).
+// ============================================================================
+
+// NOTA (Prisma 7): o generator `prisma-client-js` foi substituido pelo generator
+// `prisma-client` (rust-free), que exige `output` explicito. O client gerado vai
+// para src/generated/prisma e NAO e versionado (ver .gitignore).
+// A conexao MySQL usa o driver adapter @prisma/adapter-mariadb (obrigatorio no v7),
+// configurado em src/database/prisma.service.ts a partir de DATABASE_URL.
+// importFileExtension = "js" e OBRIGATORIO aqui: sem isso o Prisma infere a
+// extensao a partir do tsconfig presente no momento do generate, e gera imports
+// ".ts" quando roda em um contexto sem tsconfig (o build do Docker) — o que quebra
+// o require() no dist compilado. Fixar torna o generate deterministico.
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "cjs"
+  importFileExtension = "js"
+}
+
+// A URL de conexao NAO fica mais aqui (Prisma 7): o CLI a le de prisma.config.ts
+// e o runtime a recebe via driver adapter. Fonte unica: DATABASE_URL no .env.
+datasource db {
+  provider = "mysql"
+}
+
+// ----------------------------------------------------------------------------
+// AUTENTICACAO ADMIN
+// ----------------------------------------------------------------------------
+
+model Admin {
+  id                 String    @id @default(uuid())
+  email              String    @unique
+  senhaHash          String
+  nome               String?
+  ativo              Boolean   @default(true)
+  mustChangePassword Boolean   @default(false) // seed e reset setam true
+  resetToken         String?
+  resetTokenExpiry   DateTime?
+  ultimoLogin        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@map("admin")
+}
+
+// ----------------------------------------------------------------------------
+// MODALIDADE (duracao da prova)
+// ----------------------------------------------------------------------------
+// Uma modalidade por aluno. Ex: EaD=180min, Semi/Modular=90min, Presencial=120min.
+
+model Modalidade {
+  id             Int    @id @default(autoincrement())
+  codigo         String @unique // EAD | SEMI | MODULAR | PRESENCIAL
+  nome           String
+  duracaoMinutos Int
+
+  alunos     AlunoImportado[]
+  salaFaixas SalaFaixa[]
+
+  @@map("modalidade")
+}
+
+// ----------------------------------------------------------------------------
+// POLO / SALA (estrutura fisica) — sala e NEUTRA (sem modalidade)
+// ----------------------------------------------------------------------------
+
+// Polos sao populados por SEED (prisma/seed-polos.ts) a partir dos nomes
+// distintos da coluna CAMPUS do CSV de alunos. O nome e UNICO e serve de chave
+// de casamento: tanto o seed quanto o import de alunos usam a mesma string.
+// No cadastro de Sala, o admin escolhe o Polo por dropdown (populado daqui).
+model Polo {
+  id     Int     @id @default(autoincrement())
+  nome   String  @unique // igual ao valor bruto do CSV de alunos
+  cidade String?
+  ativo  Boolean @default(true)
+
+  salas  Sala[]
+  faixas Faixa[]
+  alunos AlunoImportado[]
+
+  @@map("polo")
+}
+
+model Sala {
+  id         Int     @id @default(autoincrement())
+  poloId     Int
+  nome       String // "LAB 203", "M114"
+  capacidade Int // vagas fisicas; default das vagas em SalaFaixa
+  ativo      Boolean @default(true)
+
+  polo       Polo        @relation(fields: [poloId], references: [id])
+  salaFaixas SalaFaixa[]
+
+  @@index([poloId])
+  @@map("sala")
+}
+
+// ----------------------------------------------------------------------------
+// FAIXA (horario neutro que o admin abre) — ligada ao POLO, SEM modalidade
+// ----------------------------------------------------------------------------
+
+model Faixa {
+  id         Int      @id @default(autoincrement())
+  poloId     Int
+  data       DateTime @db.Date
+  horaInicio String // "08:30"
+  horaFim    String // "11:30"
+  ativo      Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  polo       Polo        @relation(fields: [poloId], references: [id])
+  salaFaixas SalaFaixa[]
+
+  @@index([poloId])
+  @@index([data])
+  @@map("faixa")
+}
+
+// ----------------------------------------------------------------------------
+// SALA_FAIXA (NUCLEO) — Sala + Faixa + Modalidade + vagas
+// ----------------------------------------------------------------------------
+// A modalidade e a vaga vivem AQUI. Uma sala fisica travada numa modalidade
+// dentro de uma faixa; livre para outra modalidade em outra faixa.
+// ordem = sequencia de preenchimento (enche a de menor ordem primeiro).
+// vagas = capacidade daquela sala nessa oferta (default = Sala.capacidade).
+
+model SalaFaixa {
+  id           Int @id @default(autoincrement())
+  salaId       Int
+  faixaId      Int
+  modalidadeId Int
+  vagas        Int // capacidade desta sala nesta faixa
+  ordem        Int // ordem de preenchimento dentro da faixa+modalidade
+
+  sala         Sala          @relation(fields: [salaId], references: [id])
+  faixa        Faixa         @relation(fields: [faixaId], references: [id])
+  modalidade   Modalidade    @relation(fields: [modalidadeId], references: [id])
+  agendamentos Agendamento[]
+
+  @@unique([salaId, faixaId]) // uma sala so entra uma vez por faixa (1 modalidade)
+  @@unique([faixaId, modalidadeId, ordem]) // ordem unica por faixa+modalidade
+  @@index([faixaId, modalidadeId]) // query: salas de uma modalidade numa faixa
+  @@map("sala_faixa")
+}
+
+// ----------------------------------------------------------------------------
+// ALUNO IMPORTADO (CSV) — fonte de verdade de modalidade + polo
+// ----------------------------------------------------------------------------
+// NAO e conta com senha. Reconhecido via LTI e cruzado por matricula.
+
+// Campos vindos do CSV de alunos:
+//   RA           -> matricula (chave de cruzamento com o launch LTI)
+//   ALUNO        -> nome
+//   CURSO        -> curso (SO EXIBICAO; nao entra em nenhuma regra/filtro)
+//   STATUS CURSO -> ativo (true so quando "Ativo"; inativos nao agendam)
+//   CAMPUS       -> polo (casa com Polo.nome por string exata)
+//   modalidade   -> escolhida pelo admin no dropdown do upload (aba EaD/Semi/Hibrido)
+// UM REGISTRO POR VINCULO (aluno + curso), nao por aluno.
+// Decisao de 30/07/2026: um mesmo RA pode estar em dois cursos ao mesmo tempo
+// (ex: Pedagogia/EaD e Psicologia/Hibrido) e precisa fazer as provas dos dois.
+// Como a modalidade — e portanto a duracao da prova — vem do curso, cada vinculo
+// e uma linha propria, com sua modalidade e seu polo.
+// Por isso `curso` deixou de ser "so exibicao" e virou parte da chave; e por isso
+// `matricula` sozinha NAO e mais unica.
+// No launch LTI, um RA com mais de um vinculo faz o portal perguntar de qual
+// curso e a prova; cada vinculo gera seu proprio agendamento.
+model AlunoImportado {
+  id           Int     @id @default(autoincrement())
+  matricula    String // RA (alfanumerico: "0009552430", "A06103080", "UC25426847")
+  nome         String?
+  email        String? // EMAIL INSTITUCIONAL (alguns vazios)
+  curso        String // CURSO — exibicao E parte da chave do vinculo
+  // Valor BRUTO da coluna STATUS CURSO, guardado como veio no CSV. Existe para
+  // que a regra de elegibilidade possa mudar sem reimportar as planilhas.
+  statusCurso  String
+  // Derivado de statusCurso pela lista em src/enums/status-curso.enum.ts.
+  // "ativo" aqui significa PODE AGENDAR — nao e o mesmo que STATUS CURSO=="Ativo":
+  // Transf. Interna, Transf. de Curriculo e Alter. de Habilitacao tambem entram.
+  ativo        Boolean @default(true)
+  modalidadeId Int
+  poloId       Int
+  importacaoId Int?
+
+  modalidade   Modalidade     @relation(fields: [modalidadeId], references: [id])
+  polo         Polo           @relation(fields: [poloId], references: [id])
+  importacao   ImportacaoCsv? @relation(fields: [importacaoId], references: [id])
+  agendamentos Agendamento[]
+
+  // chave de idempotencia da importacao e do cruzamento com o launch LTI
+  @@unique([matricula, curso])
+  @@index([matricula]) // busca do launch: devolve 1..n vinculos
+  @@index([modalidadeId])
+  @@index([poloId])
+  @@index([ativo])
+  @@map("aluno_importado")
+}
+
+// ----------------------------------------------------------------------------
+// TURMA IMPORTADA (3o CSV) — turmas reais que TERAO prova
+// ----------------------------------------------------------------------------
+// Filtro final: disciplina do aluno so e agendavel se o orgUnitId estiver aqui.
+
+model TurmaImportada {
+  id             Int     @id @default(autoincrement())
+  orgUnitId      String  @unique // id da turma (course offering) no D2L
+  nomeDisciplina String?
+  codigoTurma    String?
+  importacaoId   Int?
+
+  importacao ImportacaoCsv? @relation(fields: [importacaoId], references: [id])
+
+  @@index([orgUnitId])
+  @@map("turma_importada")
+}
+
+// ----------------------------------------------------------------------------
+// IMPORTACAO CSV (auditoria dos 3 uploads)
+// ----------------------------------------------------------------------------
+
+model ImportacaoCsv {
+  id           Int            @id @default(autoincrement())
+  tipo         TipoImportacao
+  nomeArquivo  String
+  totalLinhas  Int
+  importadoPor String?
+  createdAt    DateTime       @default(now())
+
+  alunos AlunoImportado[]
+  turmas TurmaImportada[]
+
+  @@map("importacao_csv")
+}
+
+enum TipoImportacao {
+  ALUNOS
+  SALAS
+  TURMAS
+}
+
+// ----------------------------------------------------------------------------
+// AGENDAMENTO (a reserva do aluno)
+// ----------------------------------------------------------------------------
+// Aponta para a SalaFaixa alocada (que ja carrega sala+faixa+modalidade).
+// Ocupacao = count(Agendamento WHERE salaFaixaId = X) vs SalaFaixa.vagas.
+// Alocacao sequencial + concorrencia tratadas em transacao no service.
+
+model Agendamento {
+  id              Int               @id @default(autoincrement())
+  alunoId         Int
+  salaFaixaId     Int // sala+faixa+modalidade alocada; admin pode trocar
+  matricula       String // desnormalizado p/ exportacao
+  userIdD2L       String // id numerico Valence vindo do launch LTI
+  periodoLetivoId String
+  status          StatusAgendamento @default(CONFIRMADO)
+  alocadoManual   Boolean           @default(false) // admin remanejou
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  aluno       AlunoImportado          @relation(fields: [alunoId], references: [id])
+  salaFaixa   SalaFaixa               @relation(fields: [salaFaixaId], references: [id])
+  disciplinas AgendamentoDisciplina[]
+  syncs       SyncD2L[]
+
+  @@index([alunoId])
+  @@index([salaFaixaId]) // usado na contagem de ocupacao
+  @@index([matricula])
+  @@map("agendamento")
+}
+
+enum StatusAgendamento {
+  CONFIRMADO
+  CANCELADO
+}
+
+// ----------------------------------------------------------------------------
+// AGENDAMENTO_DISCIPLINA (as N disciplinas cobertas pela reserva)
+// ----------------------------------------------------------------------------
+
+model AgendamentoDisciplina {
+  id             Int     @id @default(autoincrement())
+  agendamentoId  Int
+  orgUnitId      String // disciplina (course offering) no D2L
+  nomeDisciplina String?
+
+  agendamento Agendamento @relation(fields: [agendamentoId], references: [id], onDelete: Cascade)
+
+  @@unique([agendamentoId, orgUnitId])
+  @@index([agendamentoId])
+  @@map("agendamento_disciplina")
+}
+
+// ----------------------------------------------------------------------------
+// SYNC_D2L (fila de gravacao de special access no Brightspace)
+// ----------------------------------------------------------------------------
+// PUT specialaccess por disciplina. 404 (nao matriculado) = NAO_MATRICULADO,
+// estado esperado, nao erro.
+
+model SyncD2L {
+  id            Int        @id @default(autoincrement())
+  agendamentoId Int
+  orgUnitId     String
+  status        StatusSync @default(PENDENTE)
+  tentativas    Int        @default(0)
+  ultimoErro    String?    @db.Text
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  agendamento Agendamento @relation(fields: [agendamentoId], references: [id], onDelete: Cascade)
+
+  @@index([agendamentoId])
+  @@index([status])
+  @@map("sync_d2l")
+}
+
+enum StatusSync {
+  PENDENTE
+  CONCLUIDO
+  FALHOU
+  NAO_MATRICULADO
+}
+
+// ----------------------------------------------------------------------------
+// PERIODO DE AGENDAMENTO (aberto/fechado pelo admin)
+// ----------------------------------------------------------------------------
+
+model PeriodoAgendamento {
+  id              Int       @id @default(autoincrement())
+  periodoLetivoId String // Id do Periodo Letivo no Brightspace (ex: 103)
+  descricao       String?
+  aberto          Boolean   @default(false)
+  dataAbertura    DateTime?
+  dataFechamento  DateTime // fecha automatico quando bate esta data/hora
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@map("periodo_agendamento")
+}

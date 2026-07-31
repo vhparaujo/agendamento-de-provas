@@ -46,6 +46,12 @@ lerna-debug.log*
 .temp
 .tmp
 
+# Prisma Client gerado (recriado por `npm run prisma:generate`)
+/src/generated
+
+# uploads de CSV
+/uploads
+
 # Runtime data
 pids
 *.pid

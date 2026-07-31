@@ -1,0 +1,46 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: agendamento-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-agendamento}
+      MYSQL_USER: ${MYSQL_USER:-agendamento}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-agendamento}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    ports:
+      - '${MYSQL_PORT:-3306}:3306'
+    volumes:
+      - mysql-data:/var/lib/mysql
+      # concede ao usuario da app permissao sobre o shadow database do prisma migrate
+      - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:
+        ['CMD', 'mysqladmin', 'ping', '-h', 'localhost', '-p${MYSQL_ROOT_PASSWORD:-root}']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agendamento-app
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      # dentro da rede do compose o host do banco e o nome do servico
+      DATABASE_URL: mysql://${MYSQL_USER:-agendamento}:${MYSQL_PASSWORD:-agendamento}@mysql:3306/${MYSQL_DATABASE:-agendamento}
+    env_file:
+      - .env
+    ports:
+      - '${PORT:-3000}:3000'
+
+volumes:
+  mysql-data:

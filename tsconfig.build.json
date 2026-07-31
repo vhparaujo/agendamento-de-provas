@@ -1,4 +1,14 @@
 {
   "extends": "./tsconfig.json",
-  "exclude": ["node_modules", "test", "dist", "**/*spec.ts"]
+  // Compila SOMENTE src/, para que a saida seja dist/main.js (e nao dist/src/main.js).
+  // prisma.config.ts e os seeds rodam via tsx, nao passam pelo build do Nest.
+  "include": ["src/**/*"],
+  "exclude": [
+    "node_modules",
+    "test",
+    "dist",
+    "prisma",
+    "prisma.config.ts",
+    "**/*spec.ts"
+  ]
 }
