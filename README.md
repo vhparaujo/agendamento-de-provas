@@ -1,98 +1,541 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Portal de Agendamento de Provas — UCB (Backend)
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+API que permite a **alunos** da UCB agendarem a data e o horário de suas provas
+presenciais, e a **administradores** gerenciarem polos, salas, horários, turmas e
+o período de agendamento. Ao confirmar um agendamento, o sistema libera o acesso
+às provas (*special access*) no **Brightspace (D2L)** via **Valence API**.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+- **Stack:** NestJS 11 · TypeScript · Prisma 7 (MySQL 8) · Docker
+- **Autenticação:** LTI 1.3 (aluno, sem senha) · JWT (admin)
 
-## Description
+---
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## Índice
 
-## Project setup
+- [Como funciona](#como-funciona)
+- [Conceitos de domínio](#conceitos-de-domínio)
+- [Regras de negócio invioláveis](#regras-de-negócio-invioláveis)
+- [Setup](#setup)
+- [Comandos](#comandos)
+- [Variáveis de ambiente](#variáveis-de-ambiente)
+- [Endpoints](#endpoints)
+- [Modelo de dados](#modelo-de-dados)
+- [Importação dos CSVs](#importação-dos-csvs)
+- [Autenticação em detalhe](#autenticação-em-detalhe)
+- [Estrutura do código](#estrutura-do-código)
+- [Notas de infraestrutura (Prisma 7)](#notas-de-infraestrutura-prisma-7)
+- [Testes](#testes)
+- [Estado atual e roadmap](#estado-atual-e-roadmap)
+
+---
+
+## Como funciona
+
+**Fluxo do aluno**
+
+1. O aluno entra pelo Brightspace; o **launch LTI 1.3** traz o RA (matrícula) e o
+   UserId do Valence. Ele nunca digita senha.
+2. O RA é cruzado com a base de alunos importada do CSV, o que devolve os
+   **vínculos** dele (um por curso) — cada vínculo carrega modalidade e polo.
+3. Se houver mais de um vínculo, o portal pergunta de qual curso é a prova
+   (`precisaEscolherCurso` na resposta do launch).
+4. O aluno vê as **faixas** (horários) do polo dele, na modalidade dele, com vaga,
+   com o período de agendamento aberto.
+5. Escolhe uma faixa. O sistema aloca uma sala automaticamente, **em ordem
+   sequencial** (enche a sala de menor `ordem` antes de abrir a próxima).
+6. A reserva cobre **todas as disciplinas agendáveis daquele vínculo** de uma vez.
+7. Um job assíncrono grava o *special access* de cada disciplina no Brightspace.
+
+**Fluxo do admin**
+
+Login por e-mail/senha → JWT. Cadastra salas, monta faixas (data + horário +
+quais salas atendem qual modalidade + vagas + ordem), importa os CSVs de alunos e
+turmas, abre/fecha o período de agendamento, remaneja agendamentos e exporta as
+listas de presença.
+
+---
+
+## Conceitos de domínio
+
+| Conceito | O que é |
+|---|---|
+| **Polo** | Unidade física onde as provas ocorrem. São 27, populados por seed. |
+| **Sala** | Espaço físico dentro de um polo, com capacidade. **É neutra** — não tem modalidade fixa. |
+| **Modalidade** | Formato do curso, define a **duração da prova**: EaD 3h · Semipresencial 1h30 · Modular/Híbrido 1h30 · Presencial 2h. |
+| **Vínculo** | Aluno + curso. **É a unidade real do sistema.** Um mesmo RA pode ter dois vínculos (dois cursos, modalidades diferentes) e agenda uma prova para cada. |
+| **Faixa** | Horário de prova que o admin abre para um polo (data + hora início + hora fim). **Também é neutra** — não tem modalidade fixa. |
+| **SalaFaixa** | **O núcleo do modelo.** Associação `Sala + Faixa + Modalidade + vagas + ordem`. É aqui que modalidade e vagas existem de fato. |
+| **Turma real** | Turma/disciplina que efetivamente terá prova (CSV de turmas). Filtro final do que aparece para o aluno. |
+
+### Por que sala e faixa são neutras
+
+A mesma sala física pode ser Presencial numa faixa e EaD em outra — o que a
+trava numa modalidade é a linha de `SalaFaixa`, não a sala em si. Dentro de uma
+mesma faixa, porém, a sala fica travada numa única modalidade (garantido pelo
+índice único `[salaId, faixaId]`). O admin monta essa grade ao criar a faixa.
+
+---
+
+## Regras de negócio invioláveis
+
+1. **Aluno não tem senha.** É reconhecido via LTI 1.3; a matrícula do launch é
+   cruzada com o CSV. Nunca confie em dados auto-declarados pelo cliente.
+2. **O que o aluno vê** = faixas do polo dele, na modalidade dele, com vaga, com
+   o período de agendamento aberto.
+3. **Disciplinas agendáveis** = disciplinas do aluno na Valence ∩ turmas reais
+   (CSV) ∩ período letivo vigente. **Não são todas as disciplinas do aluno.**
+4. **Um agendamento cobre todas as disciplinas agendáveis de UM vínculo**, no
+   mesmo horário. Aluno com dois cursos faz dois agendamentos — as durações são
+   diferentes, então caem em faixas diferentes.
+5. **Alocação de sala é sequencial**: preenche a sala de menor `ordem` até lotar,
+   só então usa a próxima. A vaga é da SalaFaixa (`count(agendamentos) < vagas`).
+6. **Concorrência**: a checagem de vaga + criação do agendamento **deve** ocorrer
+   em transação serializável por SalaFaixa. Nunca conte fora da transação.
+7. **Admin pode remanejar** qualquer agendamento (trocar sala ou faixa). A
+   alocação automática é só o default; remanejo marca `alocadoManual = true`.
+8. **O período fecha só por data/hora** (`dataFechamento`), nunca por esgotamento
+   de vagas. A janela de agendamento e as datas das provas são linhas do tempo
+   independentes.
+9. **Sync com D2L é assíncrono e tolerante a falha**: 404 (aluno não matriculado)
+   é estado **esperado** (`NAO_MATRICULADO`), não erro. Falha de rede/token
+   re-tenta.
+
+---
+
+## Setup
+
+**Pré-requisitos:** Node 24+, Docker, npm.
 
 ```bash
-$ npm install
+git clone <repo> && cd agendamento-de-provas
+npm install
+
+cp .env.example .env
+# preencha ao menos: JWT_SECRET, JWT_REFRESH_SECRET, SEED_ADMIN_EMAIL, SEED_ADMIN_PASSWORD
+# gere segredos com: openssl rand -hex 48
+
+npm run db:up            # sobe só o MySQL (o app roda na sua máquina)
+npm run prisma:generate  # gera o client em src/generated/prisma (não versionado)
+npm run prisma:migrate   # aplica as migrations
+npm run seed             # modalidades + 27 polos + primeiro admin
+
+npm run start:dev
 ```
 
-## Compile and run the project
+A API sobe em `http://localhost:3000/api`. Confira com `GET /api/health`.
+
+**Tudo containerizado** (app + banco), útil para validar o build de produção:
 
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+docker compose up -d --build
 ```
 
-## Run tests
+O container do app roda `prisma migrate deploy` antes de subir. Dentro da rede do
+compose o host do banco é `mysql`, não `localhost` — o `docker-compose.yml` já
+sobrescreve a `DATABASE_URL` com isso.
+
+---
+
+## Comandos
 
 ```bash
-# unit tests
-$ npm run test
+# aplicação
+npm run start:dev            # watch mode
+npm run start:prod           # a partir de dist/
+npm run build
 
-# e2e tests
-$ npm run test:e2e
+# banco / Prisma
+npm run db:up                # docker compose up -d mysql
+npm run db:down
+npm run db:reset             # prisma migrate reset (APAGA os dados)
+npm run prisma:generate      # regenera o client (rode após clonar ou mudar o schema)
+npm run prisma:migrate       # migrate dev
+npm run prisma:deploy        # migrate deploy (produção/container)
+npm run prisma:studio
+npm run seed                 # seeds idempotentes
 
-# test coverage
-$ npm run test:cov
+# LTI
+npm run lti:keygen           # gera a chave RSA da ferramenta (LTI_TOOL_PRIVATE_KEY)
+
+# qualidade
+npm test                     # unitários (jest, rootDir=src)
+npm run test:cov
+npm run test:e2e             # exige banco de pé + migrations aplicadas
+npm run lint                 # eslint --fix
+npm run format               # prettier
 ```
 
-## Deployment
+---
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+## Variáveis de ambiente
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+O `.env` é **validado no boot** (`src/config/env.validation.ts`): faltando algo
+essencial, a aplicação não sobe. Melhor falhar no start do que descobrir um
+segredo ausente em produção.
+
+| Variável | Obrigatória | Observação |
+|---|:---:|---|
+| `DATABASE_URL` | ✅ | `mysql://user:senha@host:3306/agendamento` |
+| `JWT_SECRET` | ✅ | mínimo 16 caracteres |
+| `JWT_REFRESH_SECRET` | ✅ | mínimo 16 caracteres, diferente do anterior |
+| `PORT`, `API_PREFIX`, `NODE_ENV` | | default `3000`, `api`, `development` |
+| `JWT_EXPIRES_IN` / `JWT_REFRESH_EXPIRES_IN` | | default `15m` / `7d` |
+| `JWT_ALUNO_EXPIRES_IN` | | default `2h` — token curto, só para navegação |
+| `SEED_ADMIN_EMAIL` / `_PASSWORD` / `_NOME` | seed | lidos apenas por `npm run seed` |
+| `PERIODO_LETIVO_ID` | | período letivo vigente no Brightspace (ex: `103`) |
+| `TURMAS_FILTER_ENABLED` | | **default seguro `true`** — ver abaixo |
+| `LTI_*` | LTI | issuer, client id, deployment, URLs, chave RSA, claims |
+| `VALENCE_*` | D2L | credenciais OAuth 2.0 (etapa 7, ainda não implementada) |
+
+Lista completa e comentada em [`.env.example`](.env.example). **Nunca commite o
+`.env`.**
+
+### `TURMAS_FILTER_ENABLED` — o default é bloquear
+
+Com `true` (default), só é agendável a disciplina que estiver na tabela de turmas
+reais. Como o CSV de turmas ainda não chegou, a tabela está vazia e **nada é
+agendável** — de propósito: é melhor ninguém agendar do que liberar prova para a
+disciplina errada. O serviço loga um aviso claro quando isso acontece.
+
+Com `false`, o filtro não restringe nada e toda disciplina do período vira
+agendável. Use conscientemente.
+
+---
+
+## Endpoints
+
+Todos sob o prefixo `/api`. Um `ValidationPipe` global com `whitelist` e
+`forbidNonWhitelisted` rejeita qualquer campo não declarado no DTO.
+
+### Público
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `GET` | `/health` | Status da API e do banco |
+
+### Autenticação — admin
+
+| Método | Rota | Auth | Descrição |
+|---|---|:---:|---|
+| `POST` | `/auth/login` | — | E-mail + senha → access token + refresh token |
+| `POST` | `/auth/refresh` | — | Refresh token → novo par de tokens |
+| `POST` | `/auth/trocar-senha` | JWT | Única rota liberada com senha provisória pendente |
+| `GET` | `/auth/me` | JWT | Dados do admin logado |
+
+### Autenticação — aluno (LTI 1.3)
+
+Não passam por guard: quem autentica é a assinatura do próprio Brightspace.
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `GET`/`POST` | `/lti/login` | Iniciação OIDC (o Brightspace pode usar os dois verbos) |
+| `POST` | `/lti/launch` | Recebe o `id_token`, valida e devolve os vínculos + JWT do aluno |
+| `GET` | `/lti/jwks` | Chave pública da ferramenta, consumida pelo Brightspace |
+
+Ao registrar a ferramenta no Brightspace, aponte:
+`OpenID Connect Login URL` → `{API}/lti/login` ·
+`Redirect / Target Link` → `{API}/lti/launch` ·
+`Keyset (JWKS) URL` → `{API}/lti/jwks`.
+
+### Administradores
+
+Todas exigem JWT de admin. **Não há níveis**: qualquer admin autenticado pode
+criar outro ou resetar a senha alheia.
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `GET` | `/admins` | Lista |
+| `POST` | `/admins` | Cria (nasce com `mustChangePassword`) |
+| `POST` | `/admins/:id/resetar-senha` | Gera senha provisória para outro admin |
+| `PATCH` | `/admins/:id/ativo` | Ativa/desativa |
+
+### Importação de CSV
+
+Todas exigem JWT de admin. Upload `multipart/form-data`, campo `arquivo`,
+limite de 15 MB, extensão `.csv` obrigatória.
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `POST` | `/importacao/alunos` | CSV de alunos + campo `modalidade` (dropdown) |
+| `POST` | `/importacao/turmas` | CSV de turmas reais |
+| `GET` | `/importacao` | Histórico de importações (auditoria) |
+
+---
+
+## Modelo de dados
+
+Fonte de verdade: [`prisma/schema.prisma`](prisma/schema.prisma), fortemente
+comentado. DTOs, services e controllers derivam dele.
+
+```
+Polo ──┬── Sala ─────┐
+       │             ├── SalaFaixa ── Agendamento ──┬── AgendamentoDisciplina
+       └── Faixa ─────┘   (+ Modalidade)            └── SyncD2L
+                                                     │
+AlunoImportado (matrícula + curso) ──────────────────┘
+   └── Modalidade, Polo, ImportacaoCsv
+
+TurmaImportada ── ImportacaoCsv      Admin      PeriodoAgendamento
+```
+
+**Tabelas e o que cada uma guarda**
+
+| Modelo | Papel |
+|---|---|
+| `Admin` | Login administrativo (bcrypt, `mustChangePassword`, campos de reset) |
+| `Modalidade` | `codigo` (EAD/SEMI/MODULAR/PRESENCIAL) + `duracaoMinutos` |
+| `Polo` | 27 unidades, `nome` **único** = chave de casamento com o CSV |
+| `Sala` | Polo + nome + capacidade. Neutra |
+| `Faixa` | Polo + data + horaInício + horaFim. Neutra |
+| `SalaFaixa` | Sala + Faixa + Modalidade + `vagas` + `ordem`. **O núcleo** |
+| `AlunoImportado` | Um registro **por vínculo** (matrícula + curso) |
+| `TurmaImportada` | Turmas reais com prova, chaveadas por `orgUnitId` do D2L |
+| `ImportacaoCsv` | Auditoria: tipo, arquivo, linhas, quem, quando |
+| `Agendamento` | A reserva, apontando para a `SalaFaixa` alocada |
+| `AgendamentoDisciplina` | As N disciplinas cobertas pela reserva |
+| `SyncD2L` | Fila de gravação do *special access* (PENDENTE/CONCLUIDO/FALHOU/NAO_MATRICULADO) |
+| `PeriodoAgendamento` | Janela de agendamento; fecha por `dataFechamento` |
+
+**Índices que importam para a regra**
+
+- `SalaFaixa @@unique([salaId, faixaId])` — uma sala entra uma única vez por
+  faixa, logo numa única modalidade.
+- `SalaFaixa @@unique([faixaId, modalidadeId, ordem])` — a ordem de preenchimento
+  é única e não ambígua.
+- `AlunoImportado @@unique([matricula, curso])` — chave de idempotência da
+  importação. **`matricula` sozinha não é única**, porque um RA pode ter vários
+  vínculos.
+- `Agendamento @@index([salaFaixaId])` — usado na contagem de ocupação dentro da
+  transação de alocação.
+
+---
+
+## Importação dos CSVs
+
+Os polos vêm de **seed**, não de CSV. As salas são **cadastro manual** pelo admin
+(nome + capacidade + polo por dropdown). Só dois arquivos são importados:
+
+### CSV de alunos
+
+Cabeçalhos reais, confirmados nos arquivos entregues:
+
+| Coluna do arquivo | Vira | Observação |
+|---|---|---|
+| `RA` | `matricula` | Alfanumérico (`0009552430`, `A06103080`, `UC25426847`) — **String**, zeros à esquerda fazem parte do identificador |
+| `ALUNO` | `nome` | |
+| `EMAIL INSTITUCIONAL` | `email` | Alguns vazios |
+| `CURSO` | `curso` | Exibição **e parte da chave do vínculo** |
+| `STATUS CURSO` | `statusCurso` + `ativo` | Ver abaixo |
+| `CAMPUS` | `polo` | Casa com `Polo.nome` por string exata |
+| `CENTRO DE CUSTO` | — | Ignorado de propósito |
+
+A **modalidade não é coluna**: vem do dropdown do upload, correspondendo à aba de
+origem da planilha (`EaD`→`EAD`, `Semi`→`SEMI`, **`Híbrido`→`MODULAR`** — Híbrido
+e Modular são a mesma coisa).
+
+**Encoding:** os arquivos reais são ISO-8859-1. O parser detecta e decodifica
+automaticamente (tenta UTF-8, cai para latin1 se houver caractere inválido), então
+não é preciso converter nada à mão.
+
+**Elegibilidade por `STATUS CURSO`** — definida numa lista explícita em
+[`src/enums/status-curso.enum.ts`](src/enums/status-curso.enum.ts), único ponto a
+alterar. Não é configurável por `.env`.
+
+- **Permitem agendar:** `Ativo`, `Transf. Interna`, `Transf. de Curriculo`,
+  `Alter. de Habilitação` — situações de transição mantêm o aluno apto.
+- **Bloqueiam:** `Desistente`, `Trancado`, `Cancelado`, `Formado`.
+- **Status desconhecido bloqueia por segurança** e é reportado no resultado da
+  importação, para que alguém decida conscientemente em qual lista ele entra.
+
+A comparação ignora acentos, caixa e espaços repetidos — um acento perdido numa
+reexportação não pode barrar um aluno que tem direito a fazer prova.
+
+O status **não bloqueia o login**: um aluno com matrícula cancelada é reconhecido
+no launch e vê uma mensagem clara, em vez de um "não encontrado". O bloqueio
+acontece no agendamento.
+
+**Resposta do upload** — além de criados/atualizados, devolve o que precisa de
+atenção humana: linhas rejeitadas com motivo, status desconhecidos com contagem, e
+valores de `CAMPUS` que não casaram com nenhum polo do seed.
+
+### CSV de turmas
+
+**O arquivo real ainda não existe.** Os cabeçalhos são provisórios
+(`orgUnitId`, `nomeDisciplina`, `codigoTurma`), mas o endpoint, a auditoria, a
+idempotência, a persistência e o cruzamento de disciplinas **já estão escritos e
+testados** com uma fixture em `test/fixtures/turmas-exemplo.csv`.
+
+Quando o arquivo real chegar, o único ponto a mudar é o mapeamento de colunas em
+[`src/importacao/service/turma-csv.columns.ts`](src/importacao/service/turma-csv.columns.ts).
+Nenhuma regra de negócio muda. `orgUnitId` é o único campo obrigatório: é a chave
+que casa a disciplina do aluno na Valence com a turma que realmente terá prova.
+
+### Idempotência
+
+Ambos os uploads fazem upsert (por `matricula + curso` e por `orgUnitId`).
+Re-subir o mesmo arquivo atualiza, nunca duplica. Toda importação registra
+auditoria em `ImportacaoCsv`.
+
+---
+
+## Autenticação em detalhe
+
+### Admin — JWT
+
+Login e-mail/senha (bcrypt, 12 rounds) → **access token** (`JWT_SECRET`, 15min) +
+**refresh token** (`JWT_REFRESH_SECRET`, 7d, com `tipo: 'refresh'` no payload,
+verificado para impedir que um access token seja usado como refresh).
+
+O **primeiro admin** vem de seed idempotente: se o e-mail já existir, nada é
+sobrescrito — nem a senha, nem o `mustChangePassword`. Re-rodar o seed num
+ambiente em uso nunca reseta a senha de quem já trocou.
+
+Admin criado por seed ou por reset nasce com `mustChangePassword = true`, e o
+guard bloqueia todas as rotas até a troca. As exceções, marcadas com
+`@PermitidoComSenhaProvisoria()`, são `/auth/trocar-senha` e `/auth/me` — sem elas
+o admin do seed ficaria travado para sempre.
+
+**Um único nível de acesso:** JWT de admin válido = acesso total. Não há matriz de
+permissões, só a separação entre os perfis `ADMIN` e `ALUNO`, aplicada pelos
+decorators `@SomenteAdmin()` e `@SomenteAluno()`.
+
+### Aluno — LTI 1.3
+
+O launch é validado **antes** de qualquer dado ser lido:
+
+1. `iniciarLogin` gera `state` + `nonce` e redireciona para o Brightspace.
+2. No `launch`, o `state` é consumido (uso único, com expiração) e o `id_token`
+   é verificado contra o JWKS remoto — assinatura, `issuer`, `audience`, com 30s
+   de tolerância de relógio.
+3. O `nonce` do token precisa bater com o emitido.
+4. Valida versão `1.3.0`, `message_type = LtiResourceLinkRequest` e, se
+   configurado, o `deployment_id`.
+5. Só então extrai matrícula e UserId do Valence e cruza com o CSV.
+
+O nome dos claims customizados depende do registro da ferramenta, então
+`LTI_CLAIM_MATRICULA` e `LTI_CLAIM_USER_ID` aceitam uma lista separada por
+vírgula, tentada em ordem. Para descobrir os nomes reais no ambiente da UCB, use
+`LTI_DEBUG_CLAIMS=true` — loga os claims recebidos e é ignorado em produção.
+
+O JWT interno do aluno é curto (2h) e serve só para navegação. Ele carrega os
+vínculos **dentro do payload**, justamente para que o agendamento possa verificar
+que o `alunoId` escolhido pelo portal pertence mesmo àquela matrícula, sem
+confiar em nada vindo do cliente.
+
+Matrícula fora do CSV resulta em `403` com mensagem orientando procurar a
+secretaria — não é "senha errada", é ausência de cadastro: sem a linha do CSV não
+há como saber modalidade nem polo.
+
+---
+
+## Estrutura do código
+
+Modular por domínio; cada módulo segue `controller/ · dto/ · service/ · module/`.
+
+```
+src/
+  admin/          gestão de administradores
+  aluno/          cruzamento matrícula → vínculos
+  auth/
+    controller/   login, refresh, trocar-senha, me
+    jwt/          strategies + guards (admin e aluno)
+    lti/          config, state store, keys, controller, service
+    roles.decorator.ts
+  config/         validação do .env no boot
+  database/       PrismaService + driver adapter MariaDB
+  enums/          perfil, status-curso (regra de elegibilidade)
+  importacao/     parsing dos 2 CSVs + auditoria
+  turma/          cruzamento disciplinas ∩ turmas ∩ período
+  generated/      client do Prisma (NÃO versionado)
+  app.module.ts   main.ts
+
+prisma/
+  schema.prisma   fonte de verdade da modelagem
+  migrations/
+  seed.ts         orquestrador → modalidades, polos, admin
+
+docker/mysql/init/  grant do shadow database (só dev)
+scripts/            gerar-chave-lti.ts
+test/               e2e + fixtures
+```
+
+**Convenções**
+
+- **DTOs com `class-validator`** para toda entrada. Nunca aceitar body cru.
+- **Prisma como única camada de dados.** Injete `PrismaService`; nunca instancie
+  `PrismaClient` fora de `src/database/`. Sem SQL cru, exceto onde a transação de
+  alocação exigir lock explícito.
+- **Nomes em português** no domínio (matrícula, faixa, polo), para casar com o
+  vocabulário institucional.
+- **Segredos só via `.env`.**
+- **Erros de negócio** com exceções tipadas do Nest (`ConflictException` para vaga
+  esgotada, `ForbiddenException` para período fechado).
+
+---
+
+## Notas de infraestrutura (Prisma 7)
+
+O projeto usa **Prisma 7**, que difere do que se vê na maioria dos tutoriais em
+três pontos:
+
+- O generator é **`prisma-client`** (não `prisma-client-js`), com `output`
+  obrigatório → o client é gerado em `src/generated/prisma` e **não é
+  versionado**. Depois de clonar ou alterar o schema, rode `npm run prisma:generate`.
+- **`url` não existe mais no bloco `datasource`.** A `DATABASE_URL` é lida pelo
+  CLI via [`prisma.config.ts`](prisma.config.ts) e pelo runtime via **driver
+  adapter** (`@prisma/adapter-mariadb`), montado em
+  [`src/database/mariadb-adapter.ts`](src/database/mariadb-adapter.ts) — que
+  traduz a URL para os campos separados que o adapter espera, mantendo uma fonte
+  única de configuração.
+- **`prisma.config.ts` substitui o bloco `prisma` do `package.json`** (schema,
+  caminho das migrations e comando de seed).
+
+Dois detalhes que já custaram tempo:
+
+- `importFileExtension = "js"` no generator é **obrigatório**. Sem ele o Prisma
+  infere a extensão a partir do tsconfig presente no momento do generate e emite
+  imports `.ts` quando roda sem tsconfig (o build do Docker), quebrando o
+  `require()` no `dist`. Fixar torna o generate determinístico.
+- `docker/mysql/init/` concede ao usuário da aplicação privilégios sobre o
+  *shadow database* do `prisma migrate dev` (bancos com prefixo
+  `prisma_migrate_shadow_db`). Vale só para desenvolvimento — em produção usa-se
+  `migrate deploy`, que não cria shadow database.
+
+---
+
+## Testes
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+npm test        # unitários — rootDir=src, ignora src/generated
+npm run test:e2e   # exige banco de pé + migrations aplicadas
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+Cobertos hoje: regra de elegibilidade por `STATUS CURSO` (incluindo variações de
+acento e caixa), state store do LTI, leitura de claims da config LTI, serviço de
+autenticação, utilitários de CSV, cruzamento de turmas, e e2e de health, auth e
+vínculos do aluno.
 
-## Resources
+---
 
-Check out a few resources that may come in handy when working with NestJS:
+## Estado atual e roadmap
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+A ordem de implementação segue a prioridade definida para o projeto.
 
-## Support
+| # | Etapa | Estado |
+|:--:|---|---|
+| 1 | Prisma schema + migrations + Docker + seeds | ✅ concluída |
+| 2 | Auth (admin JWT + LTI aluno) | ✅ concluída |
+| 3 | Importação dos CSVs + seed de polos | ✅ concluída (mapeamento do CSV de turmas provisório) |
+| 4 | Estrutura: polo / sala / faixa / sala-faixa | ⬜ pendente |
+| 5 | Portal do aluno: listar faixas + agendar com alocação sequencial | ⬜ pendente |
+| 6 | Integração D2L (Valence client + fila de special access) | ⬜ pendente |
+| 7 | Período de agendamento + remanejo administrativo + exportação | ⬜ pendente |
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+**Pendências conhecidas**
 
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+- O CSV real de turmas não chegou; o mapeamento de colunas é provisório e está
+  isolado num único arquivo.
+- As credenciais da Valence API ainda não existem; as variáveis `VALENCE_*` estão
+  no `.env.example` mas nenhum código as consome.
+- A modalidade `PRESENCIAL` existe no modelo (prova de 2h) mas ainda não tem CSV
+  correspondente.
