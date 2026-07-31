@@ -9,6 +9,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { createRemoteJWKSet, jwtVerify, JWTPayload } from 'jose';
 import { AlunoService } from '../../aluno/service/aluno.service';
+import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 import { AuthService } from '../service/auth.service';
 import {
   CLAIM_DEPLOYMENT_ID,
@@ -61,6 +62,7 @@ export class LtiService {
     private readonly stateStore: LtiStateStore,
     private readonly authService: AuthService,
     private readonly alunoService: AlunoService,
+    private readonly auditoria: AuditoriaService,
   ) {}
 
   /**
@@ -156,6 +158,11 @@ export class LtiService {
       // Aluno fora do CSV: nao e "senha errada", e ausencia de cadastro. Sem a
       // linha do CSV nao ha como saber modalidade nem polo, entao nao da para
       // agendar mesmo com o launch valido.
+      this.auditoria.registrar('LTI_LAUNCH_RECUSADO', {
+        ator: matricula,
+        detalhe: 'matricula sem vinculo na base importada',
+      });
+
       throw new ForbiddenException(
         `Matricula ${matricula} nao encontrada na base de alunos importada. ` +
           'Procure a secretaria academica.',
@@ -176,6 +183,11 @@ export class LtiService {
         poloId: v.poloId,
         ativo: v.ativo,
       })),
+    });
+
+    this.auditoria.registrar('LTI_LAUNCH_OK', {
+      ator: vinculos[0].matricula,
+      detalhe: `${vinculos.length} vinculo(s)`,
     });
 
     return {

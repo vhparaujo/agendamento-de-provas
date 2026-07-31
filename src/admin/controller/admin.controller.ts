@@ -1,6 +1,22 @@
 import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
+import {
+  ApiBadRequestResponse,
+  ApiConflictResponse,
+  ApiCreatedResponse,
+  ApiNotFoundResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiParam,
+  ApiTags,
+} from '@nestjs/swagger';
 import type { AdminJwtPayload } from '../../auth/jwt/jwt.types';
 import { AdminLogado, SomenteAdmin } from '../../auth/roles.decorator';
+import { TAGS } from '../../config/swagger';
+import {
+  AdminCriadoResponseDto,
+  AdminResumoDto,
+  SenhaResetadaResponseDto,
+} from '../dto/admin.response.dto';
 import { CriarAdminDto } from '../dto/criar-admin.dto';
 import { DefinirAtivoDto } from '../dto/definir-ativo.dto';
 import { AdminService } from '../service/admin.service';
@@ -9,22 +25,48 @@ import { AdminService } from '../service/admin.service';
  * Gestao de administradores. Todas as rotas exigem um JWT de admin — nao ha
  * niveis: qualquer admin autenticado pode criar outro ou resetar senha alheia.
  */
+@ApiTags(TAGS.ADMINS)
 @Controller('admins')
 @SomenteAdmin()
 export class AdminController {
   constructor(private readonly adminService: AdminService) {}
 
   @Get()
+  @ApiOperation({
+    summary: 'Lista os administradores',
+    description: 'Ordenada por data de criacao. Nunca expoe hash de senha.',
+  })
+  @ApiOkResponse({ type: [AdminResumoDto] })
   listar() {
     return this.adminService.listar();
   }
 
   @Post()
+  @ApiOperation({
+    summary: 'Cria um administrador',
+    description:
+      'Sem `senha` no corpo, o sistema gera uma provisoria e a devolve UMA unica vez. ' +
+      'Em ambos os casos a conta nasce com `mustChangePassword: true`, para que so o dono ' +
+      'conheca a senha final.',
+  })
+  @ApiCreatedResponse({ type: AdminCriadoResponseDto })
+  @ApiConflictResponse({
+    description: 'Ja existe um administrador com este e-mail',
+  })
   criar(@Body() dto: CriarAdminDto) {
     return this.adminService.criar(dto);
   }
 
   @Post(':id/resetar-senha')
+  @ApiOperation({
+    summary: 'Reset administrativo de senha',
+    description:
+      'Um admin gera senha provisoria para outro — nao ha reset por e-mail no MVP. ' +
+      'A senha e devolvida UMA unica vez, para repasse por canal interno.',
+  })
+  @ApiParam({ name: 'id', format: 'uuid', description: 'Id do admin alvo' })
+  @ApiCreatedResponse({ type: SenhaResetadaResponseDto })
+  @ApiNotFoundResponse({ description: 'Administrador nao encontrado' })
   resetarSenha(
     @Param('id') id: string,
     @AdminLogado() solicitante: AdminJwtPayload,
@@ -33,6 +75,19 @@ export class AdminController {
   }
 
   @Patch(':id/ativo')
+  @ApiOperation({
+    summary: 'Ativa ou desativa um administrador',
+    description:
+      'Duas travas: ninguem desativa a si mesmo, e o ultimo admin ativo nao pode ser desativado — ' +
+      'do contrario o sistema ficaria sem acesso administrativo.',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: AdminResumoDto })
+  @ApiNotFoundResponse({ description: 'Administrador nao encontrado' })
+  @ApiBadRequestResponse({
+    description:
+      'Auto-desativacao, ou tentativa de desativar o ultimo admin ativo',
+  })
   definirAtivo(
     @Param('id') id: string,
     @Body() dto: DefinirAtivoDto,

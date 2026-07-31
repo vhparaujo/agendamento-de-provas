@@ -1,0 +1,26 @@
+import { ApiProperty } from '@nestjs/swagger';
+import type { Modalidade } from '../service/modalidade.service';
+
+export class ModalidadeDto implements Modalidade {
+  @ApiProperty({ example: 1 })
+  id!: number;
+
+  @ApiProperty({
+    example: 'EAD',
+    enum: ['EAD', 'SEMI', 'MODULAR', 'PRESENCIAL'],
+    description:
+      'Chave estavel usada no dropdown do upload de alunos. Hibrido e MODULAR.',
+  })
+  codigo!: string;
+
+  @ApiProperty({ example: 'EaD', description: 'Rotulo para exibicao.' })
+  nome!: string;
+
+  @ApiProperty({
+    example: 180,
+    description:
+      'Duracao da prova. A faixa precisa ser pelo menos deste tamanho para ' +
+      'receber uma sala desta modalidade.',
+  })
+  duracaoMinutos!: number;
+}

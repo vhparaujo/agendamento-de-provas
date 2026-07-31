@@ -8,6 +8,7 @@ import { JwtService, JwtSignOptions } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../database/prisma.service';
 import { Perfil } from '../../enums/perfil.enum';
+import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 import {
   AdminJwtPayload,
   AdminRefreshPayload,
@@ -44,6 +45,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
+    private readonly auditoria: AuditoriaService,
   ) {}
 
   async loginAdmin(email: string, senha: string): Promise<TokensAdmin> {
@@ -57,8 +59,22 @@ export class AuthService {
     );
 
     if (!admin || !admin.ativo || !senhaConfere) {
+      // O log distingue o motivo real; a RESPOSTA continua uniforme. Quem
+      // investiga precisa saber se foi conta inexistente ou senha errada; o
+      // atacante nao pode saber (ASVS 16.3.1 sem virar oraculo de enumeracao).
+      this.auditoria.registrar('LOGIN_FALHOU', {
+        ator: email,
+        detalhe: !admin
+          ? 'e-mail nao cadastrado'
+          : !admin.ativo
+            ? 'conta inativa'
+            : 'senha incorreta',
+      });
+
       throw new UnauthorizedException('Credenciais invalidas');
     }
+
+    this.auditoria.registrar('LOGIN_OK', { ator: email });
 
     await this.prisma.admin.update({
       where: { id: admin.id },
@@ -80,11 +96,21 @@ export class AuthService {
         secret: this.config.getOrThrow<string>('JWT_REFRESH_SECRET'),
       });
     } catch {
+      this.auditoria.registrar('REFRESH_FALHOU', {
+        detalhe: 'assinatura invalida ou token expirado',
+      });
+
       throw new UnauthorizedException('Refresh token invalido ou expirado');
     }
 
     // Um access token nao pode ser trocado por tokens novos.
     if (payload.tipo !== 'refresh' || payload.perfil !== Perfil.ADMIN) {
+      // Tentativa de usar access token como refresh: quase sempre intencional.
+      this.auditoria.registrar('REFRESH_FALHOU', {
+        ator: payload.sub,
+        detalhe: 'token nao e do tipo refresh de admin',
+      });
+
       throw new UnauthorizedException('Refresh token invalido');
     }
 
@@ -93,8 +119,15 @@ export class AuthService {
     });
 
     if (!admin || !admin.ativo) {
+      this.auditoria.registrar('REFRESH_FALHOU', {
+        ator: payload.sub,
+        detalhe: 'admin inativo ou inexistente',
+      });
+
       throw new UnauthorizedException('Administrador inativo ou inexistente');
     }
+
+    this.auditoria.registrar('REFRESH_OK', { ator: admin.email });
 
     return this.emitirTokensAdmin(
       admin.id,
@@ -117,6 +150,11 @@ export class AuthService {
     }
 
     if (!(await bcrypt.compare(senhaAtual, admin.senhaHash))) {
+      this.auditoria.registrar('SENHA_TROCA_FALHOU', {
+        ator: admin.email,
+        detalhe: 'senha atual incorreta',
+      });
+
       throw new UnauthorizedException('Senha atual incorreta');
     }
 
@@ -134,6 +172,8 @@ export class AuthService {
         resetTokenExpiry: null,
       },
     });
+
+    this.auditoria.registrar('SENHA_TROCADA', { ator: admin.email });
 
     return { mensagem: 'Senha alterada com sucesso' };
   }

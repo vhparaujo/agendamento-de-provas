@@ -125,6 +125,10 @@ model Sala {
   polo       Polo        @relation(fields: [poloId], references: [id])
   salaFaixas SalaFaixa[]
 
+  // Duas salas com o mesmo nome no mesmo polo seriam indistinguiveis para o
+  // admin na hora de montar a faixa — e o aluno receberia "va para a M114" sem
+  // saber qual. O nome se repetir entre polos diferentes e normal e permitido.
+  @@unique([poloId, nome])
   @@index([poloId])
   @@map("sala")
 }

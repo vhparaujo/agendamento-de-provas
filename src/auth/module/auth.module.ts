@@ -11,6 +11,8 @@ import { LtiKeysService } from '../lti/lti-keys.service';
 import { LtiStateStore } from '../lti/lti-state.store';
 import { LtiService } from '../lti/lti.service';
 import { AuthService } from '../service/auth.service';
+import { JwtAdminGuard } from '../jwt/jwt-admin.guard';
+import { JwtAlunoGuard } from '../jwt/jwt-aluno.guard';
 
 @Module({
   imports: [ConfigModule, PassportModule, JwtModule.register({}), AlunoModule],
@@ -19,10 +21,14 @@ import { AuthService } from '../service/auth.service';
     AuthService,
     JwtAdminStrategy,
     JwtAlunoStrategy,
+    // Os guards por perfil viraram providers porque o AutenticacaoGuard (global,
+    // declarado no AppModule) os injeta para delegar a decisao.
+    JwtAdminGuard,
+    JwtAlunoGuard,
     LtiService,
     LtiStateStore,
     LtiKeysService,
   ],
-  exports: [AuthService],
+  exports: [AuthService, JwtAdminGuard, JwtAlunoGuard],
 })
 export class AuthModule {}

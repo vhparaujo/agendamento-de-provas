@@ -1,3 +1,4 @@
+import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import { IsIn } from 'class-validator';
 
@@ -13,6 +14,13 @@ export const MODALIDADES_UPLOAD = [
 ] as const;
 
 export class ImportarAlunosDto {
+  @ApiProperty({
+    enum: MODALIDADES_UPLOAD,
+    example: 'EAD',
+    description:
+      'A modalidade NAO e coluna do CSV: vem do dropdown do upload e corresponde a aba de origem ' +
+      'da planilha (EaD -> EAD, Semi -> SEMI, Hibrido -> MODULAR). Define a duracao da prova.',
+  })
   @Transform(({ value }): unknown =>
     typeof value === 'string' ? value.trim().toUpperCase() : value,
   )

@@ -5,6 +5,7 @@ import * as bcrypt from 'bcrypt';
 import { UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { Perfil } from '../../enums/perfil.enum';
+import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 import { AuthService } from './auth.service';
 
 const SENHA = 'senha-correta-123';
@@ -19,6 +20,7 @@ describe('AuthService', () => {
   let service: AuthService;
   let prisma: { admin: { findUnique: jest.Mock; update: jest.Mock } };
   let jwt: JwtService;
+  let auditoria: { registrar: jest.Mock };
   let hash: string;
 
   beforeAll(async () => {
@@ -33,11 +35,14 @@ describe('AuthService', () => {
       },
     };
 
+    auditoria = { registrar: jest.fn() };
+
     const modulo: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
         { provide: PrismaService, useValue: prisma },
         { provide: JwtService, useValue: new JwtService({}) },
+        { provide: AuditoriaService, useValue: auditoria },
         {
           provide: ConfigService,
           useValue: {
@@ -228,6 +233,82 @@ describe('AuthService', () => {
       await expect(
         service.trocarSenha('admin-1', SENHA, SENHA),
       ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  /**
+   * Log de seguranca sem teste e log que ninguem descobre que parou de
+   * funcionar — justamente no dia em que for preciso investigar um incidente.
+   */
+  describe('auditoria', () => {
+    it('registra LOGIN_OK no login bem-sucedido', async () => {
+      prisma.admin.findUnique.mockResolvedValue({
+        ...adminAtivo,
+        senhaHash: hash,
+      });
+
+      await service.loginAdmin(adminAtivo.email, SENHA);
+
+      expect(auditoria.registrar).toHaveBeenCalledWith('LOGIN_OK', {
+        ator: adminAtivo.email,
+      });
+    });
+
+    it('registra LOGIN_FALHOU distinguindo o motivo, sem mudar a resposta', async () => {
+      // e-mail inexistente
+      prisma.admin.findUnique.mockResolvedValue(null);
+      await expect(service.loginAdmin('ninguem@ucb.br', SENHA)).rejects.toThrow(
+        UnauthorizedException,
+      );
+
+      expect(auditoria.registrar).toHaveBeenCalledWith('LOGIN_FALHOU', {
+        ator: 'ninguem@ucb.br',
+        detalhe: 'e-mail nao cadastrado',
+      });
+
+      // senha errada: MESMA excecao para o cliente, motivo diferente no log
+      auditoria.registrar.mockClear();
+      prisma.admin.findUnique.mockResolvedValue({
+        ...adminAtivo,
+        senhaHash: hash,
+      });
+      await expect(
+        service.loginAdmin(adminAtivo.email, 'chute'),
+      ).rejects.toThrow(UnauthorizedException);
+
+      expect(auditoria.registrar).toHaveBeenCalledWith('LOGIN_FALHOU', {
+        ator: adminAtivo.email,
+        detalhe: 'senha incorreta',
+      });
+    });
+
+    it('registra REFRESH_FALHOU quando tentam usar um access token como refresh', async () => {
+      const accessToken = await jwt.signAsync(
+        { sub: 'admin-1', perfil: Perfil.ADMIN, email: adminAtivo.email },
+        { secret: CONFIG.JWT_REFRESH_SECRET },
+      );
+
+      await expect(service.refreshAdmin(accessToken)).rejects.toThrow(
+        UnauthorizedException,
+      );
+
+      expect(auditoria.registrar).toHaveBeenCalledWith('REFRESH_FALHOU', {
+        ator: 'admin-1',
+        detalhe: 'token nao e do tipo refresh de admin',
+      });
+    });
+
+    it('registra SENHA_TROCADA na troca bem-sucedida', async () => {
+      prisma.admin.findUnique.mockResolvedValue({
+        ...adminAtivo,
+        senhaHash: hash,
+      });
+
+      await service.trocarSenha('admin-1', SENHA, 'nova-senha-forte-123');
+
+      expect(auditoria.registrar).toHaveBeenCalledWith('SENHA_TROCADA', {
+        ator: adminAtivo.email,
+      });
     });
   });
 });

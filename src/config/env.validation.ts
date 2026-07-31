@@ -29,6 +29,13 @@ export class EnvironmentVariables {
   @IsString()
   API_PREFIX?: string;
 
+  // Vazio = ligada fora de producao. Ver src/config/swagger.ts.
+  @IsOptional()
+  @IsIn(['true', 'false', ''], {
+    message: "SWAGGER_ENABLED deve ser 'true', 'false' ou vazio",
+  })
+  SWAGGER_ENABLED?: string;
+
   @IsNotEmpty({ message: 'DATABASE_URL e obrigatoria' })
   @IsString()
   DATABASE_URL!: string;

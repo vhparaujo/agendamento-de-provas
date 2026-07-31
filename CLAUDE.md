@@ -15,6 +15,11 @@ o acesso às provas (special access) no **Brightspace (D2L)** via **Valence API*
 - **Prisma ORM** sobre **MySQL**
 - **Docker** / docker-compose (app + banco)
 - Autenticação: **LTI 1.3** (aluno) e **JWT** (admin)
+- Documentação da API: **Swagger / OpenAPI** (`@nestjs/swagger`)
+
+O `README.md` documenta o projeto para quem chega (setup, endpoints, modelo de
+dados, roadmap). Este arquivo é o guia de *como trabalhar* no código. Ao mudar
+regra de negócio ou estrutura, atualize os dois.
 
 
 ## Conceitos de domínio (essenciais)
@@ -63,6 +68,60 @@ o acesso às provas (special access) no **Brightspace (D2L)** via **Valence API*
    disciplina; 404 (não matriculado) é estado ESPERADO (`NAO_MATRICULADO`), não
    erro. Falha de rede/token re-tenta.
 
+## Documentação da API (Swagger)
+
+**Regra: toda rota, DTO e resposta que entrar no projeto nasce documentada.** Um
+endpoint sem `@ApiOperation` é código incompleto — a doc é o contrato com o front,
+não um extra opcional.
+
+- **Onde**: `{API_PREFIX}/docs` (UI) e `{API_PREFIX}/docs-json` (spec). Ligada fora
+  de produção; `SWAGGER_ENABLED=true` publica mesmo em produção.
+- **Setup**: `src/config/swagger.ts` — tags, esquemas de segurança e descrição
+  geral. Rota nova **entra numa tag existente** (`TAGS`) ou cria a sua lá.
+- O plugin do `@nestjs/swagger` está ligado em `nest-cli.json` com
+  `introspectComments: true`: JSDoc em cima de um campo de DTO já vira descrição.
+  Ele **complementa**, não substitui as anotações explícitas.
+
+Checklist ao adicionar um endpoint:
+
+1. `@ApiTags(TAGS.X)` no controller.
+2. `@ApiOperation({ summary, description })` — o `summary` é o que aparece na
+   lista; o `description` explica a **regra de negócio**, não o óbvio do HTTP.
+3. Uma resposta de sucesso tipada: `@ApiOkResponse({ type: XDto })` /
+   `@ApiCreatedResponse`. Nada de resposta sem `type`.
+4. Cada erro que o handler realmente lança, com o **porquê**:
+   `@ApiConflictResponse({ description: 'vaga esgotada' })`.
+5. `@ApiProperty` em todo campo de DTO de entrada, com `example`.
+6. Upload: `@ApiConsumes('multipart/form-data')` + `@ApiBody({ schema })`.
+
+**Não repita `@ApiBearerAuth`**: `@SomenteAdmin()` e `@SomenteAluno()` já aplicam
+o esquema de segurança e as respostas 401/403 (`src/auth/roles.decorator.ts`).
+
+**DTOs de resposta** ficam em `<modulo>/dto/*.response.dto.ts` e usam
+`implements` da interface do service (`class XDto implements X`). Se a interface
+mudar, o build quebra ali — a doc não fica mentindo em silêncio.
+
+**Nunca** transforme em DTO validado um corpo que hoje é interface solta só para
+documentá-lo: com `forbidNonWhitelisted` isso passa a rejeitar campos extras e
+pode quebrar integração externa (é o caso do launch LTI, documentado por
+`@ApiBody({ schema })` justamente por isso).
+
+### A regra é cobrada por teste
+
+`test/openapi.e2e-spec.ts` varre o documento OpenAPI real (o mesmo que a
+aplicação publica) e **quebra o build quando uma rota entra sem documentação**.
+Ele verifica, para cada operação: `summary`, tag registrada em `TAGS`, resposta
+de sucesso, schema na resposta 2xx, esquema de segurança existente, corpo
+documentado em POST/PUT/PATCH — e, para cada campo de schema, `description`,
+`example`, `enum` ou `format`.
+
+Se um caso legítimo não couber numa regra, **adicione a exceção nomeada** na
+constante correspondente do próprio teste, com o motivo escrito
+(`SEM_CORPO_DE_SUCESSO`, `SEM_CORPO_DE_REQUISICAO`). Não afrouxe a regra para
+todo mundo — uma exceção com nome é auditável; um `if` genérico não é.
+
+O teste roda em `npm run test:e2e` e exige banco de pé.
+
 ## Autenticação
 
 - **Aluno**: endpoints LTI 1.3 (login OIDC, launch, JWKS). Valida `id_token`,
@@ -73,6 +132,91 @@ o acesso às provas (special access) no **Brightspace (D2L)** via **Valence API*
   - Reset: administrativo (um admin gera senha provisória para outro). Campos de
     reset por e-mail existem no schema mas ficam fora do MVP.
   - **Um único nível de acesso**: JWT de admin válido = acesso total.
+
+**Decisões já implementadas — não reinventar:**
+
+- **Senha provisória trava tudo.** Com `mustChangePassword=true` o `JwtAdminGuard`
+  devolve 403 em qualquer rota, exceto as marcadas com
+  `@PermitidoComSenhaProvisoria()` (hoje `/auth/trocar-senha` e `/auth/me`). Sem
+  essa exceção o admin do seed ficaria travado para sempre.
+- **Login não vaza quais e-mails existem.** Mensagem única para e-mail
+  inexistente, senha errada e conta inativa; comparação contra um hash falso
+  mantém o tempo de resposta constante. Não "melhore" a mensagem de erro.
+- **Refresh só aceita refresh.** O payload carrega `tipo: 'refresh'`, verificado
+  antes de emitir tokens novos — um access token não serve.
+- **O JWT do aluno carrega os vínculos no payload.** É assim que o agendamento
+  confere que o `alunoId` escolhido pelo portal pertence àquela matrícula, sem
+  confiar em nada vindo do cliente.
+- **STATUS CURSO não bloqueia o login**, só o agendamento: um aluno cancelado é
+  reconhecido e recebe mensagem clara, em vez de "não encontrado".
+- **Duas travas em admins**: ninguém desativa a si mesmo, e o último admin ativo
+  não pode ser desativado.
+- **LTI**: `state` de uso único com expiração + `nonce` conferido; valida versão
+  `1.3.0`, `LtiResourceLinkRequest` e `deployment_id`. Os claims de matrícula e
+  UserId são configuráveis por lista (`LTI_CLAIM_*`, tentados em ordem) porque
+  dependem do registro da ferramenta; `LTI_DEBUG_CLAIMS=true` loga os claims
+  recebidos para descobrir os nomes reais (ignorado em produção).
+
+Decorators prontos em `src/auth/roles.decorator.ts`: `@SomenteAdmin()`,
+`@SomenteAluno()`, `@AdminLogado()`, `@AlunoLogado()`, `@UsuarioLogado()`.
+
+## Segurança (controles ativos — não desfazer sem substituir)
+
+**Nega por padrão.** `AutenticacaoGuard` é global (`APP_GUARD`): rota **sem
+decorator de acesso é recusada com 403** e o fato vai para o log como
+`ROTA_SEM_CONTROLE_DE_ACESSO`. Toda rota nova precisa de `@SomenteAdmin()`,
+`@SomenteAluno()` ou `@Publico()`. Esquecer fecha a rota, nunca abre.
+
+É esse guard que lê o `PERFIL_KEY` — a metadata que antes era gravada e nunca
+consultada. **Não coloque `UseGuards(JwtAdminGuard)` numa rota**: com o guard
+global, o token seria verificado duas vezes por request.
+
+**Limite de requisições** (`@nestjs/throttler`, ASVS 6.3.1): 120/min no geral;
+**5/min** em login, refresh, troca de senha e launch LTI (`@Throttle(LIMITE_AUTENTICACAO)`);
+10 a cada 5min nos uploads (`LIMITE_UPLOAD`). Números em `src/config/throttler.config.ts`.
+Nos testes o limitador é desligado por `skipIf`; ligue com `THROTTLE_NOS_TESTES=true`
+apenas na suíte que testa o próprio limitador.
+
+**Cabeçalhos** (`helmet`, `src/config/helmet.config.ts`): CSP `default-src 'none'`
+na API e uma CSP relaxada **só** na rota do Swagger. Não unifique as duas — seria
+afrouxar a API inteira por causa da página da doc. `X-XSS-Protection: 0` está
+**correto**: o auditor de XSS foi removido dos navegadores e ligá-lo é conselho antigo.
+
+**Auditoria** (`AuditoriaService`, módulo global): uma linha JSON por evento, com
+quando/onde/quem/o-quê. Evento novo entra no *union type* `EventoSeguranca`, nunca
+como string solta. **Nunca** passe senha, hash ou token em `detalhe`. Valores
+vindos do cliente são limpos de caracteres de controle (log injection, ASVS 16.4.1).
+
+Detalhe que importa: no login, **o log distingue o motivo** (e-mail inexistente /
+senha errada / conta inativa) enquanto a **resposta continua uniforme**. Quem
+investiga precisa do motivo; o atacante não pode tê-lo.
+
+**Filtro global de exceções** (`ExcecoesFilter`): audita 401/403/429, e converte
+qualquer erro não tratado em `500` genérico + `erroId` — stack só no log (A10).
+
+**Não se aplica a este projeto:** CSRF (autenticação é `Authorization: Bearer`,
+sem cookie; se algum dia o token for para cookie, CSRF volta a existir) e XSS
+refletido (a API só devolve JSON). O que é responsabilidade do front está em
+[`docs/SEGURANCA-FRONTEND.md`](docs/SEGURANCA-FRONTEND.md) — **mantenha esse
+arquivo atualizado** quando mudar contrato de erro, limite ou fluxo de token.
+
+**Pendente:** CORS não configurado (hoje desabilitado = seguro, mas o front não
+funcionará até definirmos a origem).
+
+## Endpoints já implementados
+
+Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
+
+| Rota | Auth | O que faz |
+|---|:---:|---|
+| `GET /health` | — | Status da API + banco (200 mesmo com banco fora) |
+| `POST /auth/login` · `/auth/refresh` | — | Tokens do admin |
+| `POST /auth/trocar-senha` · `GET /auth/me` | admin | Liberadas com senha provisória |
+| `GET/POST /lti/login` · `POST /lti/launch` · `GET /lti/jwks` | — | Fluxo LTI (autentica pela assinatura do Brightspace) |
+| `GET/POST /admins` · `POST /admins/:id/resetar-senha` · `PATCH /admins/:id/ativo` | admin | Gestão de administradores |
+| `POST /importacao/alunos` · `/importacao/turmas` · `GET /importacao` | admin | CSVs + auditoria |
+
+Pendentes: polo, sala, faixa, sala-faixa, agendamento, período, D2L.
 
 ## Cadastro: polos, salas e os 2 CSVs
 
@@ -130,9 +274,12 @@ sala. O admin corrige a planilha e reenvia.
 
 **Turmas vazias = comportamento seguro.** Enquanto não houver turmas importadas, o
 default é **bloquear agendamento** (não liberar prova para disciplina errada),
-controlado por um flag claro e invertível (`TURMAS_FILTER_ENABLED`). O cruzamento
-disciplinas ∩ turmas ∩ período já deve estar escrito e testável com um mock de
-2-3 linhas; quando o CSV real chegar, só muda o mapeamento de colunas.
+controlado por um flag claro e invertível (`TURMAS_FILTER_ENABLED`, default `true`).
+
+O cruzamento disciplinas ∩ turmas ∩ período **já está implementado e testado** em
+`src/turma/service/turma.service.ts` (`filtrarAgendaveis`). Quando o CSV real
+chegar, o único ponto a mudar é `src/importacao/service/turma-csv.columns.ts` —
+nenhuma regra de negócio se move.
 
 ## Integração D2L
 
@@ -149,29 +296,48 @@ Modular por domínio. Cada módulo segue subpastas:
 
 ```
 src/
-  auth/        (controller, lti, jwt, dto, service, module, roles.decorator.ts)
-  admin/       aluno/      modalidade/
-  polo/        sala/       faixa/     sala-faixa/
-  agendamento/ (alocação sequencial — coração da regra)
-  importacao/  (parsing dos 2 CSVs)   turma/
-  periodo/     (abrir/fechar agendamento)
-  d2l/         (valence-client.service.ts, sync.service.ts)
-  components/  enums/  errors/  database/ (Prisma)
-  app.module.ts  main.ts
+  auth/        ✅ controller/ dto/ jwt/ lti/ service/ module/ roles.decorator.ts
+  admin/       ✅   aluno/  ✅   importacao/ ✅ (2 CSVs)   turma/ ✅ (cruzamento)
+  config/      ✅ env.validation.ts · swagger.ts · helmet.config.ts · throttler.config.ts
+  seguranca/   ✅ auditoria (log de eventos) · filtro global de excecoes
+  database/    ✅ prisma.service.ts · mariadb-adapter.ts · prisma.module.ts
+  enums/       ✅ perfil.enum.ts · status-curso.enum.ts
+  dto/         ✅ respostas de rotas fora de módulo (health)
+  generated/   ✅ client do Prisma — NÃO versionado, não editar
+
+  modalidade/  ⬜  polo/  ⬜  sala/  ⬜  faixa/  ⬜  sala-faixa/  ⬜
+  agendamento/ ⬜ (alocação sequencial — coração da regra)
+  periodo/     ⬜ (abrir/fechar agendamento)
+  d2l/         ⬜ (valence-client.service.ts, sync.service.ts)
+
+  app.module.ts  app.controller.ts (health)  main.ts
 ```
 
 ## Convenções
 
 - **DTOs** com `class-validator` para toda entrada de dados. Nunca aceitar body
-  cru sem validação.
+  cru sem validação. `ValidationPipe` global com `whitelist` +
+  `forbidNonWhitelisted`: campo não declarado no DTO derruba a request.
+- **Toda rota e todo DTO documentados no Swagger** — ver a seção acima.
 - **Prisma** como única camada de acesso a dados; sem SQL cru exceto onde a
-  transação de alocação exigir lock explícito.
+  transação de alocação exigir lock explícito. Injete `PrismaService`; nunca
+  instancie `PrismaClient` fora de `src/database/`.
 - **Nomes em português** no domínio (matrícula, faixa, polo) para casar com o
   vocabulário institucional; código/estruturas em inglês onde for convenção.
 - **Segredos só via `.env`** (DATABASE_URL, JWT_SECRET, credenciais Valence/LTI,
   seed do admin). Nunca commitar segredo.
+- **Variável de ambiente nova entra em `src/config/env.validation.ts`** e no
+  `.env.example`. O `.env` é validado no boot: faltando algo essencial, a
+  aplicação não sobe — melhor falhar no start que em produção.
 - **Erros de negócio** com exceções tipadas do Nest (ex: `ConflictException` para
   vaga esgotada, `ForbiddenException` para período fechado).
+- **Rota nova = decorator de acesso obrigatório.** Sem `@SomenteAdmin()`,
+  `@SomenteAluno()` ou `@Publico()` ela é negada pelo guard global.
+- **Ação sensível = evento de auditoria.** Login, troca de senha, mudança de
+  admin, e o que vier de agendamento/remanejo.
+- **Comentário explica o *porquê*, não o *quê*.** O padrão do repositório é
+  registrar a decisão e o risco que ela evita (ver `status-curso.enum.ts`,
+  `mariadb-adapter.ts`). Mantenha isso.
 
 ## Comandos
 
@@ -187,15 +353,23 @@ docker compose up -d --build
 npm run prisma:generate      # regenera o client em src/generated (não versionado)
 npm run prisma:migrate       # migrate dev
 npm run prisma:deploy        # migrate deploy (produção/container)
+npm run prisma:studio
+npm run db:down              # derruba o compose
+npm run db:reset             # migrate reset — APAGA os dados
 
 # seeds idempotentes: modalidades + 27 polos + 1º admin
 npm run seed                 # lê SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD do .env
 
+# LTI
+npm run lti:keygen           # gera a chave RSA da ferramenta (LTI_TOOL_PRIVATE_KEY)
+
 # dev / qualidade
-npm run start:dev
+npm run start:dev            # doc em http://localhost:3000/api/docs
 npm test        # unitários
+npm run test:cov
 npm run test:e2e   # exige banco de pé + migrations aplicadas
 npm run lint
+npm run format
 ```
 
 ## Notas de infraestrutura (Prisma 7)
@@ -212,15 +386,57 @@ maioria dos tutoriais (e em relação ao `schema.prisma` original):
 - `prisma.config.ts` substitui o bloco `prisma` do `package.json` (schema,
   migrations e comando de seed).
 
-O `docker/mysql/init/` concede ao usuário da aplicação permissão sobre o shadow
-database do `prisma migrate dev` (só desenvolvimento).
+Dois detalhes que já custaram tempo — não desfaça:
+
+- `importFileExtension = "js"` no generator é **obrigatório**. Sem ele o Prisma
+  infere a extensão a partir do tsconfig presente no momento do generate e emite
+  imports `.ts` quando roda sem tsconfig (o build do Docker), quebrando o
+  `require()` no `dist`.
+- O `docker/mysql/init/` concede ao usuário da aplicação permissão sobre o shadow
+  database do `prisma migrate dev` (só desenvolvimento).
+
+## Estrutura física e oferta de vagas (etapa 5)
+
+`GET /modalidades` · `polos` · `salas` · `faixas` · `sala-faixas` — todas exigem
+JWT de admin.
+
+**Onde cada coisa vive:** sala é física e neutra; faixa é horário neutro; a
+**oferta** (`SalaFaixa` = sala + faixa + modalidade + vagas + ordem) é onde
+modalidade e vaga existem de fato. Criar oferta é sempre por dentro da faixa
+(`POST /faixas` ou `POST /faixas/:id/salas`) — `SalaFaixa` nunca nasce solta.
+
+**Validações que recusam configuração impossível** (`sala-faixa.validacao.ts`,
+compartilhado pelas duas portas de entrada):
+
+| Regra | Por quê |
+|---|---|
+| Sala tem que ser do mesmo polo da faixa | Senão o aluno é alocado em outro campus |
+| Janela ≥ duração da modalidade | Faixa de 1h30 com sala EaD (3h) é oferta impossível |
+| `vagas` ≤ capacidade da sala | Mais alunos do que lugares |
+| Sala entra 1× por faixa | Dentro da faixa ela fica travada numa modalidade |
+| `ordem` única por faixa + modalidade | É a sequência de preenchimento da alocação |
+
+**Campos deliberadamente imutáveis** — mudá-los quebraria dado já gravado:
+`Polo.nome` (chave de casamento com o CSV), `Sala.poloId` (sala não se muda de
+campus), `SalaFaixa.modalidadeId` (trocar depois de haver agendamento poria o
+aluno numa prova de outra duração). Nos três casos o campo não existe no DTO de
+update, então `forbidNonWhitelisted` devolve 400.
+
+**Apagar vs. desativar:** só se apaga o que nunca foi usado. Sala já ofertada,
+faixa com agendamento e oferta com aluno alocado respondem 409 sugerindo
+`ativo=false` — o histórico de quem já tem prova marcada precisa sobreviver.
+Reduzir `vagas` abaixo dos agendamentos existentes também é 409.
 
 ## Ao implementar, priorize nesta ordem
 
-1. Prisma schema + migrations + Docker + seed do admin.
-2. Auth (admin JWT + LTI aluno).
-3. Importação dos 2 CSVs (alunos, turmas) + seed de polos.
-4. Estrutura (polo/sala/faixa/sala-faixa).
-5. Portal do aluno (listar faixas + agendar com alocação sequencial).
-6. Integração D2L (Valence client + fila de special access).
-7. Período de agendamento + remanejo administrativo + exportação.
+1. ✅ Prisma schema + migrations + Docker + seed do admin.
+2. ✅ Auth (admin JWT + LTI aluno).
+3. ✅ Importação dos 2 CSVs (alunos, turmas) + seed de polos.
+4. ✅ Estrutura (polo/sala/faixa/sala-faixa).
+5. ⬜ Portal do aluno (listar faixas + agendar com alocação sequencial).
+6. ⬜ Integração D2L (Valence client + fila de special access).
+7. ⬜ Período de agendamento + remanejo administrativo + exportação.
+
+**Bloqueios externos:** o CSV real de turmas não chegou (mapeamento provisório) e
+as credenciais da Valence não existem (variáveis `VALENCE_*` no `.env.example`
+ainda sem consumidor no código).

@@ -1,13 +1,24 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AdminModule } from './admin/module/admin.module';
 import { AlunoModule } from './aluno/module/aluno.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { AutenticacaoGuard } from './auth/jwt/autenticacao.guard';
 import { AuthModule } from './auth/module/auth.module';
 import { validateEnv } from './config/env.validation';
+import { throttlerConfig } from './config/throttler.config';
 import { PrismaModule } from './database/prisma.module';
+import { FaixaModule } from './faixa/module/faixa.module';
 import { ImportacaoModule } from './importacao/module/importacao.module';
+import { ModalidadeModule } from './modalidade/module/modalidade.module';
+import { PoloModule } from './polo/module/polo.module';
+import { SalaFaixaModule } from './sala-faixa/module/sala-faixa.module';
+import { SalaModule } from './sala/module/sala.module';
+import { ExcecoesFilter } from './seguranca/filter/excecoes.filter';
+import { SegurancaModule } from './seguranca/module/seguranca.module';
 import { TurmaModule } from './turma/module/turma.module';
 
 @Module({
@@ -17,14 +28,30 @@ import { TurmaModule } from './turma/module/turma.module';
       cache: true,
       validate: validateEnv,
     }),
+    ThrottlerModule.forRoot(throttlerConfig),
+    SegurancaModule,
     PrismaModule,
     AuthModule,
     AdminModule,
     AlunoModule,
     ImportacaoModule,
     TurmaModule,
+    // Estrutura fisica e oferta de vagas (etapa 5)
+    ModalidadeModule,
+    PoloModule,
+    SalaModule,
+    FaixaModule,
+    SalaFaixaModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    // A ORDEM IMPORTA: guards globais rodam na ordem em que sao declarados.
+    // O limite de requisicoes vem PRIMEIRO, de proposito — quem esta fazendo
+    // forca bruta precisa esbarrar no 429 antes de gastar um bcrypt do servidor.
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_GUARD, useClass: AutenticacaoGuard },
+    { provide: APP_FILTER, useClass: ExcecoesFilter },
+  ],
 })
 export class AppModule {}

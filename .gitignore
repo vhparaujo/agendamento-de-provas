@@ -52,6 +52,11 @@ lerna-debug.log*
 # uploads de CSV
 /uploads
 
+# Postman fica fora do git por inteiro (collection e environment).
+# O contrato da API versionado e o Swagger: {API_PREFIX}/docs-json, gerado do
+# proprio codigo. Para testar, importe essa URL no Postman.
+/docs/postman/
+
 # Runtime data
 pids
 *.pid

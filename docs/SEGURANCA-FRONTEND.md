@@ -1,0 +1,244 @@
+# Segurança — o que é responsabilidade do FRONT-END
+
+> **Para quem for construir o portal (web) deste projeto.**
+> O backend é uma API NestJS que só devolve JSON. Vários controles de segurança
+> **não podem ser implementados nele** — dependem de decisões do cliente. Este
+> documento lista exatamente quais, e por quê.
+>
+> Documento de referência da API: `README.md` do backend · Swagger em `/api/docs`.
+
+---
+
+## Contexto em 30 segundos
+
+| | |
+|---|---|
+| **Backend** | NestJS + Prisma/MySQL. Só JSON, nenhuma página HTML. |
+| **Aluno** | Entra por **LTI 1.3 a partir do Brightspace**. Não tem senha. |
+| **Admin** | E-mail + senha → access token (15min) + refresh token (7d). |
+| **Autenticação** | `Authorization: Bearer <token>`. **Não usamos cookies.** |
+| **Perfis** | `ADMIN` (acesso total, sem níveis) e `ALUNO`. |
+
+---
+
+## 1. Onde guardar o token — a decisão mais importante
+
+O backend **não impõe** onde o token fica. Essa escolha define se a aplicação
+fica exposta a CSRF ou a XSS, e é a decisão de segurança com maior impacto no
+front.
+
+### Como está hoje: sem cookie, sem CSRF
+
+O token viaja num header que o navegador **não anexa sozinho** em requisição
+cross-site. Por isso o projeto **não tem** e **não precisa** de proteção CSRF.
+
+### ⚠️ O que muda se você guardar o token em cookie
+
+Se o front decidir usar cookie (inclusive `httpOnly`, que é recomendação comum e
+legítima), **CSRF passa a existir na mesma hora**. Nesse caso, é obrigatório:
+
+- `SameSite=Strict` (ou `Lax`) e `Secure` no cookie;
+- token anti-CSRF (double-submit) nas rotas que mudam estado;
+- **avisar o time do backend** — precisaremos habilitar validação de CSRF e
+  ajustar CORS para `credentials`.
+
+**Não tome essa decisão sozinho.** Se for usar cookie, avise antes.
+
+### Recomendação
+
+| Token | Onde | Por quê |
+|---|---|---|
+| **access token** | memória (variável / estado do app) | some ao fechar a aba; XSS não lê de `localStorage` |
+| **refresh token** | memória, ou cookie `httpOnly` + `SameSite=Strict` | se for cookie, leia o aviso acima |
+
+**Evite `localStorage`/`sessionStorage`** para o token: qualquer XSS na página lê
+o conteúdo deles em uma linha de JS. Se o projeto aceitar esse risco
+conscientemente, tudo bem — mas registre a decisão.
+
+**Nunca** coloque token na URL (query string). URL vai para histórico do
+navegador, log de proxy e header `Referer`.
+
+---
+
+## 2. XSS — o backend não pode resolver isso por você
+
+A API devolve JSON, então não existe XSS refletido do lado do servidor. **O risco
+real é XSS armazenado, e a origem são os dados que nós importamos.**
+
+O sistema importa CSVs enviados pela secretaria — hoje **7.510 registros de
+alunos** — com campos que vão direto para a tela do usuário:
+
+| Campo | Vem de | Aparece onde |
+|---|---|---|
+| `nome` | coluna `ALUNO` do CSV | cabeçalho do portal, listagens |
+| `curso` | coluna `CURSO` | seleção de vínculo |
+| `polo.nome` | coluna `CAMPUS` | listagem de faixas/horários |
+| `nomeDisciplina` | CSV de turmas / Valence | lista de disciplinas da prova |
+
+Esses valores **não são sanitizados na importação, de propósito**: sanitizar na
+entrada corromperia dados legítimos (um nome com `&` ou acento, por exemplo) e
+ainda perderia o dado original. O tratamento correto é **escapar na saída**.
+
+### O que fazer
+
+- **Renderize como texto, sempre.** React (`{valor}`), Vue (`{{ valor }}`) e
+  Angular já escapam por padrão. Isso resolve o caso normal.
+- **Nunca** use `dangerouslySetInnerHTML`, `v-html`, `[innerHTML]` ou
+  `element.innerHTML = ...` com qualquer campo da tabela acima.
+- Se precisar de HTML rico em algum campo (não deveria), sanitize com **DOMPurify**
+  antes de injetar.
+- Cuidado com atributos: `<a href={valorDoCsv}>` permite `javascript:`. Valide o
+  esquema (`https:` / `http:`) antes.
+
+### CSP no front
+
+O backend já envia CSP restritiva nas respostas dele, mas **isso não protege as
+páginas do front** — cada aplicação envia a própria. Configure no servidor que
+servir o portal:
+
+```
+Content-Security-Policy: default-src 'self'; object-src 'none'; base-uri 'self'
+```
+
+Evite `'unsafe-inline'` e `'unsafe-eval'` em `script-src`.
+
+---
+
+## 3. Autorização — "request autenticado ≠ request legítimo"
+
+**Token válido não significa ação legítima.** Um aluno autenticado continua sem
+direito de agendar prova para outro aluno.
+
+O backend faz essa verificação — os vínculos do aluno vão **dentro do JWT**
+justamente para conferir posse sem confiar no cliente. Mas isso tem duas
+consequências para o front:
+
+- **Nunca confie em checagem de permissão feita só no front.** Esconder um botão
+  não protege nada; a proteção é o backend recusar. Esconder é UX, não segurança.
+- **Não invente `alunoId`.** Envie o `alunoId` que veio no launch; se não bater
+  com o token, o backend recusa (e isso vai para o log de auditoria).
+
+O mesmo vale para as telas de admin: não há níveis de admin, então qualquer admin
+autenticado pode tudo. Não construa uma "matriz de permissões" no front — ela não
+existe no backend.
+
+---
+
+## 4. Fluxos que o front precisa tratar
+
+### 4.1 Admin com senha provisória (`mustChangePassword`)
+
+`POST /api/auth/login` pode responder com `mustChangePassword: true`. Nesse
+estado, **todas as rotas devolvem 403**, exceto `/api/auth/trocar-senha` e
+`/api/auth/me`.
+
+O front **deve** redirecionar para a tela de troca de senha antes de qualquer
+outra coisa. Se ignorar a flag, o app trava em 403 sem explicação aparente.
+
+### 4.2 Aluno com mais de um curso (`precisaEscolherCurso`)
+
+`POST /api/lti/launch` responde com um array `vinculos`. Se
+`precisaEscolherCurso: true`, o RA tem mais de um curso (modalidades diferentes,
+durações de prova diferentes) e **o portal precisa perguntar de qual curso é a
+prova** antes de listar horários. Cada vínculo gera um agendamento próprio.
+
+Se `vinculos[].ativo` for `false`, o aluno é reconhecido mas **não pode agendar** —
+mostre mensagem clara em vez de "erro".
+
+### 4.3 Renovação de token
+
+Access token expira em **15 minutos**. Ao receber `401`, chame
+`POST /api/auth/refresh` com o refresh token e refaça a requisição. Faça isso
+**uma vez só** — se o refresh também falhar, mande para o login. Loop de refresh
+em 401 é uma forma clássica de derrubar a própria API.
+
+### 4.4 `429 Too Many Requests` — novo
+
+O backend agora limita requisições:
+
+| Rota | Limite |
+|---|---|
+| `/api/auth/login`, `/refresh`, `/trocar-senha`, `/api/lti/launch` | **5 por minuto** por IP |
+| Uploads de CSV | 10 a cada 5 minutos |
+| Demais rotas | 120 por minuto |
+
+O front **deve** tratar `429` com mensagem amigável ("muitas tentativas, aguarde
+um instante") e **não** repetir automaticamente sem espera. Respeite o header
+`Retry-After` quando presente.
+
+> Atenção em laboratório/campus: o limite é **por IP**. Muitos alunos atrás do
+> mesmo NAT podem compartilhar IP. Se isso virar problema real em produção, é
+> ajuste no backend — reporte.
+
+### 4.5 Erros `500`
+
+Resposta de erro interno vem assim:
+
+```json
+{ "statusCode": 500, "message": "Erro interno. Informe o codigo abaixo ao suporte.", "erroId": "8f1c9d2e-..." }
+```
+
+**Mostre o `erroId` para o usuário.** É com ele que o time acha a linha exata no
+log do servidor. O detalhe técnico nunca vem na resposta, de propósito.
+
+---
+
+## 5. CORS — precisa ser combinado
+
+**Hoje o CORS está desabilitado no backend.** Isso significa que **nenhuma
+chamada de navegador vindo de outra origem vai funcionar** até configurarmos.
+
+Quando o front tiver uma origem definida (ex.: `https://provas.ucb.br`), avise o
+time do backend com:
+
+- a(s) origem(ns) exata(s), incluindo protocolo e porta;
+- se vai usar cookies (`credentials: true`) — ver seção 1.
+
+Não vamos liberar `origin: '*'`. Origem curinga com credenciais é bloqueado pelo
+navegador e, sem credenciais, ainda expõe a API a qualquer site.
+
+---
+
+## 6. Checklist rápido
+
+- [ ] Token **fora** de `localStorage`; se for cookie, `SameSite` + `Secure` + CSRF, **e avisar o backend**
+- [ ] Token **nunca** na URL
+- [ ] Nenhum `innerHTML`/`v-html`/`dangerouslySetInnerHTML` com `nome`, `curso`, `campus`, `nomeDisciplina`
+- [ ] `href` vindo de dado importado tem esquema validado
+- [ ] CSP configurada no servidor do front
+- [ ] `mustChangePassword: true` → redireciona para troca de senha
+- [ ] `precisaEscolherCurso: true` → pergunta o curso antes de listar horários
+- [ ] `vinculos[].ativo === false` → mensagem clara, não erro genérico
+- [ ] `401` → tenta refresh **uma vez**, depois login
+- [ ] `429` → mensagem de espera, sem retry automático agressivo
+- [ ] `500` → exibe o `erroId`
+- [ ] Permissão escondida na UI **não** é tratada como segurança
+- [ ] Origem do front comunicada ao backend para liberar CORS
+- [ ] HTTPS em produção (o backend não faz terminação TLS)
+
+---
+
+## 7. O que o BACKEND já garante (não precisa refazer)
+
+Para não haver esforço duplicado:
+
+- Hash de senha (bcrypt, 12 rounds) e comparação em tempo constante
+- Mensagem de erro uniforme no login (não revela se o e-mail existe)
+- Validação de **toda** entrada; campo não declarado no DTO derruba a requisição
+- Proteção contra SQL injection (Prisma parametrizado)
+- **Deny by default**: rota sem decorator de acesso é negada
+- Cabeçalhos de segurança nas respostas da API (helmet + CSP restritiva)
+- Rate limiting
+- Log de auditoria: login, falhas, troca de senha, ações administrativas
+- `500` sem stack trace, com `erroId` correlacionável
+- Validação completa do LTI (assinatura, issuer, audience, `nonce`, `state` de uso único)
+
+---
+
+## 8. Dúvidas
+
+A fonte de verdade dos contratos é o **Swagger**: `http://localhost:3000/api/docs`
+(spec JSON em `/api/docs-json`, importável no Postman/Insomnia e utilizável para
+gerar client tipado).
+
+Regras de negócio e modelo de dados: `README.md` do backend.

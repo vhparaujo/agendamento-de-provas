@@ -7,6 +7,7 @@ import {
 import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../../database/prisma.service';
+import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 import { BCRYPT_ROUNDS } from '../../auth/service/auth.service';
 
 export interface AdminResumo {
@@ -31,7 +32,10 @@ const SELECAO = {
 
 @Injectable()
 export class AdminService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditoria: AuditoriaService,
+  ) {}
 
   listar(): Promise<AdminResumo[]> {
     return this.prisma.admin.findMany({
@@ -67,6 +71,10 @@ export class AdminService {
       select: SELECAO,
     });
 
+    this.auditoria.registrar('ADMIN_CRIADO', {
+      detalhe: `novo admin ${admin.email} (senha ${dados.senha ? 'informada' : 'gerada'})`,
+    });
+
     // Devolvida uma unica vez; nunca fica recuperavel depois.
     return dados.senha ? { admin } : { admin, senhaProvisoria };
   }
@@ -93,7 +101,10 @@ export class AdminService {
       select: SELECAO,
     });
 
-    void solicitanteId; // reservado para auditoria futura
+    this.auditoria.registrar('ADMIN_SENHA_RESETADA', {
+      ator: solicitanteId,
+      detalhe: `senha de ${admin.email} resetada`,
+    });
 
     return { admin, senhaProvisoria };
   }
@@ -125,11 +136,18 @@ export class AdminService {
       }
     }
 
-    return this.prisma.admin.update({
+    const atualizado = await this.prisma.admin.update({
       where: { id },
       data: { ativo },
       select: SELECAO,
     });
+
+    this.auditoria.registrar('ADMIN_ATIVO_ALTERADO', {
+      ator: solicitanteId,
+      detalhe: `${atualizado.email} -> ativo=${ativo}`,
+    });
+
+    return atualizado;
   }
 }
 

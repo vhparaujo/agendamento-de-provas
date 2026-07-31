@@ -7,6 +7,7 @@ o período de agendamento. Ao confirmar um agendamento, o sistema libera o acess
 
 - **Stack:** NestJS 11 · TypeScript · Prisma 7 (MySQL 8) · Docker
 - **Autenticação:** LTI 1.3 (aluno, sem senha) · JWT (admin)
+- **Documentação viva:** Swagger em `/api/docs`
 
 ---
 
@@ -19,6 +20,8 @@ o período de agendamento. Ao confirmar um agendamento, o sistema libera o acess
 - [Comandos](#comandos)
 - [Variáveis de ambiente](#variáveis-de-ambiente)
 - [Endpoints](#endpoints)
+- [Documentação da API (Swagger)](#documentação-da-api-swagger)
+- [Segurança](#segurança)
 - [Modelo de dados](#modelo-de-dados)
 - [Importação dos CSVs](#importação-dos-csvs)
 - [Autenticação em detalhe](#autenticação-em-detalhe)
@@ -122,7 +125,8 @@ npm run seed             # modalidades + 27 polos + primeiro admin
 npm run start:dev
 ```
 
-A API sobe em `http://localhost:3000/api`. Confira com `GET /api/health`.
+A API sobe em `http://localhost:3000/api`. Confira com `GET /api/health` e abra a
+documentação interativa em **http://localhost:3000/api/docs**.
 
 **Tudo containerizado** (app + banco), útil para validar o build de produção:
 
@@ -179,6 +183,8 @@ segredo ausente em produção.
 | `JWT_SECRET` | ✅ | mínimo 16 caracteres |
 | `JWT_REFRESH_SECRET` | ✅ | mínimo 16 caracteres, diferente do anterior |
 | `PORT`, `API_PREFIX`, `NODE_ENV` | | default `3000`, `api`, `development` |
+| `SWAGGER_ENABLED` | | vazio = ligado fora de produção; `true` publica também em produção |
+| `THROTTLE_NOS_TESTES` | | só para teste: liga o rate limiting sob `NODE_ENV=test` |
 | `JWT_EXPIRES_IN` / `JWT_REFRESH_EXPIRES_IN` | | default `15m` / `7d` |
 | `JWT_ALUNO_EXPIRES_IN` | | default `2h` — token curto, só para navegação |
 | `SEED_ADMIN_EMAIL` / `_PASSWORD` / `_NOME` | seed | lidos apenas por `npm run seed` |
@@ -259,6 +265,72 @@ limite de 15 MB, extensão `.csv` obrigatória.
 | `POST` | `/importacao/alunos` | CSV de alunos + campo `modalidade` (dropdown) |
 | `POST` | `/importacao/turmas` | CSV de turmas reais |
 | `GET` | `/importacao` | Histórico de importações (auditoria) |
+
+---
+
+## Documentação da API (Swagger)
+
+| Endereço | O que é |
+|---|---|
+| `/api/docs` | Swagger UI — navegável e executável |
+| `/api/docs-json` | Spec OpenAPI 3, para gerar client ou importar no Postman/Insomnia |
+
+Ligada por padrão fora de produção. Em produção fica desligada (a doc revela toda
+a superfície da API); para publicar num ambiente interno, use `SWAGGER_ENABLED=true`.
+
+**Como testar pela UI:** chame `POST /auth/login`, copie o `accessToken`, clique
+em **Authorize** → `admin-jwt`. O token persiste entre reloads. Se a resposta
+trouxer `mustChangePassword: true`, só `/auth/trocar-senha` e `/auth/me` respondem
+até a troca. O launch LTI não é simulável pela UI — exige um `id_token` assinado
+pelo Brightspace — mas o contrato de resposta está documentado para o front.
+
+**A doc é obrigatória, não opcional.** Toda rota nova nasce com `@ApiOperation`,
+resposta de sucesso tipada e um `@Api*Response` por erro que o handler realmente
+lança; todo campo de DTO de entrada leva `@ApiProperty` com exemplo. Duas coisas
+tornam isso barato:
+
+- `@SomenteAdmin()` e `@SomenteAluno()` já aplicam o esquema de segurança e as
+  respostas 401/403 — não repita `@ApiBearerAuth`.
+- O plugin do `@nestjs/swagger` (ligado em `nest-cli.json`) lê os decorators do
+  `class-validator` e o JSDoc dos campos, preenchendo o que faltar.
+
+Os DTOs de resposta vivem em `<módulo>/dto/*.response.dto.ts` e declaram
+`implements` da interface do service. Se a interface mudar, o build quebra ali —
+a documentação não fica mentindo em silêncio.
+
+**E a regra é cobrada automaticamente.** `test/openapi.e2e-spec.ts` varre o
+documento OpenAPI real e falha quando uma rota entra sem `summary`, sem tag
+registrada, sem resposta de sucesso tipada, sem corpo documentado, ou com campo
+de schema sem `description`/`example`/`enum`/`format`. A mensagem de erro lista
+todas as pendências de uma vez, não só a primeira. Casos legítimos entram como
+exceção nomeada no próprio teste, com o motivo escrito.
+
+---
+
+## Segurança
+
+| Controle | Como está |
+|---|---|
+| **Deny by default** | Guard global: rota sem `@SomenteAdmin()`/`@SomenteAluno()`/`@Publico()` é **negada** |
+| **Rate limiting** | 5/min em login, refresh, troca de senha e launch LTI · 10/5min em uploads · 120/min no resto |
+| **Cabeçalhos** | `helmet` com CSP `default-src 'none'` na API (relaxada só na página do Swagger) |
+| **Auditoria** | Log JSON por evento: login, falhas, troca de senha, ações administrativas, 401/403/429 |
+| **Senhas** | bcrypt 12 rounds; comparação em tempo constante; mensagem uniforme no login |
+| **Entrada** | `class-validator` + `whitelist` + `forbidNonWhitelisted` |
+| **Injeção SQL** | Prisma parametrizado |
+| **Erro 500** | Mensagem genérica + `erroId`; stack só no log |
+| **CSRF** | Não se aplica — `Authorization: Bearer`, sem cookie |
+| **CORS** | ⚠️ Não configurado. Desabilitado = seguro, mas o front não funciona até definirmos a origem |
+
+Os controles são verificados por `test/seguranca.e2e-spec.ts` — comportamento
+observado por request, não configuração declarada. O teste inclui um controller
+sem decorator de acesso, criado só ali, para provar que o deny-by-default pega o
+esquecimento humano.
+
+**Front-end:** parte da segurança depende do cliente (onde guardar o token, XSS
+ao renderizar dados do CSV, tratar 429 e `mustChangePassword`). Está tudo em
+**[`docs/SEGURANCA-FRONTEND.md`](docs/SEGURANCA-FRONTEND.md)** — entregue esse
+arquivo a quem for construir o portal.
 
 ---
 
@@ -441,8 +513,9 @@ src/
     jwt/          strategies + guards (admin e aluno)
     lti/          config, state store, keys, controller, service
     roles.decorator.ts
-  config/         validação do .env no boot
+  config/         validação do .env no boot + setup do Swagger
   database/       PrismaService + driver adapter MariaDB
+  dto/            respostas de rotas fora de módulo (health)
   enums/          perfil, status-curso (regra de elegibilidade)
   importacao/     parsing dos 2 CSVs + auditoria
   turma/          cruzamento disciplinas ∩ turmas ∩ período
@@ -462,6 +535,7 @@ test/               e2e + fixtures
 **Convenções**
 
 - **DTOs com `class-validator`** para toda entrada. Nunca aceitar body cru.
+- **Tudo documentado no Swagger** — rota sem `@ApiOperation` é código incompleto.
 - **Prisma como única camada de dados.** Injete `PrismaService`; nunca instancie
   `PrismaClient` fora de `src/database/`. Sem SQL cru, exceto onde a transação de
   alocação exigir lock explícito.
@@ -512,8 +586,9 @@ npm run test:e2e   # exige banco de pé + migrations aplicadas
 
 Cobertos hoje: regra de elegibilidade por `STATUS CURSO` (incluindo variações de
 acento e caixa), state store do LTI, leitura de claims da config LTI, serviço de
-autenticação, utilitários de CSV, cruzamento de turmas, e e2e de health, auth e
-vínculos do aluno.
+autenticação, utilitários de CSV, cruzamento de turmas, e e2e de health, auth,
+vínculos do aluno, **contrato da documentação OpenAPI** e **controles de
+segurança** (deny-by-default, cabeçalhos, rate limiting).
 
 ---
 
