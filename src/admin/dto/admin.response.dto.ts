@@ -1,8 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import type { AdminResumo } from '../service/admin.service';
+import type { Admin } from '../service/admin.service';
 
 /** Projecao publica de um administrador. Nunca inclui `senhaHash`. */
-export class AdminResumoDto implements AdminResumo {
+export class AdminResumoDto implements Admin {
   @ApiProperty({
     format: 'uuid',
     example: '8f1c9d2e-4b7a-4c53-9f61-2a0d5e8b7c14',

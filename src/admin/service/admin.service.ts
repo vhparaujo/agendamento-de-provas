@@ -10,7 +10,7 @@ import { PrismaService } from '../../database/prisma.service';
 import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 import { BCRYPT_ROUNDS } from '../../auth/service/auth.service';
 
-export interface AdminResumo {
+export interface Admin {
   id: string;
   email: string;
   nome: string | null;
@@ -37,7 +37,7 @@ export class AdminService {
     private readonly auditoria: AuditoriaService,
   ) {}
 
-  listar(): Promise<AdminResumo[]> {
+  listar(): Promise<Admin[]> {
     return this.prisma.admin.findMany({
       select: SELECAO,
       orderBy: { createdAt: 'asc' },
@@ -48,7 +48,7 @@ export class AdminService {
     email: string;
     nome?: string;
     senha?: string;
-  }): Promise<{ admin: AdminResumo; senhaProvisoria?: string }> {
+  }): Promise<{ admin: Admin; senhaProvisoria?: string }> {
     const jaExiste = await this.prisma.admin.findUnique({
       where: { email: dados.email },
     });
@@ -83,7 +83,7 @@ export class AdminService {
   async resetarSenha(
     id: string,
     solicitanteId: string,
-  ): Promise<{ admin: AdminResumo; senhaProvisoria: string }> {
+  ): Promise<{ admin: Admin; senhaProvisoria: string }> {
     const alvo = await this.prisma.admin.findUnique({ where: { id } });
 
     if (!alvo) throw new NotFoundException('Administrador nao encontrado');
@@ -113,7 +113,7 @@ export class AdminService {
     id: string,
     ativo: boolean,
     solicitanteId: string,
-  ): Promise<AdminResumo> {
+  ): Promise<Admin> {
     if (id === solicitanteId && !ativo) {
       throw new BadRequestException(
         'Um administrador nao pode desativar a si mesmo',
