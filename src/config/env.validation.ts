@@ -68,6 +68,29 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsBooleanString()
   TURMAS_FILTER_ENABLED?: string;
+
+  /**
+   * Default seguro = 'false'. Desligado, o cliente D2L nao faz chamada de rede
+   * nenhuma e a fila de liberacao acumula em PENDENTE — nada se perde, e nada e
+   * gravado no Brightspace por engano enquanto a configuracao nao esta pronta.
+   *
+   * As demais D2L_* nao sao validadas aqui de proposito: quem cobra o que falta
+   * e o proprio D2L_HABILITADO=true, que recusa subir a integracao dizendo
+   * exatamente qual variavel esta em branco (src/d2l/config/d2l.config.ts).
+   * Exigi-las no boot deixaria a aplicacao inteira sem subir por causa de uma
+   * integracao opcional.
+   */
+  @IsOptional()
+  @IsBooleanString()
+  D2L_HABILITADO?: string;
+
+  @IsOptional()
+  @IsString()
+  D2L_BASE_URL?: string;
+
+  @IsOptional()
+  @IsString()
+  D2L_API_VERSION?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {

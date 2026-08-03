@@ -359,6 +359,26 @@ enum StatusSync {
 }
 
 // ----------------------------------------------------------------------------
+// INTEGRACAO D2L — estado que precisa sobreviver a restart
+// ----------------------------------------------------------------------------
+// Existe por causa de UMA armadilha do OAuth do Brightspace: no fluxo de
+// authorization code, cada refresh emite um refresh token NOVO e invalida o
+// anterior. Guardar o token so no .env funciona exatamente uma vez — no primeiro
+// refresh o valor do arquivo vira lixo, e a integracao morre silenciosamente ate
+// alguem repetir a autorizacao manual.
+//
+// Uma linha so (id fixo em 1). O fluxo preferido (client credentials + usuario de
+// servico) nao usa refresh token e deixa esta tabela vazia.
+
+model IntegracaoD2L {
+  id           Int      @id @default(1)
+  refreshToken String   @db.Text
+  atualizadoEm DateTime @updatedAt
+
+  @@map("integracao_d2l")
+}
+
+// ----------------------------------------------------------------------------
 // PERIODO DE AGENDAMENTO (aberto/fechado pelo admin)
 // ----------------------------------------------------------------------------
 

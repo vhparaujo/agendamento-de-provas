@@ -29,28 +29,53 @@ export const CLAIM_CONTEXT =
   'https://purl.imsglobal.org/spec/lti/claim/context';
 
 /**
- * Confirmado pelo cliente a partir do registro do usuario na Valence:
- *   OrgDefinedId -> matricula (RA)
- *   UserId       -> id numerico do usuario no Valence
+ * Claim PROPRIETARIO do Brightspace — fora da especificacao LTI. E aqui que vem
+ * o `user_id` numerico do D2L e o `org_defined_id`.
  *
- * No launch LTI esses dois valores chegam como parametros customizados, cujos
- * nomes sao definidos no registro da ferramenta no Brightspace. O padrao abaixo
- * cobre as grafias usuais (o LTI normaliza chaves customizadas para minusculas);
- * se o registro usar outros nomes, basta ajustar LTI_CLAIM_* no .env, sem mexer
- * em codigo. O launch de teste (LTI_DEBUG_CLAIMS=true) mostra o que realmente veio.
+ * Confirmado num launch real contra `catolicatest.brightspace.com` (spike de
+ * LTI 1.3): os dois valores chegam neste claim, e NAO como parametros
+ * customizados, como se supunha antes de haver um launch para observar.
+ */
+export const CLAIM_BRIGHTSPACE = 'http://www.brightspace.com';
+
+/**
+ * Onde a matricula (RA) aparece, em ordem de preferencia.
+ *
+ * O launch real trouxe o MESMO valor por quatro caminhos independentes
+ * (`org_defined_id`, `lis.person_sourcedid`, `custom.lis_person_sourcedid` e
+ * `username`). Manter os quatro nao custa nada e cobre o tenant que tiver a
+ * config `d2l.Tools.Lti.SendLisPersonSourcedId` desligada — sem ela, os dois do
+ * meio chegam vazios.
  */
 const PADRAO_CLAIM_MATRICULA = [
-  `${CLAIM_CUSTOM}::orgdefinedid`,
-  `${CLAIM_CUSTOM}::org_defined_id`,
-  `${CLAIM_CUSTOM}::OrgDefinedId`,
+  `${CLAIM_BRIGHTSPACE}::org_defined_id`,
   `${CLAIM_LIS}::person_sourcedid`,
+  `${CLAIM_CUSTOM}::lis_person_sourcedid`,
+  `${CLAIM_BRIGHTSPACE}::username`,
+  `${CLAIM_CUSTOM}::orgdefinedid`,
+  `${CLAIM_CUSTOM}::matricula`,
 ].join(',');
 
+/**
+ * ============================================================================
+ * O `sub` NAO ENTRA NESTA LISTA — e o erro que o spike evitou
+ * ============================================================================
+ * O `sub` do LTI e um identificador OPACO (`<guid>_76629`) e as rotas da Valence
+ * API o REJEITAM. Se ele estivesse aqui como ultimo recurso, um tenant sem o
+ * claim proprietario produziria um launch aparentemente bem-sucedido, com um
+ * `userIdD2L` invalido gravado em cada agendamento — e a falha so apareceria na
+ * hora de liberar a prova no Brightspace, muito depois de o aluno achar que
+ * estava tudo certo.
+ *
+ * Melhor recusar o launch na hora, com uma mensagem que diz o que configurar.
+ *
+ * O `sub` termina com o user_id depois de um underscore. Isso e detalhe de
+ * implementacao do Brightspace: NAO parsear.
+ */
 const PADRAO_CLAIM_USER_ID = [
+  `${CLAIM_BRIGHTSPACE}::user_id`,
   `${CLAIM_CUSTOM}::userid`,
   `${CLAIM_CUSTOM}::user_id`,
-  `${CLAIM_CUSTOM}::UserId`,
-  'sub',
 ].join(',');
 
 export interface LtiConfig {

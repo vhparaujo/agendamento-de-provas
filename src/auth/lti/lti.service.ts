@@ -13,6 +13,7 @@ import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 import type { ContextoLaunch } from '../jwt/jwt.types';
 import { AuthService } from '../service/auth.service';
 import {
+  CLAIM_BRIGHTSPACE,
   CLAIM_CONTEXT,
   CLAIM_DEPLOYMENT_ID,
   CLAIM_MESSAGE_TYPE,
@@ -149,9 +150,32 @@ export class LtiService {
     }
 
     if (!userIdD2L) {
+      this.auditoria.registrar('LTI_LAUNCH_RECUSADO', {
+        ator: matricula,
+        detalhe: `claim ${CLAIM_BRIGHTSPACE}::user_id ausente no id_token`,
+      });
+
       throw new UnauthorizedException(
-        'Nao foi possivel identificar o UserId do Valence no launch LTI. ' +
-          'Verifique LTI_CLAIM_USER_ID.',
+        'Nao foi possivel identificar o UserId do D2L no launch LTI. ' +
+          `Ele vem no claim proprietario "${CLAIM_BRIGHTSPACE}" -> user_id; ` +
+          'confira as security settings do deployment (nome, e-mail e org defined id ' +
+          'liberados). Ative LTI_DEBUG_CLAIMS=true para ver os claims recebidos.',
+      );
+    }
+
+    // O UserId do D2L e NUMERICO. Um valor com outro formato aqui quase sempre e
+    // o `sub` opaco do LTI vindo por uma configuracao errada de LTI_CLAIM_USER_ID
+    // — e o `sub` e recusado pela Valence API. Sem esta checagem o launch passaria
+    // e a falha so apareceria ao liberar a prova, quando ja e tarde.
+    if (!/^\d+$/.test(userIdD2L)) {
+      this.auditoria.registrar('LTI_LAUNCH_RECUSADO', {
+        ator: matricula,
+        detalhe: 'UserId do D2L nao e numerico (provavel `sub` opaco do LTI)',
+      });
+
+      throw new UnauthorizedException(
+        'O UserId do D2L recebido no launch nao e numerico e nao seria aceito pela ' +
+          'Valence API. Verifique LTI_CLAIM_USER_ID — o `sub` do LTI nao serve.',
       );
     }
 

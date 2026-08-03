@@ -1,6 +1,9 @@
+import { ConfigService } from '@nestjs/config';
 import {
+  CLAIM_BRIGHTSPACE,
   CLAIM_CUSTOM,
   CLAIM_LIS,
+  carregarLtiConfig,
   lerClaim,
   lerPrimeiroClaim,
 } from './lti.config';
@@ -60,5 +63,56 @@ describe('leitura de claims do LTI', () => {
     ]);
 
     expect(matricula).toBe('UC25426847');
+  });
+});
+
+/**
+ * Formato REAL de um launch do `catolicatest.brightspace.com`, observado pelo
+ * spike de LTI 1.3. O que importa aqui e que matricula e UserId vem no claim
+ * PROPRIETARIO do Brightspace — nao como parametros customizados.
+ */
+const LAUNCH_REAL = {
+  // Opaco: <guid>_<userId>. NAO serve para a Valence API.
+  sub: '257d7905-218f-4513-986e-0458c3ba5854_76629',
+  [CLAIM_BRIGHTSPACE]: {
+    user_id: 76629,
+    org_defined_id: 'UC25426847',
+    username: 'UC25426847',
+    tenant_id: 'abc',
+  },
+  [CLAIM_LIS]: { person_sourcedid: 'UC25426847' },
+};
+
+describe('padroes de claim contra um launch real', () => {
+  const config = new ConfigService({});
+  const lti = carregarLtiConfig(config);
+
+  it('acha a matricula no claim proprietario do Brightspace', () => {
+    expect(lerPrimeiroClaim(LAUNCH_REAL, lti.claimsMatricula)).toBe(
+      'UC25426847',
+    );
+  });
+
+  it('acha o UserId numerico do D2L', () => {
+    expect(lerPrimeiroClaim(LAUNCH_REAL, lti.claimsUserId)).toBe('76629');
+  });
+
+  it('NUNCA usa o `sub` como UserId — a Valence API o rejeita', () => {
+    // Esta e a regressao que o teste existe para impedir: com `sub` na lista, um
+    // tenant sem o claim proprietario faria um launch "bem-sucedido" gravando um
+    // userIdD2L invalido, e a falha so apareceria ao liberar a prova.
+    expect(lti.claimsUserId).not.toContain('sub');
+
+    const semClaimProprietario = { sub: LAUNCH_REAL.sub };
+
+    expect(
+      lerPrimeiroClaim(semClaimProprietario, lti.claimsUserId),
+    ).toBeUndefined();
+  });
+
+  it('ainda acha a matricula se o claim proprietario faltar', () => {
+    const soLis = { [CLAIM_LIS]: { person_sourcedid: 'A06103080' } };
+
+    expect(lerPrimeiroClaim(soLis, lti.claimsMatricula)).toBe('A06103080');
   });
 });
