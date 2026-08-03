@@ -57,8 +57,14 @@ regra de negócio ou estrutura, atualize os dois.
    (`precisaEscolherCurso` na resposta do launch).
 5. **Alocação de sala é sequencial**: preenche a sala de menor `ordem` até lotar,
    só então usa a próxima. A vaga é da SalaFaixa (`count(agendamentos) < vagas`).
-6. **Concorrência**: a checagem de vaga + criação do agendamento DEVE ocorrer em
-   transação serializável por SalaFaixa. Nunca conte fora da transação.
+6. **Concorrência**: a checagem de vaga + criação do agendamento DEVE ocorrer na
+   mesma transação, serializada por SalaFaixa. **Nunca conte fora da transação.**
+   Implementado em `agendamento.service.ts` como `SELECT ... FOR UPDATE` (vínculo,
+   depois as ofertas da faixa+modalidade) sob **READ COMMITTED** — não
+   `SERIALIZABLE`: em REPEATABLE READ o snapshot da transação pode ser anterior ao
+   lock e a contagem viria velha, e SERIALIZABLE acrescentaria gap lock sem ganho.
+   O `FOR UPDATE` é o que garante a exclusão mútua; há teste que prova (remover o
+   lock faz 5 alunos entrarem na mesma vaga).
 7. **Admin pode remanejar** qualquer agendamento (trocar sala ou faixa). A
    alocação automática é só o default; marcar `alocadoManual = true`.
 8. **Período de agendamento fecha só por data/hora** (`dataFechamento`), nunca por
@@ -215,8 +221,11 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `GET/POST /lti/login` · `POST /lti/launch` · `GET /lti/jwks` | — | Fluxo LTI (autentica pela assinatura do Brightspace) |
 | `GET/POST /admins` · `POST /admins/:id/resetar-senha` · `PATCH /admins/:id/ativo` | admin | Gestão de administradores |
 | `POST /importacao/alunos` · `/importacao/turmas` · `GET /importacao` | admin | CSVs + auditoria |
+| `GET /modalidades` · `GET/POST/PATCH /polos` · `/salas` · `/faixas` · `/sala-faixas` | admin | Estrutura física e oferta de vagas |
+| `GET /portal/periodo` · `/portal/disciplinas` · `/portal/faixas` | aluno | O que ele pode escolher |
+| `GET/POST /portal/agendamentos` | aluno | Confirmar a prova e consultar o que já marcou |
 
-Pendentes: polo, sala, faixa, sala-faixa, agendamento, período, D2L.
+Pendentes: CRUD administrativo do período, remanejo, exportação, D2L.
 
 ## Cadastro: polos, salas e os 2 CSVs
 
@@ -305,9 +314,9 @@ src/
   dto/         ✅ respostas de rotas fora de módulo (health)
   generated/   ✅ client do Prisma — NÃO versionado, não editar
 
-  modalidade/  ⬜  polo/  ⬜  sala/  ⬜  faixa/  ⬜  sala-faixa/  ⬜
-  agendamento/ ⬜ (alocação sequencial — coração da regra)
-  periodo/     ⬜ (abrir/fechar agendamento)
+  modalidade/  ✅  polo/  ✅  sala/  ✅  faixa/  ✅  sala-faixa/  ✅
+  agendamento/ ✅ portal do aluno · alocacao.ts (pura) · disciplinas-do-aluno.service.ts
+  periodo/     ✅ só LEITURA (o CRUD do admin é da etapa 7)
   d2l/         ⬜ (valence-client.service.ts, sync.service.ts)
 
   app.module.ts  app.controller.ts (health)  main.ts
@@ -362,6 +371,9 @@ npm run seed                 # lê SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD do .en
 
 # LTI
 npm run lti:keygen           # gera a chave RSA da ferramenta (LTI_TOOL_PRIVATE_KEY)
+
+# token de aluno para testar o portal sem o Brightspace (recusa em producao)
+npm run token:aluno -- <RA> [orgUnitId] [titulo da turma]
 
 # dev / qualidade
 npm run start:dev            # doc em http://localhost:3000/api/docs
@@ -427,15 +439,68 @@ faixa com agendamento e oferta com aluno alocado respondem 409 sugerindo
 `ativo=false` — o histórico de quem já tem prova marcada precisa sobreviver.
 Reduzir `vagas` abaixo dos agendamentos existentes também é 409.
 
+## Portal do aluno (etapa 6)
+
+`GET /portal/periodo · /portal/disciplinas · /portal/faixas` e
+`GET/POST /portal/agendamentos` — todas exigem o JWT emitido pelo launch LTI.
+
+**O aluno não escolhe nada além do horário.** Polo e modalidade vêm do CSV; a
+sala vem da alocação. Por isso `GET /portal/faixas` **não devolve salas**: mostrar
+antes daria a entender que dá para escolher, e o número por sala já estaria velho
+no segundo seguinte. Faixa lotada continua na lista com `temVaga: false`, em vez
+de sumir sem explicação.
+
+**Alocação sequencial** (`agendamento/service/alocacao.ts`, função pura): enche a
+sala de menor `ordem` até lotar, só então abre a próxima. Espalhar daria a mesma
+contagem e exigiria mais fiscais e mais salas abertas.
+
+**A transação** (`agendamento.service.ts`) — ver regra 6. Ordem dos locks sempre
+`aluno_importado → sala_faixa → agendamento`, o que impede ciclo de deadlock. O
+lock do vínculo existe para serializar o **mesmo aluno consigo mesmo** (duplo
+clique em faixas diferentes não passaria pelo lock das salas).
+
+**Ocupação é contada igual em todo lugar** (`status = CONFIRMADO`): admin e
+alocador precisam ver o mesmo número, senão um dos dois está mentindo.
+
+**Recusas, na ordem em que acontecem** — cada uma com a mensagem mais útil:
+
+| Situação | Resposta |
+|---|---|
+| STATUS CURSO bloqueia (Cancelado, Trancado…) | 403 com o status citado |
+| Período fechado / ainda não abriu / não configurado | 403 com o motivo exato |
+| Nenhuma disciplina com prova | 403 |
+| Faixa de outro polo | 403 |
+| Faixa inativa ou com data passada | 409 |
+| Já tem prova marcada para o vínculo | 409 |
+| Vagas esgotadas | 409 |
+| `alunoId` que não está no token | 403 + auditoria |
+
+**Fonte das disciplinas é uma costura de um arquivo só**
+(`disciplinas-do-aluno.service.ts`). Hoje: a turma de onde o aluno clicou (claim
+`context` do LTI, que agora vai no JWT). Na etapa 7 vira o enrollments da Valence
+— nada mais muda.
+
+**A fila do D2L nasce na mesma transação** do agendamento: um agendamento gravado
+sem sua fila seria prova marcada que nunca é liberada no Brightspace, e ninguém
+descobriria até o aluno tentar abrir o quiz.
+
+**Sem período cadastrado = fechado.** Mesma escolha do filtro de turmas: na
+dúvida, não libera. Para testar antes do CRUD administrativo (etapa 7), crie a
+linha em `PeriodoAgendamento` pelo `npm run prisma:studio`.
+
+**Token de aluno para teste:** `npm run token:aluno -- <RA> [orgUnitId] [título]`
+monta o mesmo payload do launch lendo os vínculos do banco, pulando só a
+assinatura do Brightspace. **Recusa rodar com `NODE_ENV=production`.**
+
 ## Ao implementar, priorize nesta ordem
 
 1. ✅ Prisma schema + migrations + Docker + seed do admin.
 2. ✅ Auth (admin JWT + LTI aluno).
 3. ✅ Importação dos 2 CSVs (alunos, turmas) + seed de polos.
 4. ✅ Estrutura (polo/sala/faixa/sala-faixa).
-5. ⬜ Portal do aluno (listar faixas + agendar com alocação sequencial).
-6. ⬜ Integração D2L (Valence client + fila de special access).
-7. ⬜ Período de agendamento + remanejo administrativo + exportação.
+5. ✅ Portal do aluno (listar faixas + agendar com alocação sequencial).
+6. ⬜ Integração D2L (Valence client + fila de special access) + CRUD do período.
+7. ⬜ Remanejo administrativo + cancelamento/troca pelo aluno + exportação.
 
 **Bloqueios externos:** o CSV real de turmas não chegou (mapeamento provisório) e
 as credenciais da Valence não existem (variáveis `VALENCE_*` no `.env.example`

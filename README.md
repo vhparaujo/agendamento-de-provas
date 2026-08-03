@@ -161,6 +161,9 @@ npm run seed                 # seeds idempotentes
 # LTI
 npm run lti:keygen           # gera a chave RSA da ferramenta (LTI_TOOL_PRIVATE_KEY)
 
+# token de aluno para testar o portal sem o Brightspace (SÓ DESENVOLVIMENTO)
+npm run token:aluno -- <RA> [orgUnitId] [título da turma]
+
 # qualidade
 npm test                     # unitários (jest, rootDir=src)
 npm run test:cov
@@ -265,6 +268,36 @@ limite de 15 MB, extensão `.csv` obrigatória.
 | `POST` | `/importacao/alunos` | CSV de alunos + campo `modalidade` (dropdown) |
 | `POST` | `/importacao/turmas` | CSV de turmas reais |
 | `GET` | `/importacao` | Histórico de importações (auditoria) |
+
+### Estrutura física e oferta de vagas
+
+Todas exigem JWT de admin. A oferta (`SalaFaixa`) nunca nasce solta: ela é criada
+por dentro da faixa.
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `GET` | `/modalidades` | Lista (só leitura — vêm do seed) |
+| `GET` `POST` | `/polos` · `/polos/:id` `PATCH` | `nome` não é editável: é a chave de casamento com o CSV |
+| `GET` `POST` `PATCH` `DELETE` | `/salas` · `/salas/:id` | `poloId` imutável; só apaga o que nunca foi ofertado |
+| `GET` `POST` `PATCH` `DELETE` | `/faixas` · `/faixas/:id` | Cria a faixa e a oferta numa transação |
+| `POST` | `/faixas/:id/salas` | Adiciona sala a uma faixa existente |
+| `GET` `PATCH` `DELETE` | `/sala-faixas/:id` | Ajusta vagas e ordem; modalidade é imutável |
+
+### Portal do aluno
+
+Exigem o JWT emitido pelo launch LTI. Quem tem mais de um curso passa `alunoId`;
+quem tem um só pode omitir.
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `GET` | `/portal/periodo` | O agendamento está aberto? Fechado, `motivo` traz o texto a exibir |
+| `GET` | `/portal/disciplinas` | O que a prova vai cobrir (disciplinas ∩ turmas ∩ período) |
+| `GET` | `/portal/faixas` | Horários que ele pode escolher — **sem sala**, com o total de vagas livres |
+| `POST` | `/portal/agendamentos` | Confirma a prova; a sala vem da alocação sequencial |
+| `GET` | `/portal/agendamentos` | O que esta matrícula já marcou (um por curso) |
+
+O aluno não escolhe polo, modalidade nem sala. Polo e modalidade vêm do CSV; a
+sala é resultado da alocação no instante da confirmação.
 
 ---
 
@@ -507,17 +540,28 @@ Modular por domínio; cada módulo segue `controller/ · dto/ · service/ · mod
 ```
 src/
   admin/          gestão de administradores
+  agendamento/
+    controller/   portal do aluno (período, disciplinas, faixas, agendar)
+    service/      agendamento.service.ts (a transação que impede overbooking)
+                  alocacao.ts (regra sequencial, função pura)
+                  disciplinas-do-aluno.service.ts (costura Valence — etapa 7)
   aluno/          cruzamento matrícula → vínculos
   auth/
     controller/   login, refresh, trocar-senha, me
     jwt/          strategies + guards (admin e aluno)
     lti/          config, state store, keys, controller, service
     roles.decorator.ts
+  components/     horario.util.ts (HH:MM → minutos)
   config/         validação do .env no boot + setup do Swagger
   database/       PrismaService + driver adapter MariaDB
   dto/            respostas de rotas fora de módulo (health)
   enums/          perfil, status-curso (regra de elegibilidade)
+  faixa/          horários + montagem da oferta (SalaFaixa)
   importacao/     parsing dos 2 CSVs + auditoria
+  modalidade/     leitura das modalidades e suas durações
+  periodo/        leitura da janela de agendamento (CRUD do admin: etapa 7)
+  polo/  sala/  sala-faixa/    estrutura física e ajuste da oferta
+  seguranca/      auditoria + filtro global de exceções
   turma/          cruzamento disciplinas ∩ turmas ∩ período
   generated/      client do Prisma (NÃO versionado)
   app.module.ts   main.ts
@@ -528,7 +572,7 @@ prisma/
   seed.ts         orquestrador → modalidades, polos, admin
 
 docker/mysql/init/  grant do shadow database (só dev)
-scripts/            gerar-chave-lti.ts
+scripts/            gerar-chave-lti.ts · token-aluno.ts (só dev)
 test/               e2e + fixtures
 ```
 
@@ -586,9 +630,15 @@ npm run test:e2e   # exige banco de pé + migrations aplicadas
 
 Cobertos hoje: regra de elegibilidade por `STATUS CURSO` (incluindo variações de
 acento e caixa), state store do LTI, leitura de claims da config LTI, serviço de
-autenticação, utilitários de CSV, cruzamento de turmas, e e2e de health, auth,
-vínculos do aluno, **contrato da documentação OpenAPI** e **controles de
-segurança** (deny-by-default, cabeçalhos, rate limiting).
+autenticação, utilitários de CSV, cruzamento de turmas, validação da oferta,
+**alocação sequencial**, e e2e de health, auth, vínculos do aluno, estrutura
+(polo → sala → faixa → oferta), **portal do aluno**, **contrato da documentação
+OpenAPI** e **controles de segurança** (deny-by-default, cabeçalhos, rate limiting).
+
+O e2e do portal inclui um teste de **concorrência**: cinco alunos disputando a
+mesma vaga ao mesmo tempo têm de terminar com um confirmado e quatro `409`.
+Retirar o `FOR UPDATE` da transação faz esse teste falhar com cinco confirmados —
+é assim que se sabe que ele está medindo alguma coisa.
 
 ---
 
@@ -601,10 +651,10 @@ A ordem de implementação segue a prioridade definida para o projeto.
 | 1 | Prisma schema + migrations + Docker + seeds | ✅ concluída |
 | 2 | Auth (admin JWT + LTI aluno) | ✅ concluída |
 | 3 | Importação dos CSVs + seed de polos | ✅ concluída (mapeamento do CSV de turmas provisório) |
-| 4 | Estrutura: polo / sala / faixa / sala-faixa | ⬜ pendente |
-| 5 | Portal do aluno: listar faixas + agendar com alocação sequencial | ⬜ pendente |
-| 6 | Integração D2L (Valence client + fila de special access) | ⬜ pendente |
-| 7 | Período de agendamento + remanejo administrativo + exportação | ⬜ pendente |
+| 4 | Estrutura: polo / sala / faixa / sala-faixa | ✅ concluída |
+| 5 | Portal do aluno: listar faixas + agendar com alocação sequencial | ✅ concluída |
+| 6 | Integração D2L (Valence client + fila de special access) + CRUD do período | ⬜ pendente |
+| 7 | Remanejo administrativo + cancelamento/troca pelo aluno + exportação | ⬜ pendente |
 
 **Pendências conhecidas**
 

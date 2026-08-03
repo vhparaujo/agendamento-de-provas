@@ -24,6 +24,7 @@ export const TAGS = {
   POLOS: 'Polos',
   SALAS: 'Salas',
   FAIXAS: 'Faixas e oferta de vagas',
+  PORTAL: 'Portal do Aluno',
 } as const;
 
 const DESCRICAO = `
@@ -112,6 +113,10 @@ export function construirDocumento(app: INestApplication): OpenAPIObject {
       TAGS.FAIXAS,
       'Horarios de prova e a montagem de Sala + Modalidade + vagas (SalaFaixa), ' +
         'que e onde a oferta realmente existe',
+    )
+    .addTag(
+      TAGS.PORTAL,
+      'O que o aluno acessa depois do launch LTI: ver horarios e confirmar a prova',
     )
     .build();
 

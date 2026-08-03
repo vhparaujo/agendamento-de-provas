@@ -5,6 +5,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
+import { StatusAgendamento } from '../../generated/prisma/client';
+
+/** Cancelado nao ocupa lugar — mesma contagem que a alocacao usa. */
+const OCUPADAS = {
+  select: {
+    agendamentos: { where: { status: StatusAgendamento.CONFIRMADO } },
+  },
+} as const;
 
 export interface OfertaDetalhe {
   id: number;
@@ -32,7 +40,7 @@ export class SalaFaixaService {
       include: {
         sala: { select: { id: true, nome: true, capacidade: true } },
         modalidade: true,
-        _count: { select: { agendamentos: true } },
+        _count: OCUPADAS,
       },
     });
 
@@ -71,7 +79,7 @@ export class SalaFaixaService {
       include: {
         sala: { select: { nome: true, capacidade: true } },
         modalidade: { select: { nome: true } },
-        _count: { select: { agendamentos: true } },
+        _count: OCUPADAS,
       },
     });
 

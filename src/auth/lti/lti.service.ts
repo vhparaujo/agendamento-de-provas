@@ -10,8 +10,10 @@ import { ConfigService } from '@nestjs/config';
 import { createRemoteJWKSet, jwtVerify, JWTPayload } from 'jose';
 import { AlunoService } from '../../aluno/service/aluno.service';
 import { AuditoriaService } from '../../seguranca/service/auditoria.service';
+import type { ContextoLaunch } from '../jwt/jwt.types';
 import { AuthService } from '../service/auth.service';
 import {
+  CLAIM_CONTEXT,
   CLAIM_DEPLOYMENT_ID,
   CLAIM_MESSAGE_TYPE,
   CLAIM_VERSION,
@@ -49,6 +51,8 @@ export interface ResultadoLaunch {
    */
   precisaEscolherCurso: boolean;
   vinculos: VinculoLaunch[];
+  /** Turma de onde o aluno clicou. Ausente se o Brightspace nao mandar o claim. */
+  contexto?: ContextoLaunch;
   redirecionarPara?: string;
 }
 
@@ -169,6 +173,8 @@ export class LtiService {
       );
     }
 
+    const contexto = this.lerContexto(payload);
+
     // STATUS CURSO nao bloqueia o LOGIN: mesmo um aluno com matricula cancelada
     // e reconhecido e ve uma mensagem clara, em vez de um "nao encontrado".
     // O bloqueio acontece no AGENDAMENTO, pelo `ativo` de cada vinculo (derivado
@@ -183,6 +189,7 @@ export class LtiService {
         poloId: v.poloId,
         ativo: v.ativo,
       })),
+      contexto,
     });
 
     this.auditoria.registrar('LTI_LAUNCH_OK', {
@@ -207,8 +214,42 @@ export class LtiService {
         },
         polo: { id: v.polo.id, nome: v.polo.nome },
       })),
+      contexto,
       redirecionarPara: lti.portalAlunoUrl,
     };
+  }
+
+  /**
+   * Claim `context` do LTI: a turma de onde o aluno clicou. O `id` e o orgUnitId
+   * no D2L.
+   *
+   * Ausencia NAO derruba o launch: o aluno continua entrando e vendo seus
+   * horarios; o que ele nao consegue e agendar, porque sem disciplina nao ha o
+   * que liberar no Brightspace. Recusar o login aqui trocaria uma mensagem clara
+   * no portal por um erro no meio do fluxo do Brightspace.
+   */
+  private lerContexto(
+    payload: Record<string, unknown>,
+  ): ContextoLaunch | undefined {
+    const contexto = payload[CLAIM_CONTEXT];
+
+    if (typeof contexto !== 'object' || contexto === null) return undefined;
+
+    const { id, title, label } = contexto as Record<string, unknown>;
+    const orgUnitId =
+      typeof id === 'string'
+        ? id.trim()
+        : typeof id === 'number'
+          ? String(id)
+          : '';
+
+    if (!orgUnitId) return undefined;
+
+    const titulo = [title, label].find(
+      (v) => typeof v === 'string' && v.trim(),
+    );
+
+    return { orgUnitId, titulo: titulo as string | undefined };
   }
 
   private async verificarIdToken(

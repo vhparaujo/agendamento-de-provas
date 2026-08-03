@@ -26,7 +26,8 @@
     "db:up": "docker compose up -d mysql",
     "db:down": "docker compose down",
     "db:reset": "prisma migrate reset",
-    "lti:keygen": "tsx scripts/gerar-chave-lti.ts"
+    "lti:keygen": "tsx scripts/gerar-chave-lti.ts",
+    "token:aluno": "tsx scripts/token-aluno.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",

@@ -145,14 +145,43 @@ prova** antes de listar horários. Cada vínculo gera um agendamento próprio.
 Se `vinculos[].ativo` for `false`, o aluno é reconhecido mas **não pode agendar** —
 mostre mensagem clara em vez de "erro".
 
-### 4.3 Renovação de token
+Nas rotas `/api/portal/*`, o `alunoId` vai na query (`GET`) ou no corpo (`POST`).
+Quem tem **um** curso pode omitir; quem tem mais de um e omite recebe `400`.
+
+### 4.3 Agendamento — as recusas já vêm com o texto pronto
+
+Toda recusa do portal traz em `message` uma frase escrita para o aluno ler. **Não
+reescreva nem generalize**: "vagas esgotadas", "seu curso está como Cancelado" e
+"o prazo encerrou em 18/08 23:59" pedem reações diferentes, e trocar isso por
+"erro ao agendar" transfere o problema para a secretaria.
+
+| Código | Quando | O que o front faz |
+|---|---|---|
+| `403` | Situação no curso, período fechado, sem disciplina com prova, horário de outro polo | Mostra `message`; **não** oferece "tentar de novo" |
+| `409` | Vagas esgotadas, horário inativo/já realizado | Recarrega `GET /portal/faixas` e pede outro horário |
+| `409` | Já tem prova marcada para esse curso | Leva para `GET /portal/agendamentos` |
+| `404` | Horário não existe mais | Recarrega a lista |
+
+`GET /portal/periodo` e `GET /portal/disciplinas` respondem `200` mesmo quando o
+aluno não pode agendar, com `aberto`/`podeAgendar` em `false` e o `motivo` já
+escrito — use-os para desabilitar o botão **antes** de o aluno tentar.
+
+Duas coisas que o front **não** deve fazer:
+
+- **Não escolher sala.** `GET /portal/faixas` não devolve salas de propósito; a
+  sala é decidida no `POST` e volta na resposta.
+- **Não reenviar o `POST` automaticamente** ao receber `409`. A vaga acabou; um
+  retry só produz outro `409` — e um retry cego numa disputa por vaga é a forma
+  mais fácil de derrubar a API no dia da abertura.
+
+### 4.4 Renovação de token
 
 Access token expira em **15 minutos**. Ao receber `401`, chame
 `POST /api/auth/refresh` com o refresh token e refaça a requisição. Faça isso
 **uma vez só** — se o refresh também falhar, mande para o login. Loop de refresh
 em 401 é uma forma clássica de derrubar a própria API.
 
-### 4.4 `429 Too Many Requests` — novo
+### 4.5 `429 Too Many Requests`
 
 O backend agora limita requisições:
 
@@ -170,7 +199,7 @@ um instante") e **não** repetir automaticamente sem espera. Respeite o header
 > mesmo NAT podem compartilhar IP. Se isso virar problema real em produção, é
 > ajuste no backend — reporte.
 
-### 4.5 Erros `500`
+### 4.6 Erros `500`
 
 Resposta de erro interno vem assim:
 

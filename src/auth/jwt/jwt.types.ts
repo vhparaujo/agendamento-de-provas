@@ -29,6 +29,16 @@ export interface VinculoToken {
 }
 
 /**
+ * A turma de onde o aluno clicou o link de agendamento (claim `context` do LTI).
+ * O `orgUnitId` e o mesmo identificador usado pelo CSV de turmas e pelo special
+ * access no D2L.
+ */
+export interface ContextoLaunch {
+  orgUnitId: string;
+  titulo?: string;
+}
+
+/**
  * Payload do JWT interno do aluno. Curta duracao e SO para manter a navegacao no
  * portal — a fonte de verdade dos dados do aluno continua sendo o cruzamento
  * matricula x CSV, nunca o que o cliente manda.
@@ -42,6 +52,8 @@ export interface AlunoJwtPayload {
   perfil: Perfil.ALUNO;
   userIdD2L: string; // UserId numerico do Valence, vindo do launch
   vinculos: VinculoToken[]; // 1..n
+  /** Ausente quando o launch nao trouxe o claim `context`. */
+  contexto?: ContextoLaunch;
 }
 
 /** Usuario autenticado anexado a request pelos guards. */

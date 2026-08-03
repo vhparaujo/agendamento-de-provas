@@ -18,6 +18,17 @@ export const CLAIM_DEPLOYMENT_ID =
 export const CLAIM_ROLES = 'https://purl.imsglobal.org/spec/lti/claim/roles';
 
 /**
+ * De ONDE o aluno clicou. O `id` deste claim e o orgUnitId da turma no D2L — o
+ * mesmo identificador que o CSV de turmas traz e que o special access usa.
+ *
+ * E a unica informacao de disciplina disponivel hoje: a lista completa de
+ * matriculas do aluno so chega na etapa 7, pela Valence. Ver
+ * src/agendamento/service/disciplinas-do-aluno.service.ts.
+ */
+export const CLAIM_CONTEXT =
+  'https://purl.imsglobal.org/spec/lti/claim/context';
+
+/**
  * Confirmado pelo cliente a partir do registro do usuario na Valence:
  *   OrgDefinedId -> matricula (RA)
  *   UserId       -> id numerico do usuario no Valence

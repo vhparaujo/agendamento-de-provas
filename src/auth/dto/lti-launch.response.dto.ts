@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import type { ContextoLaunch } from '../jwt/jwt.types';
 import type { ResultadoLaunch, VinculoLaunch } from '../lti/lti.service';
 
 export class ModalidadeVinculoDto {
@@ -56,6 +57,18 @@ export class VinculoLaunchDto implements VinculoLaunch {
   polo!: PoloVinculoDto;
 }
 
+export class ContextoLaunchDto implements ContextoLaunch {
+  @ApiProperty({
+    example: '6606',
+    description:
+      'orgUnitId da turma no D2L — o mesmo identificador do CSV de turmas.',
+  })
+  orgUnitId!: string;
+
+  @ApiPropertyOptional({ example: 'Psicologia Geral - Turma A' })
+  titulo?: string;
+}
+
 export class LaunchResponseDto implements ResultadoLaunch {
   @ApiProperty({
     description:
@@ -86,6 +99,14 @@ export class LaunchResponseDto implements ResultadoLaunch {
 
   @ApiProperty({ type: [VinculoLaunchDto], description: '1..n vinculos.' })
   vinculos!: VinculoLaunchDto[];
+
+  @ApiPropertyOptional({
+    type: ContextoLaunchDto,
+    description:
+      'Turma de onde o aluno clicou o link. Sem ela o aluno navega, mas nao agenda: ' +
+      'nao ha disciplina para liberar no Brightspace.',
+  })
+  contexto?: ContextoLaunchDto;
 
   @ApiPropertyOptional({
     description:

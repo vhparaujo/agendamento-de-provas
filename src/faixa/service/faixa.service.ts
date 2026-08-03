@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { duracaoEmMinutos } from '../../components/horario.util';
 import { PrismaService } from '../../database/prisma.service';
-import { Prisma } from '../../generated/prisma/client';
+import { Prisma, StatusAgendamento } from '../../generated/prisma/client';
 import {
   exigirEncontrado,
   janelaDaFaixa,
@@ -372,7 +372,15 @@ const INCLUDE_DETALHE = {
     include: {
       sala: { select: { id: true, nome: true } },
       modalidade: true,
-      _count: { select: { agendamentos: true } },
+      // Cancelado nao ocupa lugar. A contagem precisa ser IDENTICA a que a
+      // alocacao usa (src/agendamento/service/agendamento.service.ts): se o
+      // admin visse a sala cheia e o alocador a visse com vaga, um dos dois
+      // estaria mentindo.
+      _count: {
+        select: {
+          agendamentos: { where: { status: StatusAgendamento.CONFIRMADO } },
+        },
+      },
     },
     orderBy: [{ modalidadeId: 'asc' }, { ordem: 'asc' }],
   },

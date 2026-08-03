@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AdminModule } from './admin/module/admin.module';
+import { AgendamentoModule } from './agendamento/module/agendamento.module';
 import { AlunoModule } from './aluno/module/aluno.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -14,6 +15,7 @@ import { PrismaModule } from './database/prisma.module';
 import { FaixaModule } from './faixa/module/faixa.module';
 import { ImportacaoModule } from './importacao/module/importacao.module';
 import { ModalidadeModule } from './modalidade/module/modalidade.module';
+import { PeriodoModule } from './periodo/module/periodo.module';
 import { PoloModule } from './polo/module/polo.module';
 import { SalaFaixaModule } from './sala-faixa/module/sala-faixa.module';
 import { SalaModule } from './sala/module/sala.module';
@@ -42,6 +44,9 @@ import { TurmaModule } from './turma/module/turma.module';
     SalaModule,
     FaixaModule,
     SalaFaixaModule,
+    // Portal do aluno (etapa 6)
+    PeriodoModule,
+    AgendamentoModule,
   ],
   controllers: [AppController],
   providers: [
