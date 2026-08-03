@@ -1,9 +1,12 @@
 # Portal de Agendamento de Provas — UCB (Backend)
 
 API que permite a **alunos** da UCB agendarem a data e o horário de suas provas
-presenciais, e a **administradores** gerenciarem polos, salas, horários, turmas e
-o período de agendamento. Ao confirmar um agendamento, o sistema libera o acesso
-às provas (*special access*) no **Brightspace (D2L)** via **Valence API**.
+presenciais, e a **administradores** gerenciarem polos, salas, horários, turmas,
+o período de agendamento e o **relatório de quem agendou o quê**.
+
+A liberação automática das provas no Brightspace (*special access* via Valence
+API) está **adiada** — o sistema hoje agenda e emite relatório. O que já existe é
+a entrada do aluno por **LTI 1.3**, que funciona.
 
 - **Stack:** NestJS 11 · TypeScript · Prisma 7 (MySQL 8) · Docker
 - **Autenticação:** LTI 1.3 (aluno, sem senha) · JWT (admin)
@@ -47,14 +50,16 @@ o período de agendamento. Ao confirmar um agendamento, o sistema libera o acess
 5. Escolhe uma faixa. O sistema aloca uma sala automaticamente, **em ordem
    sequencial** (enche a sala de menor `ordem` antes de abrir a próxima).
 6. A reserva cobre **todas as disciplinas agendáveis daquele vínculo** de uma vez.
-7. Um job assíncrono grava o *special access* de cada disciplina no Brightspace.
+7. O agendamento já grava a fila de liberação (`SyncD2L`, uma linha por
+   disciplina, em `PENDENTE`) — mas **nada é enviado ao Brightspace ainda**.
+   Quando a integração for feita, a fila estará esperando; nada se perde.
 
 **Fluxo do admin**
 
 Login por e-mail/senha → JWT. Cadastra salas, monta faixas (data + horário +
 quais salas atendem qual modalidade + vagas + ordem), importa os CSVs de alunos e
-turmas, abre/fecha o período de agendamento, remaneja agendamentos e exporta as
-listas de presença.
+turmas, abre/fecha o período de agendamento, acompanha a ocupação de cada sala e
+**exporta o relatório completo em CSV**.
 
 ---
 
@@ -93,15 +98,18 @@ mesma faixa, porém, a sala fica travada numa única modalidade (garantido pelo
 5. **Alocação de sala é sequencial**: preenche a sala de menor `ordem` até lotar,
    só então usa a próxima. A vaga é da SalaFaixa (`count(agendamentos) < vagas`).
 6. **Concorrência**: a checagem de vaga + criação do agendamento **deve** ocorrer
-   em transação serializável por SalaFaixa. Nunca conte fora da transação.
+   na mesma transação, serializada por SalaFaixa. Nunca conte fora da transação.
+   Feito com `SELECT ... FOR UPDATE` sob READ COMMITTED — há teste que prova:
+   remover o lock faz 5 alunos entrarem na mesma vaga.
 7. **Admin pode remanejar** qualquer agendamento (trocar sala ou faixa). A
    alocação automática é só o default; remanejo marca `alocadoManual = true`.
+   *(ainda não implementado)*
 8. **O período fecha só por data/hora** (`dataFechamento`), nunca por esgotamento
    de vagas. A janela de agendamento e as datas das provas são linhas do tempo
    independentes.
 9. **Sync com D2L é assíncrono e tolerante a falha**: 404 (aluno não matriculado)
-   é estado **esperado** (`NAO_MATRICULADO`), não erro. Falha de rede/token
-   re-tenta.
+   é estado **esperado** (`NAO_MATRICULADO`), não erro. *(fase adiada — a fila já
+   é gravada, mas ninguém a consome ainda)*
 
 ---
 
@@ -282,6 +290,41 @@ por dentro da faixa.
 | `GET` `POST` `PATCH` `DELETE` | `/faixas` · `/faixas/:id` | Cria a faixa e a oferta numa transação |
 | `POST` | `/faixas/:id/salas` | Adiciona sala a uma faixa existente |
 | `GET` `PATCH` `DELETE` | `/sala-faixas/:id` | Ajusta vagas e ordem; modalidade é imutável |
+
+### Período de agendamento
+
+Exigem JWT de admin. A janela em que se pode agendar — **não confundir com as
+datas das provas**, que são as faixas. São duas linhas do tempo independentes.
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `GET` | `/periodos` | Histórico; o primeiro da lista é o vigente |
+| `GET` | `/periodos/:id` | Detalhe, com quantos já agendaram |
+| `POST` | `/periodos` | Cria — **nasce fechado**, para conferir as faixas antes de liberar |
+| `PATCH` | `/periodos/:id` | Abre, fecha ou ajusta o prazo |
+
+Fecha **só por data/hora**. Vaga esgotando é problema de capacidade (o admin abre
+mais salas), nunca motivo para encerrar o agendamento de quem ainda não escolheu.
+
+### Relatório de agendamentos
+
+Exigem JWT de admin. Todas aceitam os mesmos filtros: `poloId`, `faixaId`,
+`salaId`, `modalidadeId`, `periodoLetivoId`, `de`, `ate` (data da **prova**).
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `GET` | `/agendamentos` | Listagem paginada (50/pág, máx. 200), com busca por matrícula, nome ou curso |
+| `GET` | `/agendamentos/resumo` | Ocupação por sala: quais abrir, quantos fiscais, quais ficaram vazias |
+| `GET` | `/agendamentos/exportacao` | **O relatório completo em CSV** |
+| `GET` | `/agendamentos/:id` | Detalhe |
+
+Sem `status` explícito, tudo traz apenas os **confirmados** — um cancelado na
+lista do dia da prova faria alguém procurar um aluno que não vem.
+
+O CSV sai com **BOM UTF-8** e separado por **`;`**, para abrir direto no Excel em
+português sem estragar os acentos. Células que começam com `=`, `+`, `-` ou `@`
+são neutralizadas: os nomes vêm de planilhas de terceiros, e uma célula
+começando com `=` **executa** ao abrir o arquivo.
 
 ### Portal do aluno
 
@@ -543,8 +586,10 @@ src/
   agendamento/
     controller/   portal do aluno (período, disciplinas, faixas, agendar)
     service/      agendamento.service.ts (a transação que impede overbooking)
+                  agendamento-admin.service.ts (consulta, resumo, exportação)
                   alocacao.ts (regra sequencial, função pura)
-                  disciplinas-do-aluno.service.ts (costura Valence — etapa 7)
+                  csv-relatorio.ts (CSV do Excel, com defesa de injeção)
+                  disciplinas-do-aluno.service.ts (costura Valence)
   aluno/          cruzamento matrícula → vínculos
   auth/
     controller/   login, refresh, trocar-senha, me
@@ -559,7 +604,7 @@ src/
   faixa/          horários + montagem da oferta (SalaFaixa)
   importacao/     parsing dos 2 CSVs + auditoria
   modalidade/     leitura das modalidades e suas durações
-  periodo/        leitura da janela de agendamento (CRUD do admin: etapa 7)
+  periodo/        janela de agendamento (CRUD do admin + leitura do portal)
   polo/  sala/  sala-faixa/    estrutura física e ajuste da oferta
   seguranca/      auditoria + filtro global de exceções
   turma/          cruzamento disciplinas ∩ turmas ∩ período
@@ -653,13 +698,17 @@ A ordem de implementação segue a prioridade definida para o projeto.
 | 3 | Importação dos CSVs + seed de polos | ✅ concluída (mapeamento do CSV de turmas provisório) |
 | 4 | Estrutura: polo / sala / faixa / sala-faixa | ✅ concluída |
 | 5 | Portal do aluno: listar faixas + agendar com alocação sequencial | ✅ concluída |
-| 6 | Integração D2L (Valence client + fila de special access) + CRUD do período | ⬜ pendente |
-| 7 | Remanejo administrativo + cancelamento/troca pelo aluno + exportação | ⬜ pendente |
+| 6 | Período de agendamento + relatório (consulta, ocupação por sala, CSV) | ✅ concluída |
+| 7 | Remanejo administrativo + cancelamento/troca pelo aluno | ⬜ pendente |
+| 8 | Integração D2L (Valence + special access) | ⬜ **adiada pelo cliente** |
 
 **Pendências conhecidas**
 
 - O CSV real de turmas não chegou; o mapeamento de colunas é provisório e está
   isolado num único arquivo.
+- A integração com a Valence API foi **adiada** (decisão de 03/08/2026): o sistema
+  agenda e emite relatório; liberar a prova no Brightspace fica para depois. A
+  referência técnica está em `docs/D2L_API_REFERENCE.md`.
 - As credenciais da Valence API ainda não existem; as variáveis `VALENCE_*` estão
   no `.env.example` mas nenhum código as consome.
 - A modalidade `PRESENCIAL` existe no modelo (prova de 2h) mas ainda não tem CSV

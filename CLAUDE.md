@@ -224,8 +224,10 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `GET /modalidades` · `GET/POST/PATCH /polos` · `/salas` · `/faixas` · `/sala-faixas` | admin | Estrutura física e oferta de vagas |
 | `GET /portal/periodo` · `/portal/disciplinas` · `/portal/faixas` | aluno | O que ele pode escolher |
 | `GET/POST /portal/agendamentos` | aluno | Confirmar a prova e consultar o que já marcou |
+| `GET/POST /periodos` · `GET/PATCH /periodos/:id` | admin | Abrir/fechar a janela de agendamento |
+| `GET /agendamentos` · `/resumo` · `/exportacao` · `/:id` | admin | Relatório: consulta, ocupação por sala e CSV |
 
-Pendentes: CRUD administrativo do período, remanejo, exportação, D2L.
+Pendentes: remanejo administrativo, cancelamento/troca pelo aluno, integração D2L.
 
 ## Cadastro: polos, salas e os 2 CSVs
 
@@ -292,11 +294,22 @@ nenhuma regra de negócio se move.
 
 ## Integração D2L
 
-- **LTI 1.3**: entrada do aluno.
-- **Valence API (OAuth 2.0)**: ler enrollments do aluno (cruzar com turmas reais)
-  e gravar special access nos quizzes. Usuário de serviço + refresh token
-  persistido com segurança; renovação automática do access token.
-- Documentação de referência da Valence/D2L está listada no projeto (docs D2L).
+- **LTI 1.3**: entrada do aluno. ✅ **Implementado e validado contra um launch real.**
+- **Valence API (OAuth 2.0)**: ⬜ **ADIADA (decisão de 03/08/2026).** O sistema
+  hoje só agenda e emite relatório; a liberação de special access nos quizzes
+  fica para uma fase posterior. Não implemente nada de quiz/special access sem
+  o cliente pedir.
+- Referência completa da API em [`docs/D2L_API_REFERENCE.md`](docs/D2L_API_REFERENCE.md)
+  (autenticação, endpoints, armadilhas). O projeto `../lti-spike` tem um launch
+  LTI funcionando contra `catolicatest.brightspace.com` — é a fonte de verdade
+  sobre quais claims realmente chegam.
+
+**Claims do launch — confirmados, não presumidos.** Matrícula e UserId vêm no
+claim PROPRIETÁRIO `http://www.brightspace.com` (`org_defined_id` e `user_id`),
+não em parâmetros customizados. **O `sub` do LTI é opaco (`<guid>_76629`) e a
+Valence API o rejeita** — ele não está na lista de candidatos, e há teste que
+falha se alguém o recolocar. O launch recusa UserId não-numérico de propósito:
+o erro precisa aparecer no login, não no dia da prova.
 
 ## Organização do código
 
@@ -316,8 +329,8 @@ src/
 
   modalidade/  ✅  polo/  ✅  sala/  ✅  faixa/  ✅  sala-faixa/  ✅
   agendamento/ ✅ portal do aluno · alocacao.ts (pura) · disciplinas-do-aluno.service.ts
-  periodo/     ✅ só LEITURA (o CRUD do admin é da etapa 7)
-  d2l/         ⬜ (valence-client.service.ts, sync.service.ts)
+  periodo/     ✅ CRUD do admin + leitura usada pelo portal
+  d2l/         ⬜ adiado — não criar sem o cliente pedir
 
   app.module.ts  app.controller.ts (health)  main.ts
 ```
@@ -499,9 +512,10 @@ assinatura do Brightspace. **Recusa rodar com `NODE_ENV=production`.**
 3. ✅ Importação dos 2 CSVs (alunos, turmas) + seed de polos.
 4. ✅ Estrutura (polo/sala/faixa/sala-faixa).
 5. ✅ Portal do aluno (listar faixas + agendar com alocação sequencial).
-6. ⬜ Integração D2L (Valence client + fila de special access) + CRUD do período.
-7. ⬜ Remanejo administrativo + cancelamento/troca pelo aluno + exportação.
+6. ✅ Período de agendamento + relatório (consulta, ocupação por sala, CSV).
+7. ⬜ Remanejo administrativo + cancelamento/troca pelo aluno.
+8. ⬜ Integração D2L (Valence + special access) — **adiada pelo cliente.**
 
-**Bloqueios externos:** o CSV real de turmas não chegou (mapeamento provisório) e
-as credenciais da Valence não existem (variáveis `VALENCE_*` no `.env.example`
-ainda sem consumidor no código).
+**Bloqueios externos:** o CSV real de turmas não chegou (mapeamento provisório).
+As credenciais da Valence não existem, mas isso deixou de ser bloqueio: a
+integração foi adiada pelo cliente.

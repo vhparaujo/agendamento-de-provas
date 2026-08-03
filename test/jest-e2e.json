@@ -4,6 +4,8 @@
   "testEnvironment": "node",
   "testRegex": ".e2e-spec.ts$",
   "setupFiles": ["<rootDir>/setup-e2e.ts"],
+  "_comment_maxWorkers": "UMA suite por vez, de proposito. Os testes compartilham um banco so, e parte do estado e SINGLETON por natureza: o periodo vigente e 'o mais recente', entao duas suites criando periodo em paralelo fazem uma enxergar o periodo da outra. Isso ja aconteceu: o teste de 'periodo fechado' do portal passou a falhar quando a suite do relatorio entrou. Serial custa poucos segundos e elimina a classe inteira de teste intermitente.",
+  "maxWorkers": 1,
   "transform": {
     "^.+\\.(t|j)s$": "ts-jest"
   },

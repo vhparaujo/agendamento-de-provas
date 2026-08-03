@@ -48,11 +48,15 @@ describe('paraInstanteUtc', () => {
   it('respeita horario de verao onde ele existe', () => {
     // Nova York: -04:00 em agosto (EDT), -05:00 em janeiro (EST).
     expect(
-      paraIsoUtc(paraInstanteUtc(dia('2026-08-20'), '09:00', 'America/New_York')),
+      paraIsoUtc(
+        paraInstanteUtc(dia('2026-08-20'), '09:00', 'America/New_York'),
+      ),
     ).toBe('2026-08-20T13:00:00.000Z');
 
     expect(
-      paraIsoUtc(paraInstanteUtc(dia('2026-01-20'), '09:00', 'America/New_York')),
+      paraIsoUtc(
+        paraInstanteUtc(dia('2026-01-20'), '09:00', 'America/New_York'),
+      ),
     ).toBe('2026-01-20T14:00:00.000Z');
   });
 

@@ -1,5 +1,12 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
+import { StatusAgendamento } from '../../generated/prisma/client';
 
 export interface SituacaoPeriodo {
   aberto: boolean;
@@ -15,6 +22,21 @@ export interface SituacaoPeriodo {
 export interface PeriodoVigente {
   periodoLetivoId: string;
   dataFechamento: Date;
+}
+
+/** Um periodo como o admin o ve, com o que ja foi agendado nele. */
+export interface PeriodoAdmin {
+  id: number;
+  periodoLetivoId: string;
+  descricao: string | null;
+  aberto: boolean;
+  dataAbertura: Date | null;
+  dataFechamento: Date;
+  vigente: boolean;
+  /** Situacao efetiva agora — `aberto` sozinho nao conta a data. */
+  aceitandoAgendamento: boolean;
+  totalAgendamentos: number;
+  criadoEm: Date;
 }
 
 /**
@@ -101,6 +123,166 @@ export class PeriodoService {
       periodoLetivoId: situacao.periodoLetivoId!,
       dataFechamento: situacao.dataFechamento!,
     };
+  }
+
+  // ==========================================================================
+  // LADO ADMINISTRATIVO
+  // ==========================================================================
+
+  async listar(): Promise<PeriodoAdmin[]> {
+    const periodos = await this.prisma.periodoAgendamento.findMany({
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (periodos.length === 0) return [];
+
+    // Uma consulta agrupada em vez de uma por periodo.
+    const contagens = await this.prisma.agendamento.groupBy({
+      by: ['periodoLetivoId'],
+      where: { status: StatusAgendamento.CONFIRMADO },
+      _count: { _all: true },
+    });
+
+    const porPeriodoLetivo = new Map(
+      contagens.map((c) => [c.periodoLetivoId, c._count._all]),
+    );
+
+    const agora = new Date();
+
+    // O vigente e o mais recente — o mesmo criterio que `situacaoAtual` usa.
+    return periodos.map((p, indice) => ({
+      id: p.id,
+      periodoLetivoId: p.periodoLetivoId,
+      descricao: p.descricao,
+      aberto: p.aberto,
+      dataAbertura: p.dataAbertura,
+      dataFechamento: p.dataFechamento,
+      vigente: indice === 0,
+      aceitandoAgendamento:
+        indice === 0 &&
+        p.aberto &&
+        (!p.dataAbertura || agora >= p.dataAbertura) &&
+        agora <= p.dataFechamento,
+      totalAgendamentos: porPeriodoLetivo.get(p.periodoLetivoId) ?? 0,
+      criadoEm: p.createdAt,
+    }));
+  }
+
+  async criar(dados: {
+    periodoLetivoId: string;
+    descricao?: string;
+    aberto?: boolean;
+    dataAbertura?: string;
+    dataFechamento: string;
+  }): Promise<PeriodoAdmin> {
+    const abertura = dados.dataAbertura
+      ? exigirData(dados.dataAbertura, 'dataAbertura')
+      : null;
+    const fechamento = exigirData(dados.dataFechamento, 'dataFechamento');
+
+    validarJanela(abertura, fechamento);
+
+    // Criar um periodo novo TROCA o vigente, porque vigente = mais recente.
+    // Sem este aviso, o admin poderia cadastrar o semestre seguinte com semanas
+    // de antecedencia e, sem perceber, fechar o agendamento que esta em curso.
+    const atual = await this.prisma.periodoAgendamento.findFirst({
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (atual && atual.periodoLetivoId === dados.periodoLetivoId) {
+      throw new ConflictException(
+        `Ja existe um periodo vigente para o periodo letivo ${dados.periodoLetivoId} ` +
+          `(id ${atual.id}). Ajuste aquele em vez de criar outro.`,
+      );
+    }
+
+    const criado = await this.prisma.periodoAgendamento.create({
+      data: {
+        periodoLetivoId: dados.periodoLetivoId.trim(),
+        descricao: dados.descricao?.trim() || null,
+        aberto: dados.aberto ?? false,
+        dataAbertura: abertura,
+        dataFechamento: fechamento,
+      },
+    });
+
+    return this.buscar(criado.id);
+  }
+
+  async atualizar(
+    id: number,
+    dados: {
+      descricao?: string | null;
+      aberto?: boolean;
+      dataAbertura?: string | null;
+      dataFechamento?: string;
+    },
+  ): Promise<PeriodoAdmin> {
+    const periodo = await this.prisma.periodoAgendamento.findUnique({
+      where: { id },
+    });
+
+    if (!periodo) throw new NotFoundException(`Periodo ${id} nao encontrado`);
+
+    const abertura =
+      dados.dataAbertura === undefined
+        ? periodo.dataAbertura
+        : dados.dataAbertura === null
+          ? null
+          : exigirData(dados.dataAbertura, 'dataAbertura');
+
+    const fechamento = dados.dataFechamento
+      ? exigirData(dados.dataFechamento, 'dataFechamento')
+      : periodo.dataFechamento;
+
+    validarJanela(abertura, fechamento);
+
+    // Antecipar o fechamento para tras de agora e legitimo (encerrar antes do
+    // previsto), mas quem ja agendou nao perde a vaga: o periodo so barra quem
+    // ainda nao escolheu. Por isso nao ha checagem de agendamentos aqui.
+    await this.prisma.periodoAgendamento.update({
+      where: { id },
+      data: {
+        descricao:
+          dados.descricao === undefined
+            ? undefined
+            : (dados.descricao?.trim() ?? null) || null,
+        aberto: dados.aberto,
+        dataAbertura: abertura,
+        dataFechamento: fechamento,
+      },
+    });
+
+    return this.buscar(id);
+  }
+
+  async buscar(id: number): Promise<PeriodoAdmin> {
+    const todos = await this.listar();
+    const periodo = todos.find((p) => p.id === id);
+
+    if (!periodo) throw new NotFoundException(`Periodo ${id} nao encontrado`);
+
+    return periodo;
+  }
+}
+
+function exigirData(valor: string, campo: string): Date {
+  const data = new Date(valor);
+
+  if (Number.isNaN(data.getTime())) {
+    throw new BadRequestException(
+      `${campo} invalida: "${valor}". Use ISO 8601 (ex: 2026-08-18T23:59:00-03:00).`,
+    );
+  }
+
+  return data;
+}
+
+function validarJanela(abertura: Date | null, fechamento: Date): void {
+  if (abertura && abertura >= fechamento) {
+    throw new BadRequestException(
+      'dataAbertura precisa ser antes de dataFechamento.',
+    );
   }
 }
 

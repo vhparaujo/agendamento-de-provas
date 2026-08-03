@@ -25,6 +25,8 @@ export const TAGS = {
   SALAS: 'Salas',
   FAIXAS: 'Faixas e oferta de vagas',
   PORTAL: 'Portal do Aluno',
+  PERIODO: 'Periodo de agendamento',
+  AGENDAMENTOS: 'Agendamentos (admin)',
 } as const;
 
 const DESCRICAO = `
@@ -117,6 +119,14 @@ export function construirDocumento(app: INestApplication): OpenAPIObject {
     .addTag(
       TAGS.PORTAL,
       'O que o aluno acessa depois do launch LTI: ver horarios e confirmar a prova',
+    )
+    .addTag(
+      TAGS.PERIODO,
+      'A janela em que se pode agendar — fecha so por data/hora, nunca por vagas',
+    )
+    .addTag(
+      TAGS.AGENDAMENTOS,
+      'Consulta, ocupacao por sala e exportacao do relatorio de agendamentos',
     )
     .build();
 
