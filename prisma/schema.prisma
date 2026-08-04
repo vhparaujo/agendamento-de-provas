@@ -299,6 +299,7 @@ model Agendamento {
   salaFaixa   SalaFaixa               @relation(fields: [salaFaixaId], references: [id])
   disciplinas AgendamentoDisciplina[]
   syncs       SyncD2L[]
+  historico   HistoricoAgendamento[]
 
   @@index([alunoId])
   @@index([salaFaixaId]) // usado na contagem de ocupacao
@@ -309,6 +310,53 @@ model Agendamento {
 enum StatusAgendamento {
   CONFIRMADO
   CANCELADO
+}
+
+// ----------------------------------------------------------------------------
+// HISTORICO DO AGENDAMENTO — quem mexeu, quando, e do que para o que
+// ----------------------------------------------------------------------------
+// Existe para responder UMA pergunta concreta: quando o aluno reclamar que
+// "mudaram minha prova de horario", provar se foi ele mesmo ou a secretaria.
+//
+// Por que uma TABELA e nao o log de seguranca (AuditoriaService): o log vai para
+// a saida do processo, e quem precisa da resposta e a secretaria, na tela, com o
+// aluno na frente. Log que so o time de infra consegue ler nao resolve
+// atendimento.
+//
+// `autor` e uma FOTOGRAFIA (matricula do aluno ou e-mail do admin), nao uma FK:
+// o registro precisa continuar legivel mesmo que a conta do admin seja desativada
+// ou o vinculo do aluno mude no proximo CSV.
+//
+// `de`/`para` sao texto pronto ("M114 · 20/08/2026 08:30-11:30") pelo mesmo
+// motivo: ids soltos exigiriam reconstruir o passado para virar frase.
+
+model HistoricoAgendamento {
+  id            Int               @id @default(autoincrement())
+  agendamentoId Int
+  evento        EventoAgendamento
+  autorTipo     AutorDaAlteracao
+  autor         String // matricula (aluno) ou e-mail (admin)
+  de            String? // situacao anterior, legivel
+  para          String? // situacao nova, legivel
+  createdAt     DateTime          @default(now())
+
+  agendamento Agendamento @relation(fields: [agendamentoId], references: [id], onDelete: Cascade)
+
+  @@index([agendamentoId])
+  @@index([createdAt])
+  @@map("historico_agendamento")
+}
+
+enum EventoAgendamento {
+  CRIADO
+  TROCADO // o ALUNO mudou de horario
+  REMANEJADO // o ADMIN moveu de sala/horario
+  CANCELADO
+}
+
+enum AutorDaAlteracao {
+  ALUNO
+  ADMIN
 }
 
 // ----------------------------------------------------------------------------

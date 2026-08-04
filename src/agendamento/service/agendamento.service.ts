@@ -8,12 +8,23 @@ import {
 import type { AlunoJwtPayload } from '../../auth/jwt/jwt.types';
 import { duracaoEmMinutos } from '../../components/horario.util';
 import { PrismaService } from '../../database/prisma.service';
-import { Prisma, StatusAgendamento } from '../../generated/prisma/client';
+import {
+  EventoAgendamento,
+  Prisma,
+  StatusAgendamento,
+} from '../../generated/prisma/client';
 import { PeriodoService } from '../../periodo/service/periodo.service';
 import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 import type { DisciplinaAgendavel } from '../../turma/service/turma.service';
-import { escolherOferta, totalDisponivel } from './alocacao';
+import { totalDisponivel } from './alocacao';
+import { AUTOR_ALUNO, descreverOferta, registrarHistorico } from './historico';
 import { DisciplinasDoAlunoService } from './disciplinas-do-aluno.service';
+import {
+  CONFIRMADO,
+  escolherOfertaComLock,
+  OPCOES_DA_TRANSACAO,
+  travarVinculo,
+} from './lock-de-vagas';
 
 /**
  * Uma opcao de horario como o ALUNO a enxerga: dia, hora e se ainda ha vaga.
@@ -187,33 +198,7 @@ export class AgendamentoService {
       recusar(SEM_DISCIPLINA, 'nenhuma disciplina agendavel');
     }
 
-    const faixa = await this.prisma.faixa.findUnique({
-      where: { id: dados.faixaId },
-      include: { polo: { select: { id: true, nome: true } } },
-    });
-
-    if (!faixa) {
-      throw new NotFoundException(`Horario ${dados.faixaId} nao encontrado`);
-    }
-
-    // O polo vem do CSV, nao da escolha do aluno: agendar em outro campus seria
-    // viajar para fazer prova no lugar errado.
-    if (faixa.poloId !== vinculo.poloId) {
-      recusar(
-        `Este horario e do polo ${faixa.polo.nome}, e o seu curso e do polo ${vinculo.polo.nome}.`,
-        `faixa do polo ${faixa.poloId}, aluno do polo ${vinculo.poloId}`,
-      );
-    }
-
-    if (!faixa.ativo) {
-      throw new ConflictException(
-        'Este horario nao esta mais disponivel. Escolha outro.',
-      );
-    }
-
-    if (faixa.data < hojeUtc()) {
-      throw new ConflictException('Este horario ja passou. Escolha outro.');
-    }
+    const faixa = await this.exigirFaixaValida(dados.faixaId, vinculo, recusar);
 
     const criado = await this.alocar({
       vinculoId: vinculo.id,
@@ -236,14 +221,148 @@ export class AgendamentoService {
     return this.buscar(criado.id);
   }
 
-  /** Tudo que este RA ja marcou — os dois cursos, quando houver dois. */
+  /**
+   * ==========================================================================
+   * TROCAR DE HORARIO — sem passar por "cancela e tenta de novo"
+   * ==========================================================================
+   * A operacao e ATOMICA de proposito. Se o aluno cancelasse primeiro e so
+   * depois escolhesse, poderia perder a vaga que tinha e descobrir que a nova
+   * lotou no meio do caminho — ficando sem nenhuma. Aqui, ou ele sai com o
+   * horario novo, ou continua exatamente com o que tinha.
+   */
+  async trocar(
+    aluno: AlunoJwtPayload,
+    agendamentoId: number,
+    faixaId: number,
+  ): Promise<AgendamentoConfirmado> {
+    const atual = await this.exigirAgendamentoDoAluno(aluno, agendamentoId);
+    const vinculo = await this.exigirVinculo(aluno, atual.alunoId);
+
+    // A troca e um agendamento novo aos olhos da regra: fora do prazo, nao ha
+    // troca. Quem perdeu o prazo procura a secretaria, que remaneja.
+    await this.periodo.exigirAberto();
+
+    const faixa = await this.exigirFaixaValida(faixaId, vinculo);
+
+    if (atual.salaFaixa.faixaId === faixaId) {
+      throw new ConflictException(
+        'Voce ja esta neste horario. Escolha um horario diferente.',
+      );
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await travarVinculo(tx, vinculo.id);
+
+      const de = await descreverOferta(tx, atual.salaFaixaId);
+
+      const escolhida = await escolherOfertaComLock(
+        tx,
+        faixa.id,
+        vinculo.modalidadeId,
+        agendamentoId,
+      );
+
+      await tx.agendamento.update({
+        where: { id: agendamentoId },
+        data: { salaFaixaId: escolhida.id, alocadoManual: false },
+      });
+
+      // FOI O PROPRIO ALUNO. E este registro que responde a reclamacao de
+      // "mudaram minha prova sem avisar".
+      await registrarHistorico(tx, {
+        agendamentoId,
+        evento: EventoAgendamento.TROCADO,
+        autor: AUTOR_ALUNO(vinculo.matricula),
+        de,
+        para: await descreverOferta(tx, escolhida.id),
+      });
+
+      // A prova mudou de hora: o que ja tiver sido enviado precisa ser reescrito
+      // quando a integracao existir.
+      await tx.syncD2L.updateMany({
+        where: { agendamentoId },
+        data: { status: 'PENDENTE', tentativas: 0, ultimoErro: null },
+      });
+    }, OPCOES_DA_TRANSACAO);
+
+    this.auditoria.registrar('AGENDAMENTO_REMANEJADO', {
+      ator: vinculo.matricula,
+      detalhe: `agendamento ${agendamentoId}: faixa ${atual.salaFaixa.faixaId} -> ${faixaId} (troca pelo aluno)`,
+    });
+
+    return this.buscar(agendamentoId);
+  }
+
+  /**
+   * Cancela a propria prova. Nao apaga: vira CANCELADO, e a vaga volta a contar
+   * como livre (toda contagem filtra CONFIRMADO). O registro sobrevive porque
+   * "esse aluno chegou a marcar e desmarcou" e informacao que a secretaria
+   * precisa quando alguem aparece no dia sem estar na lista.
+   */
+  async cancelar(
+    aluno: AlunoJwtPayload,
+    agendamentoId: number,
+  ): Promise<{ mensagem: string }> {
+    const atual = await this.exigirAgendamentoDoAluno(aluno, agendamentoId);
+
+    // Fora do prazo o aluno nao desmarca sozinho: liberar a vaga depois do
+    // fechamento deixaria um lugar vago que mais ninguem consegue ocupar.
+    await this.periodo.exigirAberto();
+
+    await this.prisma.$transaction(async (tx) => {
+      const de = await descreverOferta(tx, atual.salaFaixaId);
+
+      await tx.agendamento.update({
+        where: { id: agendamentoId },
+        data: { status: StatusAgendamento.CANCELADO },
+      });
+
+      // A fila de liberacao perde o sentido: nao ha prova para liberar.
+      await tx.syncD2L.deleteMany({ where: { agendamentoId } });
+
+      await registrarHistorico(tx, {
+        agendamentoId,
+        evento: EventoAgendamento.CANCELADO,
+        autor: AUTOR_ALUNO(atual.matricula),
+        de,
+      });
+    });
+
+    this.auditoria.registrar('AGENDAMENTO_CANCELADO', {
+      ator: atual.matricula,
+      detalhe: `agendamento ${agendamentoId} cancelado pelo aluno`,
+    });
+
+    return {
+      mensagem:
+        'Agendamento cancelado. A vaga voltou a ficar disponivel — escolha outro horario enquanto o prazo estiver aberto.',
+    };
+  }
+
+  /**
+   * A prova que ele tem marcada AGORA — um por curso, quando houver dois.
+   *
+   * So o periodo vigente. O aluno nao ve historico de semestres anteriores: o
+   * portal existe para ele saber onde e quando e a prova desta vez, e uma lista
+   * com provas antigas so cria confusao (e, antes desta trava, permitia cancelar
+   * uma prova que ja tinha acontecido).
+   *
+   * O filtro NAO exige o periodo aberto: depois do prazo fechado ele continua
+   * precisando ver onde e quando fazer a prova. Fechar tranca a escolha, nao a
+   * consulta.
+   */
   async meusAgendamentos(
     aluno: AlunoJwtPayload,
   ): Promise<AgendamentoConfirmado[]> {
+    const periodoLetivoId = await this.periodo.periodoLetivoVigente();
+
+    if (!periodoLetivoId) return [];
+
     const agendamentos = await this.prisma.agendamento.findMany({
       where: {
         matricula: aluno.sub,
         alunoId: { in: aluno.vinculos.map((v) => v.alunoId) },
+        periodoLetivoId,
         ...CONFIRMADO,
       },
       include: INCLUDE_COMPLETO,
@@ -292,103 +411,163 @@ export class AgendamentoService {
     periodoLetivoId: string;
     disciplinas: DisciplinaAgendavel[];
   }): Promise<{ id: number; salaFaixaId: number }> {
-    return this.prisma.$transaction(
-      async (tx) => {
-        await tx.$queryRaw`
-          SELECT id FROM aluno_importado WHERE id = ${dados.vinculoId} FOR UPDATE`;
+    return this.prisma.$transaction(async (tx) => {
+      await travarVinculo(tx, dados.vinculoId);
 
-        const jaAgendado = await tx.agendamento.findFirst({
-          where: {
-            alunoId: dados.vinculoId,
-            periodoLetivoId: dados.periodoLetivoId,
-            ...CONFIRMADO,
-          },
-          select: { id: true },
-        });
+      const jaAgendado = await tx.agendamento.findFirst({
+        where: {
+          alunoId: dados.vinculoId,
+          periodoLetivoId: dados.periodoLetivoId,
+          ...CONFIRMADO,
+        },
+        select: { id: true },
+      });
 
-        if (jaAgendado) {
-          throw new ConflictException(
-            `Voce ja tem prova marcada para o curso ${dados.curso} ` +
-              `(agendamento ${jaAgendado.id}). Para trocar de horario, procure a secretaria academica.`,
-          );
-        }
-
-        const travadas = await tx.$queryRaw<
-          { id: number; ordem: number; vagas: number }[]
-        >`
-          SELECT id, ordem, vagas
-            FROM sala_faixa
-           WHERE faixaId = ${dados.faixaId}
-             AND modalidadeId = ${dados.modalidadeId}
-           ORDER BY ordem ASC
-           FOR UPDATE`;
-
-        if (travadas.length === 0) {
-          throw new ConflictException(
-            'Este horario nao atende a modalidade do seu curso.',
-          );
-        }
-
-        const ocupacao = await tx.agendamento.groupBy({
-          by: ['salaFaixaId'],
-          where: {
-            salaFaixaId: { in: travadas.map((o) => Number(o.id)) },
-            ...CONFIRMADO,
-          },
-          _count: { _all: true },
-        });
-
-        const ocupadasPor = new Map(
-          ocupacao.map((o) => [o.salaFaixaId, o._count._all]),
+      if (jaAgendado) {
+        throw new ConflictException(
+          `Voce ja tem prova marcada para o curso ${dados.curso} ` +
+            `(agendamento ${jaAgendado.id}). Use a troca de horario para mudar.`,
         );
+      }
 
-        const escolhida = escolherOferta(
-          travadas.map((o) => ({
-            id: Number(o.id),
-            ordem: Number(o.ordem),
-            vagas: Number(o.vagas),
-            ocupadas: ocupadasPor.get(Number(o.id)) ?? 0,
-          })),
-        );
+      const escolhida = await escolherOfertaComLock(
+        tx,
+        dados.faixaId,
+        dados.modalidadeId,
+      );
 
-        if (!escolhida) {
-          throw new ConflictException(
-            'As vagas deste horario acabaram de se esgotar. Escolha outro horario.',
-          );
-        }
-
-        return tx.agendamento.create({
-          data: {
-            alunoId: dados.vinculoId,
-            salaFaixaId: escolhida.id,
-            matricula: dados.matricula,
-            userIdD2L: dados.userIdD2L,
-            periodoLetivoId: dados.periodoLetivoId,
-            disciplinas: {
-              create: dados.disciplinas.map((d) => ({
-                orgUnitId: d.orgUnitId,
-                nomeDisciplina: d.nomeDisciplina,
-              })),
-            },
-            // A fila do special access nasce junto, na MESMA transacao: um
-            // agendamento gravado sem a sua fila seria uma prova marcada que
-            // nunca chega a ser liberada no Brightspace, e ninguem descobriria
-            // ate o aluno tentar abrir o quiz. O consumidor e da etapa 7.
-            syncs: {
-              create: dados.disciplinas.map((d) => ({
-                orgUnitId: d.orgUnitId,
-              })),
-            },
+      const criado = await tx.agendamento.create({
+        data: {
+          alunoId: dados.vinculoId,
+          salaFaixaId: escolhida.id,
+          matricula: dados.matricula,
+          userIdD2L: dados.userIdD2L,
+          periodoLetivoId: dados.periodoLetivoId,
+          disciplinas: {
+            create: dados.disciplinas.map((d) => ({
+              orgUnitId: d.orgUnitId,
+              nomeDisciplina: d.nomeDisciplina,
+            })),
           },
-          select: { id: true, salaFaixaId: true },
-        });
-      },
-      {
-        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
-        timeout: 15_000,
-        maxWait: 10_000,
-      },
-    );
+          // A fila de liberacao nasce junto, na MESMA transacao: um agendamento
+          // gravado sem a sua fila seria uma prova marcada que nunca chega a ser
+          // liberada, e ninguem descobriria ate o aluno tentar abrir o quiz.
+          // A integracao com o D2L esta adiada; a fila fica esperando.
+          syncs: {
+            create: dados.disciplinas.map((d) => ({ orgUnitId: d.orgUnitId })),
+          },
+        },
+        select: { id: true, salaFaixaId: true },
+      });
+
+      await registrarHistorico(tx, {
+        agendamentoId: criado.id,
+        evento: EventoAgendamento.CRIADO,
+        autor: AUTOR_ALUNO(dados.matricula),
+        para: await descreverOferta(tx, criado.salaFaixaId),
+      });
+
+      return criado;
+    }, OPCOES_DA_TRANSACAO);
+  }
+
+  /**
+   * A faixa serve para ESTE vinculo? Mesmas regras no agendar e no trocar — se
+   * fossem duas listas, a troca viraria um caminho para burlar o que o
+   * agendamento recusa.
+   */
+  private async exigirFaixaValida(
+    faixaId: number,
+    vinculo: { poloId: number; polo: { nome: string } },
+    recusar?: (motivo: string, detalhe: string) => never,
+  ) {
+    const faixa = await this.prisma.faixa.findUnique({
+      where: { id: faixaId },
+      include: { polo: { select: { id: true, nome: true } } },
+    });
+
+    if (!faixa) {
+      throw new NotFoundException(`Horario ${faixaId} nao encontrado`);
+    }
+
+    // O polo vem do CSV, nao da escolha do aluno: agendar em outro campus seria
+    // viajar para fazer prova no lugar errado.
+    if (faixa.poloId !== vinculo.poloId) {
+      const motivo = `Este horario e do polo ${faixa.polo.nome}, e o seu curso e do polo ${vinculo.polo.nome}.`;
+
+      if (recusar) {
+        recusar(
+          motivo,
+          `faixa do polo ${faixa.poloId}, aluno do polo ${vinculo.poloId}`,
+        );
+      }
+
+      throw new ForbiddenException(motivo);
+    }
+
+    if (!faixa.ativo) {
+      throw new ConflictException(
+        'Este horario nao esta mais disponivel. Escolha outro.',
+      );
+    }
+
+    if (faixa.data < hojeUtc()) {
+      throw new ConflictException('Este horario ja passou. Escolha outro.');
+    }
+
+    return faixa;
+  }
+
+  /**
+   * O agendamento e mesmo deste aluno? Confere pelos vinculos do token, e nao
+   * pela matricula sozinha — e a mesma porta que o `exigirVinculo` guarda.
+   */
+  private async exigirAgendamentoDoAluno(
+    aluno: AlunoJwtPayload,
+    agendamentoId: number,
+  ) {
+    const agendamento = await this.prisma.agendamento.findUnique({
+      where: { id: agendamentoId },
+      include: { salaFaixa: { select: { faixaId: true } } },
+    });
+
+    if (!agendamento) {
+      throw new NotFoundException(
+        `Agendamento ${agendamentoId} nao encontrado`,
+      );
+    }
+
+    const ehDele =
+      agendamento.matricula === aluno.sub &&
+      aluno.vinculos.some((v) => v.alunoId === agendamento.alunoId);
+
+    if (!ehDele) {
+      this.auditoria.registrar('AGENDAMENTO_RECUSADO', {
+        ator: aluno.sub,
+        detalhe: `tentou mexer no agendamento ${agendamentoId}, que e de outra matricula`,
+      });
+
+      throw new ForbiddenException('Este agendamento nao e seu.');
+    }
+
+    if (agendamento.status !== StatusAgendamento.CONFIRMADO) {
+      throw new ConflictException(
+        'Este agendamento ja foi cancelado. Marque um horario novo.',
+      );
+    }
+
+    // Semestre anterior nao se mexe. Sem esta trava, abrir o periodo novo daria
+    // ao aluno a chance de cancelar uma prova que ele JA FEZ — apagando-a da
+    // lista do relatorio como se nunca tivesse existido.
+    const vigente = await this.periodo.periodoLetivoVigente();
+
+    if (agendamento.periodoLetivoId !== vigente) {
+      throw new NotFoundException(
+        'Este agendamento e de um periodo anterior e nao pode mais ser alterado.',
+      );
+    }
+
+    return agendamento;
   }
 
   private async buscar(id: number): Promise<AgendamentoConfirmado> {
@@ -465,9 +644,6 @@ export class AgendamentoService {
     );
   }
 }
-
-/** Cancelado nao ocupa vaga. Usado em toda contagem, para nao contar fantasma. */
-const CONFIRMADO = { status: StatusAgendamento.CONFIRMADO } as const;
 
 const SEM_DISCIPLINA =
   'Nenhuma disciplina sua tem prova cadastrada neste periodo. ' +

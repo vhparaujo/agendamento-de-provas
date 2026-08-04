@@ -101,9 +101,11 @@ mesma faixa, porém, a sala fica travada numa única modalidade (garantido pelo
    na mesma transação, serializada por SalaFaixa. Nunca conte fora da transação.
    Feito com `SELECT ... FOR UPDATE` sob READ COMMITTED — há teste que prova:
    remover o lock faz 5 alunos entrarem na mesma vaga.
-7. **Admin pode remanejar** qualquer agendamento (trocar sala ou faixa). A
-   alocação automática é só o default; remanejo marca `alocadoManual = true`.
-   *(ainda não implementado)*
+7. **Reagendamento tem dono.** O aluno só troca/cancela com o período **aberto**
+   e só no período **vigente**. O admin remaneja a qualquer tempo (é a válvula de
+   escape), marcando `alocadoManual = true`, mas nem ele muda polo ou modalidade.
+   **Toda alteração grava quem a fez** — aluno ou administrador — na mesma
+   transação da mudança.
 8. **O período fecha só por data/hora** (`dataFechamento`), nunca por esgotamento
    de vagas. A janela de agendamento e as datas das provas são linhas do tempo
    independentes.
@@ -145,6 +147,28 @@ docker compose up -d --build
 O container do app roda `prisma migrate deploy` antes de subir. Dentro da rede do
 compose o host do banco é `mysql`, não `localhost` — o `docker-compose.yml` já
 sobrescreve a `DATABASE_URL` com isso.
+
+### ⚠️ Sempre `--build` quando houver código ou migration nova
+
+```bash
+docker compose up -d --build app     # certo
+docker compose up -d app             # reusa a imagem antiga, em silêncio
+```
+
+Sem o `--build`, o compose sobe a **imagem já construída** — com o código e as
+migrations de quando ela foi gerada. Não há aviso: a API responde normalmente,
+só que velha. Sintomas típicos: rota nova devolvendo `404`, comportamento antigo
+de uma regra que você acabou de mudar, ou o erro `P3009` da seção abaixo.
+
+Piora com dois detalhes deste compose:
+
+- o serviço tem `restart: unless-stopped`, então o container **volta sozinho**
+  depois de um restart do Docker;
+- ele publica a porta **3000**, a mesma do `npm run start:dev`. Quem subir
+  primeiro fica com ela, e o outro nem sobe.
+
+Se algo se comportar de forma inexplicavelmente antiga, confira quem está
+respondendo: `docker compose ps app`. Para trabalhar local, `docker compose stop app`.
 
 ---
 
@@ -317,6 +341,12 @@ Exigem JWT de admin. Todas aceitam os mesmos filtros: `poloId`, `faixaId`,
 | `GET` | `/agendamentos/resumo` | Ocupação por sala: quais abrir, quantos fiscais, quais ficaram vazias |
 | `GET` | `/agendamentos/exportacao` | **O relatório completo em CSV** |
 | `GET` | `/agendamentos/:id` | Detalhe |
+| `GET` | `/agendamentos/:id/historico` | **Quem alterou**: o próprio aluno ou qual administrador |
+| `PATCH` | `/agendamentos/:id/remanejar` | Move de sala (`salaFaixaId`) ou de horário (`faixaId`) |
+| `DELETE` | `/agendamentos/:id` | Cancela (vira `CANCELADO`, não apaga) |
+
+O remanejo **não depende do período estar aberto** — consertar depois do
+fechamento é justamente o caso de uso.
 
 Sem `status` explícito, tudo traz apenas os **confirmados** — um cancelado na
 lista do dia da prova faria alguém procurar um aluno que não vem.
@@ -338,6 +368,20 @@ quem tem um só pode omitir.
 | `GET` | `/portal/faixas` | Horários que ele pode escolher — **sem sala**, com o total de vagas livres |
 | `POST` | `/portal/agendamentos` | Confirma a prova; a sala vem da alocação sequencial |
 | `GET` | `/portal/agendamentos` | O que esta matrícula já marcou (um por curso) |
+| `PATCH` | `/portal/agendamentos/:id` | **Troca de horário** — atômica: sem vaga no novo, mantém o antigo |
+| `DELETE` | `/portal/agendamentos/:id` | Cancela a própria prova |
+
+Trocar e cancelar valem **enquanto o prazo estiver aberto**. Depois disso, só a
+secretaria remaneja — cancelar após o fechamento deixaria um lugar vago que mais
+ninguém consegue ocupar.
+
+O aluno enxerga **apenas o período vigente**: provas de semestres anteriores não
+aparecem nem podem ser alteradas. Mas fechar o prazo **não esconde** a prova dele
+— ele continua vendo onde e quando é. Fechar tranca a escolha, não a consulta.
+
+Toda alteração registra **quem a fez**, e o administrador consulta em
+`GET /agendamentos/:id/historico`. É a resposta para "mudaram minha prova e não
+fui eu".
 
 O aluno não escolhe polo, modalidade nem sala. Polo e modalidade vêm do CSV; a
 sala é resultado da alocação no instante da confirmação.
@@ -442,6 +486,7 @@ TurmaImportada ── ImportacaoCsv      Admin      PeriodoAgendamento
 | `Agendamento` | A reserva, apontando para a `SalaFaixa` alocada |
 | `AgendamentoDisciplina` | As N disciplinas cobertas pela reserva |
 | `SyncD2L` | Fila de gravação do *special access* (PENDENTE/CONCLUIDO/FALHOU/NAO_MATRICULADO) |
+| `HistoricoAgendamento` | Quem alterou o agendamento: evento, autor (aluno/admin), de → para |
 | `PeriodoAgendamento` | Janela de agendamento; fecha por `dataFechamento` |
 
 **Índices que importam para a regra**
@@ -588,6 +633,7 @@ src/
     service/      agendamento.service.ts (a transação que impede overbooking)
                   agendamento-admin.service.ts (consulta, resumo, exportação)
                   alocacao.ts (regra sequencial, função pura)
+                  lock-de-vagas.ts (o FOR UPDATE, compartilhado pelos 3 caminhos)
                   csv-relatorio.ts (CSV do Excel, com defesa de injeção)
                   disciplinas-do-aluno.service.ts (costura Valence)
   aluno/          cruzamento matrícula → vínculos
@@ -664,6 +710,57 @@ Dois detalhes que já custaram tempo:
   `prisma_migrate_shadow_db`). Vale só para desenvolvimento — em produção usa-se
   `migrate deploy`, que não cria shadow database.
 
+### O nome da pasta da migration é a ordem de execução
+
+Num banco **vazio**, o Prisma aplica as migrations em ordem **alfabética do nome
+da pasta** — não na ordem em que foram criadas. O banco de quem já as aplicou não
+percebe diferença, porque o `_prisma_migrations` guarda a ordem real. Um banco
+novo, sim.
+
+Isso já aconteceu aqui: o `init` tinha timestamp **posterior** ao
+`aluno_por_vinculo`, então num banco limpo o `ALTER TABLE aluno_importado` rodava
+antes de a tabela existir. Em desenvolvimento nunca falhou; teria falhado no
+primeiro `migrate deploy` em produção.
+
+**Renomear uma migration já aplicada exige três passos, juntos:**
+
+1. renomear a pasta;
+2. atualizar o `migration_name` em `_prisma_migrations` de **todo** banco que já
+   a tinha aplicado;
+3. **reconstruir toda imagem Docker**, que carrega os nomes antigos gravados.
+
+Pular o passo 3 produz o `P3009` abaixo — foi exatamente o que aconteceu.
+
+A prova de que o histórico está sadio é o próprio `prisma migrate dev`: ele
+reconstrói o *shadow database* aplicando tudo do zero. Se passar, replica.
+
+### Erro `P3009` — "failed migrations in the target database"
+
+O `migrate deploy` encontrou uma migration marcada como **falha** e se recusa a
+seguir. Causa comum aqui: um container com imagem antiga tentou aplicar uma
+migration que já existia no banco sob outro nome.
+
+```bash
+# 1. Pare o container — ele fica em loop tentando a mesma coisa
+docker compose stop app
+
+# 2. Veja o estrago real. applied_steps_count = 0 significa que NADA rodou
+docker exec agendamento-mysql mysql -uagendamento -p -e \
+  "SELECT migration_name, finished_at, rolled_back_at, applied_steps_count \
+   FROM _prisma_migrations ORDER BY started_at;" agendamento
+
+# 3. Com applied_steps_count = 0, marque como revertida
+npx prisma migrate resolve --rolled-back <nome_da_migration>
+
+# 4. Confirme e reconstrua a imagem
+npx prisma migrate status
+docker compose up -d --build app
+```
+
+**Só use `--rolled-back` depois de confirmar `applied_steps_count = 0`.** Se
+alguma instrução tiver rodado, o banco está num meio-termo e marcar como revertida
+esconde isso — aí o caminho é desfazer à mão o que foi aplicado, antes de resolver.
+
 ---
 
 ## Testes
@@ -699,7 +796,7 @@ A ordem de implementação segue a prioridade definida para o projeto.
 | 4 | Estrutura: polo / sala / faixa / sala-faixa | ✅ concluída |
 | 5 | Portal do aluno: listar faixas + agendar com alocação sequencial | ✅ concluída |
 | 6 | Período de agendamento + relatório (consulta, ocupação por sala, CSV) | ✅ concluída |
-| 7 | Remanejo administrativo + cancelamento/troca pelo aluno | ⬜ pendente |
+| 7 | Remanejo administrativo + cancelamento/troca pelo aluno | ✅ concluída |
 | 8 | Integração D2L (Valence + special access) | ⬜ **adiada pelo cliente** |
 
 **Pendências conhecidas**

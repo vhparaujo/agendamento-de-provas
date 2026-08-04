@@ -1,7 +1,24 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
-import { Prisma, StatusAgendamento } from '../../generated/prisma/client';
+import {
+  EventoAgendamento,
+  Prisma,
+  StatusAgendamento,
+} from '../../generated/prisma/client';
+import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 import { dataBr, dataDaProva, montarCsv } from './csv-relatorio';
+import { AUTOR_ADMIN, descreverOferta, registrarHistorico } from './historico';
+import {
+  escolherOfertaComLock,
+  exigirVagaNaOferta,
+  OPCOES_DA_TRANSACAO,
+  travarVinculo,
+} from './lock-de-vagas';
 
 export interface FiltroAgendamentos {
   poloId?: number;
@@ -47,6 +64,18 @@ export interface PaginaDeAgendamentos {
   itens: AgendamentoAdmin[];
 }
 
+export interface EventoDoHistorico {
+  id: number;
+  evento: string;
+  /** ALUNO ou ADMIN — quem fez a alteracao. */
+  autorTipo: string;
+  /** Matricula do aluno ou e-mail do administrador. */
+  autor: string;
+  de: string | null;
+  para: string | null;
+  quando: Date;
+}
+
 export interface LinhaDoResumo {
   poloId: number;
   polo: string;
@@ -67,7 +96,256 @@ const MAXIMO_POR_PAGINA = 200;
 
 @Injectable()
 export class AgendamentoAdminService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditoria: AuditoriaService,
+  ) {}
+
+  /**
+   * ==========================================================================
+   * REMANEJO — a valvula de escape do sistema
+   * ==========================================================================
+   * A alocacao automatica e so o padrao. Quando a realidade nao cabe nela (sala
+   * interditada, aluno com necessidade especifica, prazo perdido), o admin move
+   * a mao — e o registro passa a dizer `alocadoManual: true`, para ninguem
+   * depois achar que a regra sequencial produziu aquilo.
+   *
+   * Ao contrario do aluno, o admin NAO depende do periodo estar aberto: consertar
+   * depois do fechamento e justamente o caso de uso.
+   *
+   * Duas formas:
+   * - `salaFaixaId` — o admin escolhe a sala exata;
+   * - `faixaId` — muda de horario e deixa a alocacao sequencial escolher a sala.
+   *
+   * O que NAO se pode remanejar, em nenhuma das duas: outro polo (o aluno
+   * viajaria para o campus errado) e outra modalidade (a prova tem outra
+   * duracao). Sao os dois erros que o remanejo poderia esconder.
+   */
+  async remanejar(
+    id: number,
+    destino: { salaFaixaId?: number; faixaId?: number },
+    ator?: string,
+  ): Promise<AgendamentoAdmin> {
+    if (!destino.salaFaixaId === !destino.faixaId) {
+      throw new BadRequestException(
+        'Informe `salaFaixaId` (sala exata) OU `faixaId` (deixa a alocacao escolher) — um dos dois.',
+      );
+    }
+
+    const atual = await this.prisma.agendamento.findUnique({
+      where: { id },
+      include: {
+        aluno: { select: { id: true, modalidadeId: true, poloId: true } },
+        salaFaixa: { select: { id: true, faixaId: true } },
+      },
+    });
+
+    if (!atual) throw new NotFoundException(`Agendamento ${id} nao encontrado`);
+
+    if (atual.status !== StatusAgendamento.CONFIRMADO) {
+      throw new ConflictException(
+        'Agendamento cancelado nao pode ser remanejado.',
+      );
+    }
+
+    const alvo = await this.resolverDestino(destino, atual.aluno);
+
+    if (alvo.salaFaixaId === atual.salaFaixa.id) {
+      throw new ConflictException('O agendamento ja esta nesta sala.');
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await travarVinculo(tx, atual.aluno.id);
+
+      const de = await descreverOferta(tx, atual.salaFaixa.id);
+
+      const salaFaixaId =
+        alvo.salaFaixaId ??
+        (
+          await escolherOfertaComLock(
+            tx,
+            alvo.faixaId,
+            atual.aluno.modalidadeId,
+            id,
+          )
+        ).id;
+
+      if (alvo.salaFaixaId) {
+        await exigirVagaNaOferta(tx, alvo.salaFaixaId, id);
+      }
+
+      await tx.agendamento.update({
+        where: { id },
+        data: { salaFaixaId, alocadoManual: true },
+      });
+
+      // O horario pode ter mudado: o que ja tiver sido liberado precisa ser
+      // reescrito quando a integracao com o D2L existir.
+      await tx.syncD2L.updateMany({
+        where: { agendamentoId: id },
+        data: { status: 'PENDENTE', tentativas: 0, ultimoErro: null },
+      });
+
+      // FOI O ADMINISTRADOR, e fica gravado com o e-mail dele. E o outro lado da
+      // mesma prova: se o aluno reclamar que nao foi ele, isto responde.
+      await registrarHistorico(tx, {
+        agendamentoId: id,
+        evento: EventoAgendamento.REMANEJADO,
+        autor: AUTOR_ADMIN(ator),
+        de,
+        para: await descreverOferta(tx, salaFaixaId),
+      });
+    }, OPCOES_DA_TRANSACAO);
+
+    this.auditoria.registrar('AGENDAMENTO_REMANEJADO', {
+      ator,
+      detalhe: `agendamento ${id}: oferta ${atual.salaFaixa.id} -> ${alvo.salaFaixaId ?? `faixa ${alvo.faixaId}`} (remanejo administrativo)`,
+    });
+
+    return this.buscar(id);
+  }
+
+  /**
+   * Cancela pelo lado administrativo. Vira CANCELADO, nunca some: quem aparecer
+   * no dia sem estar na lista precisa ser explicavel.
+   */
+  async cancelar(id: number, ator?: string): Promise<{ mensagem: string }> {
+    const atual = await this.prisma.agendamento.findUnique({
+      where: { id },
+      select: { id: true, matricula: true, status: true, salaFaixaId: true },
+    });
+
+    if (!atual) throw new NotFoundException(`Agendamento ${id} nao encontrado`);
+
+    if (atual.status !== StatusAgendamento.CONFIRMADO) {
+      throw new ConflictException('Este agendamento ja esta cancelado.');
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      const de = await descreverOferta(tx, atual.salaFaixaId);
+
+      await tx.agendamento.update({
+        where: { id },
+        data: { status: StatusAgendamento.CANCELADO },
+      });
+
+      await tx.syncD2L.deleteMany({ where: { agendamentoId: id } });
+
+      await registrarHistorico(tx, {
+        agendamentoId: id,
+        evento: EventoAgendamento.CANCELADO,
+        autor: AUTOR_ADMIN(ator),
+        de,
+      });
+    });
+
+    this.auditoria.registrar('AGENDAMENTO_CANCELADO', {
+      ator,
+      detalhe: `agendamento ${id} (${atual.matricula}) cancelado pelo administrador`,
+    });
+
+    return { mensagem: `Agendamento ${id} cancelado. A vaga foi liberada.` };
+  }
+
+  /**
+   * Quem mexeu neste agendamento, do mais recente para o mais antigo.
+   *
+   * E a tela que a secretaria abre quando o aluno reclama que mudaram a prova
+   * dele: cada linha diz o que aconteceu, QUEM fez (o proprio aluno ou qual
+   * administrador) e de que horario para qual.
+   */
+  async historico(id: number): Promise<EventoDoHistorico[]> {
+    const existe = await this.prisma.agendamento.count({ where: { id } });
+
+    if (existe === 0) {
+      throw new NotFoundException(`Agendamento ${id} nao encontrado`);
+    }
+
+    const linhas = await this.prisma.historicoAgendamento.findMany({
+      where: { agendamentoId: id },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return linhas.map((l) => ({
+      id: l.id,
+      evento: l.evento,
+      autorTipo: l.autorTipo,
+      autor: l.autor,
+      de: l.de,
+      para: l.para,
+      quando: l.createdAt,
+    }));
+  }
+
+  /**
+   * Valida o destino contra o vinculo do aluno ANTES da transacao, para a
+   * mensagem de erro poder explicar o problema em vez de so recusar.
+   */
+  private async resolverDestino(
+    destino: { salaFaixaId?: number; faixaId?: number },
+    aluno: { modalidadeId: number; poloId: number },
+  ): Promise<{ salaFaixaId?: number; faixaId: number }> {
+    if (destino.salaFaixaId) {
+      const oferta = await this.prisma.salaFaixa.findUnique({
+        where: { id: destino.salaFaixaId },
+        include: {
+          modalidade: { select: { nome: true } },
+          faixa: { include: { polo: { select: { nome: true } } } },
+        },
+      });
+
+      if (!oferta) {
+        throw new NotFoundException(
+          `Oferta ${destino.salaFaixaId} nao encontrada`,
+        );
+      }
+
+      this.exigirCompativel(
+        { poloId: oferta.faixa.poloId, poloNome: oferta.faixa.polo.nome },
+        { modalidadeId: oferta.modalidadeId, nome: oferta.modalidade.nome },
+        aluno,
+      );
+
+      return { salaFaixaId: oferta.id, faixaId: oferta.faixaId };
+    }
+
+    const faixa = await this.prisma.faixa.findUnique({
+      where: { id: destino.faixaId },
+      include: { polo: { select: { nome: true } } },
+    });
+
+    if (!faixa) {
+      throw new NotFoundException(`Faixa ${destino.faixaId} nao encontrada`);
+    }
+
+    this.exigirCompativel(
+      { poloId: faixa.poloId, poloNome: faixa.polo.nome },
+      undefined,
+      aluno,
+    );
+
+    return { faixaId: faixa.id };
+  }
+
+  private exigirCompativel(
+    local: { poloId: number; poloNome: string },
+    modalidade: { modalidadeId: number; nome: string } | undefined,
+    aluno: { modalidadeId: number; poloId: number },
+  ): void {
+    if (local.poloId !== aluno.poloId) {
+      throw new BadRequestException(
+        `O destino e do polo "${local.poloNome}", que nao e o polo do aluno. ` +
+          'Remanejar entre polos mandaria o aluno para o campus errado.',
+      );
+    }
+
+    if (modalidade && modalidade.modalidadeId !== aluno.modalidadeId) {
+      throw new BadRequestException(
+        `Esta sala esta ofertada como "${modalidade.nome}", que nao e a modalidade ` +
+          'do aluno. A duracao da prova seria outra.',
+      );
+    }
+  }
 
   /**
    * Consulta paginada. A paginacao nao e enfeite: sao ~7.500 vinculos, e uma

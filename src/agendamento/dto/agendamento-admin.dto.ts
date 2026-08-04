@@ -1,6 +1,8 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsInt, IsOptional, Min } from 'class-validator';
 import type {
   AgendamentoAdmin,
+  EventoDoHistorico,
   LinhaDoResumo,
   PaginaDeAgendamentos,
 } from '../service/agendamento-admin.service';
@@ -133,4 +135,77 @@ export class LinhaDoResumoDto implements LinhaDoResumo {
     description: 'Sala com `ocupadas: 0` nem precisa ser aberta no dia.',
   })
   disponiveis!: number;
+}
+
+export class RemanejarDto {
+  @ApiPropertyOptional({
+    example: 55,
+    description:
+      'Sala EXATA (id da SalaFaixa, de `GET /faixas/:id`). Use quando o admin ' +
+      'escolhe a sala. Exclusivo com `faixaId`.',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  salaFaixaId?: number;
+
+  @ApiPropertyOptional({
+    example: 14,
+    description:
+      'Outro horario, deixando a alocacao sequencial escolher a sala. ' +
+      'Exclusivo com `salaFaixaId`.',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  faixaId?: number;
+}
+
+export class MensagemDto {
+  @ApiProperty({ example: 'Agendamento 501 cancelado. A vaga foi liberada.' })
+  mensagem!: string;
+}
+
+export class EventoDoHistoricoDto implements EventoDoHistorico {
+  @ApiProperty({ example: 12 })
+  id!: number;
+
+  @ApiProperty({
+    example: 'TROCADO',
+    enum: ['CRIADO', 'TROCADO', 'REMANEJADO', 'CANCELADO'],
+    description:
+      'TROCADO = o proprio aluno mudou de horario. REMANEJADO = um administrador moveu.',
+  })
+  evento!: string;
+
+  @ApiProperty({
+    example: 'ALUNO',
+    enum: ['ALUNO', 'ADMIN'],
+    description: 'QUEM fez — a resposta para "eu nao mudei nada".',
+  })
+  autorTipo!: string;
+
+  @ApiProperty({
+    example: 'UC25426847',
+    description:
+      'Matricula, quando foi o aluno; e-mail, quando foi o administrador.',
+  })
+  autor!: string;
+
+  @ApiProperty({
+    nullable: true,
+    example: 'M114 · 20/08/2026 08:30-11:30',
+    description: 'Situacao anterior, ja legivel.',
+  })
+  de!: string | null;
+
+  @ApiProperty({
+    nullable: true,
+    example: 'LAB 203 · 21/08/2026 14:00-17:00',
+    description: 'Situacao nova. Vazio num cancelamento.',
+  })
+  para!: string | null;
+
+  @ApiProperty({ type: String, format: 'date-time' })
+  quando!: Date;
 }

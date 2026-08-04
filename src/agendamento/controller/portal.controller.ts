@@ -1,8 +1,11 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  Param,
   ParseIntPipe,
+  Patch,
   Post,
   Query,
 } from '@nestjs/common';
@@ -14,6 +17,7 @@ import {
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
+  ApiParam,
   ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
@@ -26,7 +30,9 @@ import {
   AgendarDto,
   DisciplinasAgendaveisDto,
   FaixaDisponivelDto,
+  MensagemPortalDto,
   SituacaoPeriodoDto,
+  TrocarHorarioDto,
 } from '../dto/portal.dto';
 import { AgendamentoService } from '../service/agendamento.service';
 
@@ -155,5 +161,56 @@ export class PortalController {
   })
   agendar(@AlunoLogado() aluno: AlunoJwtPayload, @Body() dto: AgendarDto) {
     return this.agendamento.agendar(aluno, dto);
+  }
+
+  @Patch('agendamentos/:id')
+  @ApiOperation({
+    summary: 'Troca o horario da prova',
+    description:
+      'A troca e **atomica**: se o horario novo nao tiver vaga, voce continua com ' +
+      'o que ja tinha. Cancelar e marcar de novo, por conta propria, poderia ' +
+      'deixar o aluno sem nenhum horario no meio do caminho.\n\n' +
+      'Vale enquanto o prazo estiver aberto. Depois disso, so a secretaria remaneja.',
+  })
+  @ApiParam({ name: 'id', type: Number, example: 501 })
+  @ApiOkResponse({ type: AgendamentoConfirmadoDto })
+  @ApiForbiddenResponse({
+    description: 'Prazo encerrado, ou o agendamento nao e seu',
+  })
+  @ApiNotFoundResponse({ description: 'Agendamento ou horario inexistente' })
+  @ApiConflictResponse({
+    description:
+      'Vagas esgotadas no horario novo, ja esta neste horario, ou agendamento cancelado',
+  })
+  trocar(
+    @AlunoLogado() aluno: AlunoJwtPayload,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: TrocarHorarioDto,
+  ) {
+    return this.agendamento.trocar(aluno, id, dto.faixaId);
+  }
+
+  @Delete('agendamentos/:id')
+  @ApiOperation({
+    summary: 'Cancela a propria prova',
+    description:
+      'A vaga volta a ficar disponivel na hora. So enquanto o prazo estiver ' +
+      'aberto: depois do fechamento, cancelar deixaria um lugar vago que mais ' +
+      'ninguem consegue ocupar.\n\n' +
+      'Para apenas mudar de horario, use a troca — ela nao corre o risco de ' +
+      'deixar voce sem vaga nenhuma.',
+  })
+  @ApiParam({ name: 'id', type: Number, example: 501 })
+  @ApiOkResponse({ type: MensagemPortalDto })
+  @ApiForbiddenResponse({
+    description: 'Prazo encerrado, ou o agendamento nao e seu',
+  })
+  @ApiNotFoundResponse({ description: 'Agendamento inexistente' })
+  @ApiConflictResponse({ description: 'Ja estava cancelado' })
+  cancelar(
+    @AlunoLogado() aluno: AlunoJwtPayload,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.agendamento.cancelar(aluno, id);
   }
 }

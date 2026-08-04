@@ -27,6 +27,26 @@ export class AgendarDto {
   alunoId?: number;
 }
 
+export class MensagemPortalDto {
+  @ApiProperty({
+    example:
+      'Agendamento cancelado. A vaga voltou a ficar disponivel — escolha outro horario enquanto o prazo estiver aberto.',
+  })
+  mensagem!: string;
+}
+
+export class TrocarHorarioDto {
+  @ApiProperty({
+    example: 21,
+    description:
+      'O novo horario. A troca e atomica: se o horario novo nao tiver vaga, ' +
+      'voce continua com o que ja tinha.',
+  })
+  @IsInt()
+  @Min(1)
+  faixaId!: number;
+}
+
 class PoloDoPortalDto {
   @ApiProperty({ example: 6 })
   id!: number;

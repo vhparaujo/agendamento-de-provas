@@ -65,8 +65,25 @@ regra de negócio ou estrutura, atualize os dois.
    lock e a contagem viria velha, e SERIALIZABLE acrescentaria gap lock sem ganho.
    O `FOR UPDATE` é o que garante a exclusão mútua; há teste que prova (remover o
    lock faz 5 alunos entrarem na mesma vaga).
-7. **Admin pode remanejar** qualquer agendamento (trocar sala ou faixa). A
-   alocação automática é só o default; marcar `alocadoManual = true`.
+7. **Reagendamento tem dono, e fica registrado.**
+   - **O aluno só reagenda com o período ABERTO.** Trocar de horário e cancelar
+     valem enquanto o prazo corre; depois disso, só a secretaria. É a mesma trava
+     do agendamento inicial — a troca não pode ser uma porta para burlar o prazo.
+   - **O aluno só enxerga e só mexe no período VIGENTE.** Provas de semestres
+     anteriores não aparecem para ele nem podem ser alteradas. Sem isso, abrir o
+     período novo daria a ele a chance de cancelar uma prova que já fez.
+   - **Fechar o prazo NÃO esconde a prova.** Ele continua vendo onde e quando é.
+     Fechar tranca a *escolha*, não a *consulta*.
+   - **Admin pode remanejar** qualquer agendamento (trocar sala ou faixa), e
+     **não depende do período estar aberto** — consertar depois do fechamento é o
+     caso de uso. Marca `alocadoManual = true`. Mas nem ele muda **polo** (aluno
+     iria ao campus errado) ou **modalidade** (prova de outra duração): são os
+     dois erros que o remanejo poderia esconder.
+   - **TODA alteração grava QUEM a fez** em `HistoricoAgendamento`, na mesma
+     transação da mudança — `TROCADO`/`ALUNO` com a matrícula, `REMANEJADO`/`ADMIN`
+     com o e-mail. Existe para a conversa no balcão: o aluno diz que mudaram a
+     prova dele, e a secretaria mostra que foi ele mesmo. Ver
+     `GET /agendamentos/:id/historico`.
 8. **Período de agendamento fecha só por data/hora** (`dataFechamento`), nunca por
    esgotamento de vagas. Janela de agendamento e datas das provas são linhas do
    tempo independentes.
@@ -226,8 +243,11 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `GET/POST /portal/agendamentos` | aluno | Confirmar a prova e consultar o que já marcou |
 | `GET/POST /periodos` · `GET/PATCH /periodos/:id` | admin | Abrir/fechar a janela de agendamento |
 | `GET /agendamentos` · `/resumo` · `/exportacao` · `/:id` | admin | Relatório: consulta, ocupação por sala e CSV |
+| `PATCH /agendamentos/:id/remanejar` · `DELETE /agendamentos/:id` | admin | Mover de sala/horário e cancelar |
+| `PATCH /portal/agendamentos/:id` · `DELETE` | aluno | Trocar de horário (atômico) e cancelar |
+| `GET /agendamentos/:id/historico` | admin | Quem alterou: aluno ou administrador |
 
-Pendentes: remanejo administrativo, cancelamento/troca pelo aluno, integração D2L.
+Pendente: integração D2L (adiada pelo cliente).
 
 ## Cadastro: polos, salas e os 2 CSVs
 
@@ -420,6 +440,22 @@ Dois detalhes que já custaram tempo — não desfaça:
 - O `docker/mysql/init/` concede ao usuário da aplicação permissão sobre o shadow
   database do `prisma migrate dev` (só desenvolvimento).
 
+**A ordem das migrations é o NOME DA PASTA, não a data de criação.** Num banco
+vazio o Prisma aplica em ordem alfabética; num banco que já as tem, o
+`_prisma_migrations` guarda a ordem real e esconde o problema. Foi o caso do
+`init`, que tinha timestamp posterior ao `aluno_por_vinculo` — nunca falhou em
+dev e teria falhado no primeiro `migrate deploy` em produção.
+
+**Renomear migration já aplicada = três passos, juntos:** renomear a pasta,
+atualizar `migration_name` em `_prisma_migrations` de todo banco, e **reconstruir
+toda imagem Docker** (a imagem carrega os nomes antigos). Pular o terceiro gera
+`P3009` — aconteceu em 04/08/2026. Receita de recuperação no README.
+
+**Depois de mexer em código ou migration, sempre `docker compose up -d --build app`.**
+Sem `--build` o compose reusa a imagem antiga em silêncio: a API responde, só que
+velha. E o serviço tem `restart: unless-stopped` na porta 3000 — ele volta sozinho
+e disputa a porta com o `npm run start:dev`.
+
 ## Estrutura física e oferta de vagas (etapa 5)
 
 `GET /modalidades` · `polos` · `salas` · `faixas` · `sala-faixas` — todas exigem
@@ -497,6 +533,25 @@ alocador precisam ver o mesmo número, senão um dos dois está mentindo.
 sem sua fila seria prova marcada que nunca é liberada no Brightspace, e ninguém
 descobriria até o aluno tentar abrir o quiz.
 
+**O histórico é tabela, não log de arquivo.** `AuditoriaService` continua
+gravando o evento na saída do processo, mas quem precisa da resposta é a
+secretaria, na tela, com o aluno na frente — log que só o time de infra consegue
+ler não resolve atendimento. Por isso `HistoricoAgendamento` guarda `autor` como
+**fotografia** (matrícula ou e-mail, não FK: precisa continuar legível se a conta
+do admin for desativada) e `de`/`para` como **texto pronto**
+("M114 · 20/08/2026 08:30-11:30"), porque ids soltos exigiriam reconstruir o
+passado para virar frase.
+
+**Sair de um horário devolve a vaga na hora.** Cancelar vira `CANCELADO`, nunca
+apaga — quem aparecer no dia sem estar na lista precisa ser explicável. Toda
+contagem filtra `CONFIRMADO`, então a vaga volta sozinha.
+
+**Trocar é atômico, e por isso existe separado de "cancelar e marcar de novo".**
+Se o aluno cancelasse primeiro, poderia perder a vaga que tinha e descobrir que a
+nova lotou no meio do caminho — ficando sem nenhuma. O lock reaproveitado está em
+`agendamento/service/lock-de-vagas.ts`, compartilhado por agendar, trocar e
+remanejar: se fossem três implementações, uma delas acabaria sem o `FOR UPDATE`.
+
 **Sem período cadastrado = fechado.** Mesma escolha do filtro de turmas: na
 dúvida, não libera. Para testar antes do CRUD administrativo (etapa 7), crie a
 linha em `PeriodoAgendamento` pelo `npm run prisma:studio`.
@@ -513,7 +568,7 @@ assinatura do Brightspace. **Recusa rodar com `NODE_ENV=production`.**
 4. ✅ Estrutura (polo/sala/faixa/sala-faixa).
 5. ✅ Portal do aluno (listar faixas + agendar com alocação sequencial).
 6. ✅ Período de agendamento + relatório (consulta, ocupação por sala, CSV).
-7. ⬜ Remanejo administrativo + cancelamento/troca pelo aluno.
+7. ✅ Remanejo administrativo + cancelamento/troca pelo aluno.
 8. ⬜ Integração D2L (Valence + special access) — **adiada pelo cliente.**
 
 **Bloqueios externos:** o CSV real de turmas não chegou (mapeamento provisório).

@@ -1,14 +1,19 @@
 import {
   applyDecorators,
+  Body,
   Controller,
+  Delete,
   Get,
   Header,
   Param,
   ParseIntPipe,
+  Patch,
   Query,
   Res,
 } from '@nestjs/common';
 import {
+  ApiBadRequestResponse,
+  ApiConflictResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
@@ -18,13 +23,17 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import type { Response } from 'express';
-import { SomenteAdmin } from '../../auth/roles.decorator';
+import type { AdminJwtPayload } from '../../auth/jwt/jwt.types';
+import { AdminLogado, SomenteAdmin } from '../../auth/roles.decorator';
 import { TAGS } from '../../config/swagger';
 import { StatusAgendamento } from '../../generated/prisma/client';
 import {
   AgendamentoAdminDto,
+  EventoDoHistoricoDto,
   LinhaDoResumoDto,
+  MensagemDto,
   PaginaDeAgendamentosDto,
+  RemanejarDto,
 } from '../dto/agendamento-admin.dto';
 import { AgendamentoAdminService } from '../service/agendamento-admin.service';
 
@@ -147,6 +156,76 @@ export class AgendamentoAdminController {
   @ApiNotFoundResponse({ description: 'Agendamento nao encontrado' })
   buscar(@Param('id', ParseIntPipe) id: number) {
     return this.service.buscar(id);
+  }
+
+  @Get(':id/historico')
+  @ApiOperation({
+    summary: 'Quem mexeu neste agendamento',
+    description:
+      'A tela para quando o aluno reclama que mudaram a prova dele sem avisar. ' +
+      'Cada linha diz o que aconteceu, **quem fez** (`autorTipo`: ALUNO ou ADMIN, ' +
+      'com a matricula ou o e-mail em `autor`) e de que horario para qual.\n\n' +
+      'O registro e gravado na mesma transacao da alteracao — nao existe mudanca ' +
+      'sem autor.',
+  })
+  @ApiParam({ name: 'id', type: Number, example: 501 })
+  @ApiOkResponse({ type: [EventoDoHistoricoDto] })
+  @ApiNotFoundResponse({ description: 'Agendamento nao encontrado' })
+  historico(@Param('id', ParseIntPipe) id: number) {
+    return this.service.historico(id);
+  }
+
+  @Patch(':id/remanejar')
+  @ApiOperation({
+    summary: 'Move o aluno de sala ou de horario',
+    description:
+      'A valvula de escape: sala interditada, aluno com necessidade especifica, ' +
+      'prazo perdido. Marca `alocadoManual: true`, para ninguem depois achar que ' +
+      'a alocacao sequencial produziu aquilo.\n\n' +
+      'Informe **`salaFaixaId`** (sala exata) OU **`faixaId`** (outro horario, ' +
+      'deixando a alocacao escolher a sala) — um dos dois.\n\n' +
+      'Diferente do aluno, o admin **nao depende do periodo estar aberto**: ' +
+      'consertar depois do fechamento e justamente o caso de uso.\n\n' +
+      'Recusa mudar de **polo** (o aluno viajaria para o campus errado) e de ' +
+      '**modalidade** (a prova tem outra duracao). A vaga da sala de destino e ' +
+      'conferida sob lock, como no agendamento normal.',
+  })
+  @ApiParam({ name: 'id', type: Number, example: 501 })
+  @ApiOkResponse({ type: AgendamentoAdminDto })
+  @ApiBadRequestResponse({
+    description:
+      'Nenhum ou ambos os destinos informados, polo diferente, ou modalidade diferente',
+  })
+  @ApiNotFoundResponse({
+    description: 'Agendamento, faixa ou oferta inexistente',
+  })
+  @ApiConflictResponse({
+    description: 'Sala lotada, agendamento cancelado, ou ja esta nesta sala',
+  })
+  remanejar(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: RemanejarDto,
+    @AdminLogado() admin: AdminJwtPayload,
+  ) {
+    return this.service.remanejar(id, dto, admin.email);
+  }
+
+  @Delete(':id')
+  @ApiOperation({
+    summary: 'Cancela um agendamento',
+    description:
+      'Vira `CANCELADO`, **nunca some**: quem aparecer no dia sem estar na lista ' +
+      'precisa ser explicavel. A vaga volta a contar como livre na hora.',
+  })
+  @ApiParam({ name: 'id', type: Number, example: 501 })
+  @ApiOkResponse({ type: MensagemDto })
+  @ApiNotFoundResponse({ description: 'Agendamento nao encontrado' })
+  @ApiConflictResponse({ description: 'Ja estava cancelado' })
+  cancelar(
+    @Param('id', ParseIntPipe) id: number,
+    @AdminLogado() admin: AdminJwtPayload,
+  ) {
+    return this.service.cancelar(id, admin.email);
   }
 
   /**

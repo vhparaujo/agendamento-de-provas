@@ -109,6 +109,26 @@ export class PeriodoService {
   }
 
   /**
+   * O periodo letivo vigente, ABERTO OU NAO.
+   *
+   * A distincao importa: o portal do aluno usa isto para mostrar so a prova do
+   * semestre atual, e ele precisa continuar enxergando onde e quando e a prova
+   * dele mesmo depois de o prazo fechar. Fechar o agendamento tranca a ESCOLHA,
+   * nao a consulta.
+   *
+   * `undefined` quando nao ha periodo cadastrado — nesse caso nao existe
+   * "semestre atual", e o portal nao tem o que mostrar.
+   */
+  async periodoLetivoVigente(): Promise<string | undefined> {
+    const periodo = await this.prisma.periodoAgendamento.findFirst({
+      orderBy: { createdAt: 'desc' },
+      select: { periodoLetivoId: true },
+    });
+
+    return periodo?.periodoLetivoId;
+  }
+
+  /**
    * Devolve o periodo vigente ou recusa a operacao com o motivo exato — o aluno
    * precisa saber se ainda nao abriu, se ja fechou, ou se ninguem configurou.
    */
