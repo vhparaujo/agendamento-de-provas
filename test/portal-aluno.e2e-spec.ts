@@ -71,7 +71,7 @@ describe('Portal do aluno: listar e agendar (e2e)', () => {
     // A turma precisa estar importada: com TURMAS_FILTER_ENABLED=true (default),
     // disciplina fora do CSV de turmas nao e agendavel.
     await prisma.turmaImportada.create({
-      data: { orgUnitId: TURMA, nomeDisciplina: 'Disciplina E2E' },
+      data: { codigoTurma: TURMA, nomeDisciplina: 'Disciplina E2E' },
     });
 
     periodoId = (
@@ -194,7 +194,11 @@ describe('Portal do aluno: listar e agendar (e2e)', () => {
       contexto:
         opcoes.turma === null
           ? undefined
-          : { orgUnitId: opcoes.turma ?? TURMA, titulo: 'Disciplina E2E' },
+          : {
+              orgUnitId: `ou-${opcoes.turma ?? TURMA}`,
+              codigo: opcoes.turma ?? TURMA,
+              titulo: 'Disciplina E2E',
+            },
     });
 
     return { token: accessToken, alunoId: aluno.id, matricula };
@@ -222,7 +226,7 @@ describe('Portal do aluno: listar e agendar (e2e)', () => {
       await prisma.polo.delete({ where: { id: polo.id } });
     }
 
-    await prisma.turmaImportada.deleteMany({ where: { orgUnitId: TURMA } });
+    await prisma.turmaImportada.deleteMany({ where: { codigoTurma: TURMA } });
     await prisma.periodoAgendamento.deleteMany({
       where: { periodoLetivoId: PERIODO_LETIVO },
     });
@@ -252,8 +256,9 @@ describe('Portal do aluno: listar e agendar (e2e)', () => {
       ).expect(200);
 
       expect(res.body.podeAgendar).toBe(true);
+      // orgUnitId vem do launch (context.id); o NOME vem do CSV de turmas
       expect(res.body.disciplinas).toEqual([
-        { orgUnitId: TURMA, nomeDisciplina: 'Disciplina E2E' },
+        { orgUnitId: `ou-${TURMA}`, nomeDisciplina: 'Disciplina E2E' },
       ]);
     });
 
@@ -528,7 +533,11 @@ describe('Portal do aluno: listar e agendar (e2e)', () => {
           poloId,
           ativo: true,
         })),
-        contexto: { orgUnitId: TURMA, titulo: 'Disciplina E2E' },
+        contexto: {
+          orgUnitId: 'ou-' + TURMA,
+          codigo: TURMA,
+          titulo: 'Disciplina E2E',
+        },
       }));
     });
 
@@ -575,7 +584,7 @@ describe('Portal do aluno: listar e agendar (e2e)', () => {
       expect(agendamento.disciplinas).toHaveLength(1);
       expect(agendamento.syncs).toHaveLength(1);
       expect(agendamento.syncs[0]).toMatchObject({
-        orgUnitId: TURMA,
+        orgUnitId: `ou-${TURMA}`,
         status: 'PENDENTE',
         tentativas: 0,
       });

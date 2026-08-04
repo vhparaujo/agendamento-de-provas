@@ -239,16 +239,40 @@ model AlunoImportado {
 // ----------------------------------------------------------------------------
 // Filtro final: disciplina do aluno so e agendavel se o orgUnitId estiver aqui.
 
+// Colunas reais do CSV (Tabela_Disciplinas_Turmas):
+//   Curso                 -> curso            (exibicao)
+//   Codigo da Turma       -> codigoTurma      CHAVE de busca
+//   Disciplina / Codigo EAD -> nomeDisciplina + codigoEad
+//     A celula vem como "SAUDE COLETIVA (1-GSPS01EAD048)": nome e codigo EAD
+//     juntos, separados na importacao.
+//
+// POR QUE codigoTurma + nomeDisciplina, e nao orgUnitId:
+// o CSV NAO traz o orgUnitId. Descobri-lo exige consultar o Brightspace, que e a
+// integracao adiada. Mas o launch LTI ja entrega `context.label` (o codigo) e
+// `context.title` (o nome) — os mesmos dois campos —, entao o cruzamento e feito
+// por codigo + nome, sem depender da API.
+//
+// E POR QUE OS DOIS, e nao so o codigo: o mesmo codigo aparece em mais de uma
+// oferta (semestres/turmas diferentes). O codigo e o primeiro filtro; quem decide
+// e o NOME. Regra e desempate em src/turma/service/turma-match.ts.
+//
+// orgUnitId fica OPCIONAL: sera preenchido quando a integracao com o D2L existir.
+
 model TurmaImportada {
   id             Int     @id @default(autoincrement())
-  orgUnitId      String  @unique // id da turma (course offering) no D2L
-  nomeDisciplina String?
-  codigoTurma    String?
+  codigoTurma    String // "GSPS0I10227"
+  nomeDisciplina String // desempata quando o codigo se repete
+  codigoEad      String? // "1-GSPS02EAD003"
+  curso          String?
+  orgUnitId      String? @unique // id no D2L — resolvido depois
   importacaoId   Int?
 
   importacao ImportacaoCsv? @relation(fields: [importacaoId], references: [id])
 
-  @@index([orgUnitId])
+  // Idempotencia do upload: reimportar o mesmo arquivo atualiza, nunca duplica.
+  // A chave e o PAR porque e o par que identifica a turma.
+  @@unique([codigoTurma, nomeDisciplina])
+  @@index([codigoTurma])
   @@map("turma_importada")
 }
 

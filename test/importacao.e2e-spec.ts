@@ -116,7 +116,7 @@ describe('Importacao de CSVs (e2e)', () => {
     });
   });
 
-  describe('turmas (CSV real ainda nao existe)', () => {
+  describe('turmas (formato real: Curso;Codigo da Turma;Disciplina)', () => {
     const fixture = join(__dirname, 'fixtures', 'turmas-exemplo.csv');
 
     it('importa a fixture de exemplo e e idempotente', async () => {
@@ -129,6 +129,19 @@ describe('Importacao de CSVs (e2e)', () => {
       expect(primeira.body.totalLinhas).toBe(3);
       expect(primeira.body.rejeitadas).toEqual([]);
 
+      // A terceira coluna traz nome e codigo EAD na mesma celula; a importacao
+      // separa os dois. E o arquivo e separado por ";" (Excel pt-BR).
+      const turma = await prisma.turmaImportada.findFirstOrThrow({
+        where: { codigoTurma: 'E2EFIX0001' },
+      });
+      expect(turma.nomeDisciplina).toBe(
+        'HISTÓRIA E CULTURA DO CORPO E DO MOVIMENTO',
+      );
+      expect(turma.codigoEad).toBe('1-E2EFIX02EAD003');
+      expect(turma.curso).toBe('EDUCAÇÃO FÍSICA');
+      // o CSV nao traz orgUnitId — ele so aparece quando um aluno faz launch
+      expect(turma.orgUnitId).toBeNull();
+
       const segunda = await request(app.getHttpServer())
         .post('/api/importacao/turmas')
         .set('Authorization', `Bearer ${token}`)
@@ -140,7 +153,7 @@ describe('Importacao de CSVs (e2e)', () => {
       expect(segunda.body.atualizadas).toBe(3);
 
       await prisma.turmaImportada.deleteMany({
-        where: { orgUnitId: { in: ['900001', '900002', '900003'] } },
+        where: { codigoTurma: { startsWith: 'E2EFIX' } },
       });
     });
   });

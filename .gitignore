@@ -36,10 +36,11 @@ lerna-debug.log*
 !.vscode/extensions.json
 
 # dotenv environment variable files
+# O padrao pega tambem copias e backups (.env.bak, .env.old): sao o .env inteiro,
+# segredos incluidos, e ".env" sozinho nao os cobria. .env.example fica de fora.
 .env
-.env.development.local
-.env.test.local
-.env.production.local
+.env.*
+!.env.example
 .env.local
 
 # temp directory

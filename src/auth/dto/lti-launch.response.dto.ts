@@ -65,7 +65,17 @@ export class ContextoLaunchDto implements ContextoLaunch {
   })
   orgUnitId!: string;
 
-  @ApiPropertyOptional({ example: 'Psicologia Geral - Turma A' })
+  @ApiPropertyOptional({
+    example: 'GSPS0I10227',
+    description:
+      'Codigo da turma (`context.label`). E a chave de busca no CSV de turmas.',
+  })
+  codigo?: string;
+
+  @ApiPropertyOptional({
+    example: 'HISTÓRIA E CULTURA DO CORPO E DO MOVIMENTO',
+    description: 'Nome da disciplina (`context.title`). Desempata o codigo.',
+  })
   titulo?: string;
 }
 

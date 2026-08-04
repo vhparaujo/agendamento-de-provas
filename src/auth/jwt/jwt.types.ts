@@ -30,11 +30,17 @@ export interface VinculoToken {
 
 /**
  * A turma de onde o aluno clicou o link de agendamento (claim `context` do LTI).
- * O `orgUnitId` e o mesmo identificador usado pelo CSV de turmas e pelo special
- * access no D2L.
+ *
+ * Os TRES campos importam, e por motivos diferentes:
+ * - `codigo`  (`context.label`) — chave de busca no CSV de turmas;
+ * - `titulo`  (`context.title`) — desempata quando o codigo se repete;
+ * - `orgUnitId` (`context.id`)  — identificador no D2L, gravado no agendamento.
+ *
+ * O CSV de turmas NAO traz orgUnitId, entao o cruzamento e por codigo + titulo.
  */
 export interface ContextoLaunch {
   orgUnitId: string;
+  codigo?: string;
   titulo?: string;
 }
 

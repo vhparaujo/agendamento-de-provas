@@ -116,3 +116,51 @@ describe('padroes de claim contra um launch real', () => {
     expect(lerPrimeiroClaim(soLis, lti.claimsMatricula)).toBe('A06103080');
   });
 });
+
+/**
+ * Regressao de um launch REAL que falhou em 04/08/2026: o id_token trazia a
+ * matricula em `custom.lis_person_sourcedid`, mas o .env tinha
+ * `LTI_CLAIM_MATRICULA=` (declarada e VAZIA, como o .env.example instrui). A
+ * variavel chegava como "" — nao undefined —, o `??` nao caia no padrao e a
+ * lista de candidatos ficava vazia: nenhum caminho era tentado e o launch
+ * respondia "matricula NAO ENCONTRADA" com o claim ali, presente no token.
+ */
+describe('variavel de claim declarada porem vazia usa os padroes', () => {
+  const LAUNCH_UCB = {
+    sub: '882a6f23-8182-4d4f-85f5-7928265c3fe6_171131',
+    [CLAIM_CUSTOM]: { lis_person_sourcedid: 'UC26423089' },
+    [CLAIM_BRIGHTSPACE]: { user_id: 171131 },
+  };
+
+  it.each([
+    ['string vazia', ''],
+    ['so espaco', '   '],
+    ['so separadores', ', ,'],
+  ])('%s: cai nos padroes em vez de zerar a lista', (_caso, valor) => {
+    const lti = carregarLtiConfig(
+      new ConfigService({
+        LTI_CLAIM_MATRICULA: valor,
+        LTI_CLAIM_USER_ID: valor,
+      }),
+    );
+
+    expect(lti.claimsMatricula.length).toBeGreaterThan(0);
+    expect(lerPrimeiroClaim(LAUNCH_UCB, lti.claimsMatricula)).toBe(
+      'UC26423089',
+    );
+    expect(lerPrimeiroClaim(LAUNCH_UCB, lti.claimsUserId)).toBe('171131');
+  });
+
+  it('um valor de verdade continua sobrepondo os padroes', () => {
+    const lti = carregarLtiConfig(
+      new ConfigService({
+        LTI_CLAIM_MATRICULA: `${CLAIM_LIS}::person_sourcedid`,
+      }),
+    );
+
+    expect(lti.claimsMatricula).toEqual([`${CLAIM_LIS}::person_sourcedid`]);
+    // O caminho configurado nao existe neste launch — e o padrao NAO volta a
+    // valer por baixo: quem configura, manda.
+    expect(lerPrimeiroClaim(LAUNCH_UCB, lti.claimsMatricula)).toBeUndefined();
+  });
+});

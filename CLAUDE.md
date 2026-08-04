@@ -265,7 +265,7 @@ como opção alternativa secundária; o padrão é manual.
 | CSV | Colunas reais → uso | Observações |
 |---|---|---|
 | **Alunos** | RA→matrícula · ALUNO→nome · EMAIL INSTITUCIONAL→email · CURSO→curso (só exibição) · STATUS CURSO→ativo · CAMPUS→polo | Modalidade vem do **dropdown no upload** (aba EaD/Semi/Híbrido), não de coluna. RA é alfanumérico (String). Encoding real: ISO-8859-1. |
-| **Turmas** | orgUnitId, nomeDisciplina, (codigoTurma) | filtro final de disciplinas com prova. **CSV ainda não existe** — cabeçalhos provisórios; parser adiável com mapeamento de colunas isolado num único ponto (`// TODO` ao chegar o arquivo real). |
+| **Turmas** | Curso · Código da Turma · Disciplina / Código EAD | filtro final de disciplinas com prova. Separado por `;` (Excel pt-BR). A 3ª coluna traz **nome e código EAD na mesma célula** — separados na leitura. |
 
 **Regras dos campos de aluno:**
 - **STATUS CURSO**: importa **todos** os alunos, guardando o valor bruto em
@@ -307,10 +307,29 @@ sala. O admin corrige a planilha e reenvia.
 default é **bloquear agendamento** (não liberar prova para disciplina errada),
 controlado por um flag claro e invertível (`TURMAS_FILTER_ENABLED`, default `true`).
 
-O cruzamento disciplinas ∩ turmas ∩ período **já está implementado e testado** em
-`src/turma/service/turma.service.ts` (`filtrarAgendaveis`). Quando o CSV real
-chegar, o único ponto a mudar é `src/importacao/service/turma-csv.columns.ts` —
-nenhuma regra de negócio se move.
+### O cruzamento é por CÓDIGO + NOME, não por orgUnitId
+
+**O CSV de turmas não traz orgUnitId.** Descobri-lo exigiria consultar o
+Brightspace — a integração adiada. Mas o launch LTI já entrega os dois campos
+necessários: `context.label` (código) e `context.title` (nome). Então o
+cruzamento acontece sem nenhuma chamada de API.
+
+**E precisa dos dois.** O mesmo código aparece em mais de uma oferta (semestres,
+turmas diferentes): o código é o primeiro filtro, o **nome é quem decide**. Regra
+e desempate em `src/turma/service/turma-match.ts`, portada do projeto
+`../brightspace-change-dates` (`src/orgUnitResolver.js`), que já resolve isso
+contra a instância real da UCB.
+
+**Nada é chutado.** Código sem nome compatível (`DIVERGENTE`) ou empate entre
+candidatas (`AMBIGUA`) **não liberam nada**, e o motivo vai para o log. Chutar
+aqui significaria marcar prova para a disciplina errada — erro que só apareceria
+no dia. O match parcial existe (nome truncado), mas só a partir de 6 caracteres:
+abaixo disso, "ADM" casaria com qualquer coisa.
+
+**O orgUnitId é aprendido de graça.** Todo launch entrega o `context.id` da turma
+de onde o aluno clicou; quando o cruzamento fecha e a linha ainda não tem
+orgUnitId, ele é gravado (nunca sobrescrito). Ao longo do período de agendamento
+a tabela se completa sozinha, e a futura integração chega com o trabalho pronto.
 
 ## Integração D2L
 

@@ -91,7 +91,7 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
     outroPoloId = (await prisma.polo.create({ data: { nome: OUTRO_POLO } })).id;
 
     await prisma.turmaImportada.create({
-      data: { orgUnitId: TURMA, nomeDisciplina: 'Disciplina do Remanejo' },
+      data: { codigoTurma: TURMA, nomeDisciplina: 'Disciplina do Remanejo' },
     });
 
     periodoId = (
@@ -199,7 +199,11 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
           ativo: true,
         },
       ],
-      contexto: { orgUnitId: TURMA, titulo: 'Disciplina do Remanejo' },
+      contexto: {
+        orgUnitId: 'ou-' + TURMA,
+        codigo: TURMA,
+        titulo: 'Disciplina do Remanejo',
+      },
     });
 
     return { token: accessToken, alunoId: aluno.id, matricula };
@@ -224,7 +228,7 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
       await prisma.polo.delete({ where: { id: polo.id } });
     }
 
-    await prisma.turmaImportada.deleteMany({ where: { orgUnitId: TURMA } });
+    await prisma.turmaImportada.deleteMany({ where: { codigoTurma: TURMA } });
     await prisma.periodoAgendamento.deleteMany({
       where: { periodoLetivoId: PERIODO_LETIVO },
     });

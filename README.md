@@ -553,6 +553,27 @@ valores de `CAMPUS` que não casaram com nenhum polo do seed.
 
 ### CSV de turmas
 
+Formato real (`Tabela_Disciplinas_Turmas`), separado por **`;`**:
+
+```
+Curso;Código da Turma;Disciplina / Código EAD
+NUTRIÇÃO;GSPS0N10257;PRÁTICA PROFISSIONAL E ÉTICA EM NUTRIÇÃO (1-GSPS06EAD003)
+```
+
+A terceira coluna traz **duas informações na mesma célula** — nome e código EAD —
+separadas na importação. Idempotência pelo par `[codigoTurma, nomeDisciplina]`.
+
+**O cruzamento é por código + nome.** O CSV não traz `orgUnitId`; o launch LTI
+traz o código (`context.label`) e o nome (`context.title`), e o casamento é feito
+com eles. Precisa dos dois porque o mesmo código aparece em mais de uma oferta: o
+código filtra, o nome decide. Quando não é conclusivo — nome divergente ou empate
+— **nada é liberado** e o motivo vai para o log; chutar significaria marcar prova
+para a disciplina errada.
+
+O `orgUnitId` é aprendido dos launches: cada aluno que entra por uma turma
+entrega o id dela, que é gravado (nunca sobrescrito) para a futura integração.
+
+
 **O arquivo real ainda não existe.** Os cabeçalhos são provisórios
 (`orgUnitId`, `nomeDisciplina`, `codigoTurma`), mas o endpoint, a auditoria, a
 idempotência, a persistência e o cruzamento de disciplinas **já estão escritos e

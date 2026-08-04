@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import type { AlunoJwtPayload } from '../../auth/jwt/jwt.types';
 import {
   DisciplinaAgendavel,
-  DisciplinaValence,
+  ResultadoDoCruzamento,
   TurmaService,
 } from '../../turma/service/turma.service';
 
@@ -10,20 +10,17 @@ import {
  * ============================================================================
  * QUAIS DISCIPLINAS A PROVA AGENDADA COBRE
  * ============================================================================
- * Regra (especificacao 3.3): disciplinas do aluno na Valence ∩ turmas reais com
- * prova (CSV) ∩ periodo letivo vigente. O cruzamento em si ja esta pronto em
- * TurmaService.filtrarAgendaveis; o que este service resolve e a PRIMEIRA parte
- * — de onde vem a lista de disciplinas do aluno.
+ * Regra (especificacao 3.3): disciplinas do aluno ∩ turmas reais com prova
+ * (CSV) ∩ periodo letivo vigente.
  *
- * HOJE a fonte e a turma de onde ele clicou (claim `context` do launch LTI).
- * Nao ha credencial da Valence, entao nao ha como listar as matriculas dele.
+ * HOJE a fonte e a turma de onde ele clicou — o claim `context` do launch LTI,
+ * que traz codigo, nome e orgUnitId. O cruzamento com o CSV e feito por
+ * **codigo + nome**, sem depender da Valence API.
  *
- * NA ETAPA 7 esta classe passa a consultar os enrollments pelo `userIdD2L` e
- * devolver todas as disciplinas de uma vez. Nada mais muda: quem chama recebe a
- * mesma lista ja filtrada, e o agendamento continua cobrindo N disciplinas.
- *
- * A costura existe aqui, e nao no AgendamentoService, para que a troca seja de
- * um arquivo so.
+ * NA FASE DE INTEGRACAO isto passa a consultar os enrollments pelo `userIdD2L` e
+ * devolver todas as disciplinas de uma vez. Quem chama recebe a mesma lista, ja
+ * filtrada — a costura existe aqui, e nao no AgendamentoService, para que a
+ * troca seja de um arquivo so.
  */
 @Injectable()
 export class DisciplinasDoAlunoService {
@@ -31,25 +28,17 @@ export class DisciplinasDoAlunoService {
 
   /** As disciplinas que este launch consegue agendar. Pode vir vazia. */
   async agendaveis(aluno: AlunoJwtPayload): Promise<DisciplinaAgendavel[]> {
-    return this.turmaService.filtrarAgendaveis(this.disciplinasDoAluno(aluno));
+    const { agendaveis } = await this.cruzar(aluno);
+    return agendaveis;
   }
 
   /**
-   * TODO(etapa 7): trocar pelo enrollments da Valence
-   * (GET /d2l/api/lp/{ver}/enrollments/myenrollments/ pelo userIdD2L).
+   * Igual ao anterior, mas devolve tambem o MOTIVO de nao ter achado — o portal
+   * usa para dizer ao aluno algo melhor que "nao ha o que agendar".
    */
-  private disciplinasDoAluno(aluno: AlunoJwtPayload): DisciplinaValence[] {
-    if (!aluno.contexto) return [];
-
-    return [
-      {
-        orgUnitId: aluno.contexto.orgUnitId,
-        nome: aluno.contexto.titulo ?? null,
-        // O launch nao informa o periodo letivo da turma. Deixar indefinido faz
-        // o filtro de periodo passar — quem de fato garante o periodo e a
-        // presenca da turma no CSV, que e importado por semestre.
-        periodoLetivoId: null,
-      },
-    ];
+  async cruzar(aluno: AlunoJwtPayload): Promise<ResultadoDoCruzamento> {
+    // TODO(integracao D2L): trocar por
+    // GET /d2l/api/lp/{ver}/enrollments/users/{userIdD2L}/orgUnits/
+    return this.turmaService.filtrarAgendaveis(aluno.contexto);
   }
 }

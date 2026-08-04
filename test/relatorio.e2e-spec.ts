@@ -103,7 +103,7 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
     ).id;
 
     await prisma.turmaImportada.create({
-      data: { orgUnitId: TURMA, nomeDisciplina: 'Disciplina do Relatorio' },
+      data: { codigoTurma: TURMA, nomeDisciplina: 'Disciplina do Relatorio' },
     });
 
     // Nome com ";" e com "=" de proposito: o CSV precisa aguentar os dois.
@@ -133,7 +133,11 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
             ativo: true,
           },
         ],
-        contexto: { orgUnitId: TURMA, titulo: 'Disciplina do Relatorio' },
+        contexto: {
+          orgUnitId: 'ou-' + TURMA,
+          codigo: TURMA,
+          titulo: 'Disciplina do Relatorio',
+        },
       })
     ).accessToken;
   }, 60_000);
@@ -159,7 +163,7 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
       await prisma.polo.delete({ where: { id: polo.id } });
     }
 
-    await prisma.turmaImportada.deleteMany({ where: { orgUnitId: TURMA } });
+    await prisma.turmaImportada.deleteMany({ where: { codigoTurma: TURMA } });
     await prisma.periodoAgendamento.deleteMany({
       where: { periodoLetivoId: PERIODO_LETIVO },
     });

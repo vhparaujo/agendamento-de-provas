@@ -100,6 +100,21 @@ export function carregarLtiConfig(config: ConfigService): LtiConfig {
       .map((v) => v.trim())
       .filter(Boolean);
 
+  /**
+   * O .env.example manda "deixe em branco para usar os padroes" — e uma variavel
+   * declarada e vazia chega aqui como "" (string), nao undefined. Com `??` ela
+   * passava direto e produzia lista VAZIA: nenhum candidato era tentado e o
+   * launch morria em "matricula NAO ENCONTRADA" mesmo com o claim presente no
+   * id_token. Aconteceu num launch real em 04/08/2026.
+   *
+   * Por isso a checagem e pelo TAMANHO da lista, e nao por `??` nem `||`: cobre
+   * tambem o valor que existe mas so tem virgulas ou espaco (", ,").
+   */
+  const listaOuPadrao = (valor: string | undefined, padrao: string) => {
+    const itens = lista(valor ?? '');
+    return itens.length > 0 ? itens : lista(padrao);
+  };
+
   return {
     issuer: config.get<string>('LTI_ISSUER') ?? '',
     clientId: config.get<string>('LTI_CLIENT_ID') ?? '',
@@ -110,11 +125,13 @@ export function carregarLtiConfig(config: ConfigService): LtiConfig {
     toolKeyId: config.get<string>('LTI_TOOL_KEY_ID') ?? 'agendamento-provas-1',
     redirectUri: config.get<string>('LTI_REDIRECT_URI') ?? '',
     portalAlunoUrl: config.get<string>('PORTAL_ALUNO_URL') || undefined,
-    claimsMatricula: lista(
-      config.get<string>('LTI_CLAIM_MATRICULA') ?? PADRAO_CLAIM_MATRICULA,
+    claimsMatricula: listaOuPadrao(
+      config.get<string>('LTI_CLAIM_MATRICULA'),
+      PADRAO_CLAIM_MATRICULA,
     ),
-    claimsUserId: lista(
-      config.get<string>('LTI_CLAIM_USER_ID') ?? PADRAO_CLAIM_USER_ID,
+    claimsUserId: listaOuPadrao(
+      config.get<string>('LTI_CLAIM_USER_ID'),
+      PADRAO_CLAIM_USER_ID,
     ),
     debugClaims:
       config.get<string>('LTI_DEBUG_CLAIMS') === 'true' &&

@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { exigirColunas, lerCsv } from './csv.util';
-import { mapRowToTurma, TURMA_CSV_COLUNAS } from './turma-csv.columns';
+import { COLUNA_OBRIGATORIA, mapRowToTurma } from './turma-csv.columns';
 
 export interface ResultadoImportacaoTurmas {
   importacaoId: number;
@@ -16,10 +16,10 @@ const LOTE = 20;
 
 /**
  * Importacao das turmas reais (as que TERAO prova). Estrutura identica a de
- * alunos: auditoria em ImportacaoCsv e idempotencia por orgUnitId.
+ * alunos: auditoria em ImportacaoCsv e idempotencia — aqui pelo PAR
+ * [codigoTurma, nomeDisciplina], que e o que identifica a turma.
  *
- * O CSV real ainda nao existe — o que falta e so o mapeamento de colunas, isolado
- * em turma-csv.columns.ts.
+ * O mapeamento das colunas vive em turma-csv.columns.ts.
  */
 @Injectable()
 export class ImportacaoTurmasService {
@@ -32,7 +32,7 @@ export class ImportacaoTurmasService {
     importadoPor?: string,
   ): Promise<ResultadoImportacaoTurmas> {
     const linhas = lerCsv(arquivo.buffer);
-    exigirColunas(linhas, [TURMA_CSV_COLUNAS.orgUnitId]);
+    exigirColunas(linhas, [COLUNA_OBRIGATORIA]);
 
     const importacao = await this.prisma.importacaoCsv.create({
       data: {
@@ -57,21 +57,33 @@ export class ImportacaoTurmasService {
 
           if (!turma) {
             return {
-              rejeicao: { linha: numero, motivo: 'orgUnitId vazio' },
+              rejeicao: {
+                linha: numero,
+                motivo:
+                  'codigo da turma ou nome da disciplina vazio — os dois sao ' +
+                  'necessarios para identificar a turma',
+              },
               criada: false,
             };
           }
 
+          const chave = {
+            codigoTurma_nomeDisciplina: {
+              codigoTurma: turma.codigoTurma,
+              nomeDisciplina: turma.nomeDisciplina,
+            },
+          };
+
           const existente = await this.prisma.turmaImportada.findUnique({
-            where: { orgUnitId: turma.orgUnitId },
+            where: chave,
             select: { id: true },
           });
 
           await this.prisma.turmaImportada.upsert({
-            where: { orgUnitId: turma.orgUnitId },
+            where: chave,
             update: {
-              nomeDisciplina: turma.nomeDisciplina,
-              codigoTurma: turma.codigoTurma,
+              codigoEad: turma.codigoEad,
+              curso: turma.curso,
               importacaoId: importacao.id,
             },
             create: { ...turma, importacaoId: importacao.id },

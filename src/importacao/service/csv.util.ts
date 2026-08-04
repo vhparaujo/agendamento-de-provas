@@ -35,6 +35,23 @@ export function decodificarCsv(buffer: Buffer): string {
 }
 
 /**
+ * Descobre o separador olhando a primeira linha.
+ *
+ * O Excel em pt-BR exporta CSV com PONTO E VIRGULA, nao virgula — e e assim que
+ * vem a planilha de turmas. Sem detectar, o arquivo inteiro vira UMA coluna
+ * chamada "Curso;Codigo da Turma;Disciplina / Codigo EAD" e nenhuma linha e
+ * reconhecida. A falha nao e obvia: o parse "funciona", so nao acha nada.
+ */
+export function detectarSeparador(texto: string): ',' | ';' {
+  const primeiraLinha = texto.split(/\r?\n/)[0] ?? '';
+
+  const pontoEVirgula = (primeiraLinha.match(/;/g) ?? []).length;
+  const virgula = (primeiraLinha.match(/,/g) ?? []).length;
+
+  return pontoEVirgula > virgula ? ';' : ',';
+}
+
+/**
  * Parse com cabecalho. `columns: true` usa a primeira linha como nome dos campos;
  * `bom` e `relax_column_count` evitam quebrar por detalhes de exportacao.
  */
@@ -44,6 +61,7 @@ export function lerCsv(buffer: Buffer): LinhaCsv[] {
   try {
     return parse(texto, {
       columns: (cabecalho: string[]) => cabecalho.map((c) => c.trim()),
+      delimiter: detectarSeparador(texto),
       bom: true,
       skip_empty_lines: true,
       trim: true,

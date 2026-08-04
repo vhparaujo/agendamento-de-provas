@@ -333,6 +333,12 @@ export class LtiService {
     this.logger.debug(
       `[LTI debug] custom: ${JSON.stringify(payload['https://purl.imsglobal.org/spec/lti/claim/custom'] ?? null)}`,
     );
+    // O claim proprietario e onde mora o user_id numerico do D2L. Sem ele no log,
+    // um launch que falhe so no UserId nao diz se o valor nao veio ou se o
+    // caminho configurado esta errado.
+    this.logger.debug(
+      `[LTI debug] ${CLAIM_BRIGHTSPACE}: ${JSON.stringify(payload[CLAIM_BRIGHTSPACE] ?? null)}`,
+    );
     this.logger.debug(
       `[LTI debug] sub=${String(payload.sub)} matricula=${matricula ?? 'NAO ENCONTRADA'} userIdD2L=${userIdD2L ?? 'NAO ENCONTRADO'}`,
     );

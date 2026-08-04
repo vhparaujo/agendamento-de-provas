@@ -1,125 +1,188 @@
 import { ConfigService } from '@nestjs/config';
-import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from '../../database/prisma.service';
 import { TurmaService } from './turma.service';
 
+type LinhaDeTurma = {
+  id: number;
+  codigoTurma: string;
+  nomeDisciplina: string;
+  codigoEad: string | null;
+  orgUnitId: string | null;
+};
+
 /**
- * O cruzamento disciplinas ∩ turmas reais ∩ periodo — escrito e testavel antes
- * do CSV real de turmas existir. Quando o arquivo chegar, nada aqui muda: so o
- * mapeamento de colunas em turma-csv.columns.ts.
+ * Prisma duble: guarda as turmas em memoria e registra os `update`, que e como
+ * verificamos o aprendizado do orgUnitId sem subir banco.
  */
-describe('TurmaService — disciplinas agendaveis', () => {
-  let service: TurmaService;
-  let turmaImportada: { findMany: jest.Mock; count: jest.Mock };
-  let config: Record<string, string>;
+function prismaFalso(turmas: LinhaDeTurma[]) {
+  const atualizacoes: { id: number; orgUnitId: string }[] = [];
 
-  const criar = async () => {
-    const modulo: TestingModule = await Test.createTestingModule({
-      providers: [
-        TurmaService,
-        { provide: PrismaService, useValue: { turmaImportada } },
-        { provide: ConfigService, useValue: { get: (k: string) => config[k] } },
-      ],
-    }).compile();
+  const servico = {
+    turmaImportada: {
+      findMany: ({ where }: { where: Record<string, unknown> }) =>
+        Promise.resolve(
+          turmas.filter((t) =>
+            where.codigoTurma
+              ? t.codigoTurma === where.codigoTurma
+              : t.orgUnitId === where.orgUnitId,
+          ),
+        ),
+      update: ({
+        where,
+        data,
+      }: {
+        where: { id: number };
+        data: { orgUnitId: string };
+      }) => {
+        atualizacoes.push({ id: where.id, orgUnitId: data.orgUnitId });
+        const alvo = turmas.find((t) => t.id === where.id);
+        if (alvo) alvo.orgUnitId = data.orgUnitId;
+        return Promise.resolve(alvo);
+      },
+      count: () => Promise.resolve(turmas.length),
+    },
+  } as unknown as PrismaService;
 
-    service = modulo.get(TurmaService);
-  };
+  return { atualizacoes, servico };
+}
 
-  beforeEach(async () => {
-    turmaImportada = { findMany: jest.fn(), count: jest.fn() };
-    config = { PERIODO_LETIVO_ID: '103', TURMAS_FILTER_ENABLED: 'true' };
-    await criar();
+function montar(turmas: LinhaDeTurma[], filtroLigado = true) {
+  const { servico, atualizacoes } = prismaFalso(turmas);
+
+  const config = {
+    get: (chave: string) =>
+      chave === 'TURMAS_FILTER_ENABLED'
+        ? filtroLigado
+          ? 'true'
+          : 'false'
+        : undefined,
+  } as unknown as ConfigService;
+
+  return { service: new TurmaService(servico, config), atualizacoes };
+}
+
+/** Linha real do CSV Tabela_Disciplinas_Turmas. */
+const HISTORIA: LinhaDeTurma = {
+  id: 1,
+  codigoTurma: 'GSPS0I10227',
+  nomeDisciplina: 'HISTÓRIA E CULTURA DO CORPO E DO MOVIMENTO',
+  codigoEad: '1-GSPS02EAD003',
+  orgUnitId: null,
+};
+
+const LAUNCH = {
+  orgUnitId: '6606',
+  codigo: 'GSPS0I10227',
+  titulo: 'HISTÓRIA E CULTURA DO CORPO E DO MOVIMENTO',
+};
+
+describe('filtrarAgendaveis', () => {
+  it('libera a disciplina quando codigo e nome casam', async () => {
+    const { service } = montar([{ ...HISTORIA }]);
+
+    const r = await service.filtrarAgendaveis(LAUNCH);
+
+    expect(r.agendaveis).toEqual([
+      {
+        orgUnitId: '6606',
+        nomeDisciplina: 'HISTÓRIA E CULTURA DO CORPO E DO MOVIMENTO',
+      },
+    ]);
+    expect(r.motivo).toBeUndefined();
   });
 
-  // Mesmas 3 linhas da fixture test/fixtures/turmas-exemplo.csv
-  const TURMAS_MOCK = [
-    { orgUnitId: '900001', nomeDisciplina: 'ALGORITMOS E PROGRAMACAO' },
-    { orgUnitId: '900002', nomeDisciplina: 'CALCULO I' },
-    { orgUnitId: '900003', nomeDisciplina: 'PSICOLOGIA DO DESENVOLVIMENTO' },
-  ];
+  it('NAO libera quando o codigo nao esta no CSV', async () => {
+    const { service } = montar([{ ...HISTORIA }]);
 
-  describe('com o filtro de turmas ligado (default seguro)', () => {
-    beforeEach(() => {
-      turmaImportada.count.mockResolvedValue(TURMAS_MOCK.length);
+    const r = await service.filtrarAgendaveis({
+      ...LAUNCH,
+      codigo: 'NAO-EXISTE',
     });
 
-    it('deixa passar so as disciplinas que estao nas turmas reais', async () => {
-      turmaImportada.findMany.mockResolvedValue([
-        TURMAS_MOCK[0],
-        TURMAS_MOCK[1],
-      ]);
+    expect(r.agendaveis).toEqual([]);
+    expect(r.motivo).toMatch(/Nenhuma turma cadastrada/);
+  });
 
-      const agendaveis = await service.filtrarAgendaveis([
-        { orgUnitId: '900001', periodoLetivoId: '103' },
-        { orgUnitId: '900002', periodoLetivoId: '103' },
-        { orgUnitId: '999999', periodoLetivoId: '103' }, // sem prova
-      ]);
+  it('NAO libera quando o codigo bate mas o nome diverge', async () => {
+    // A trava que impede liberar a prova da disciplina errada
+    const { service } = montar([{ ...HISTORIA }]);
 
-      expect(agendaveis.map((d) => d.orgUnitId)).toEqual(['900001', '900002']);
+    const r = await service.filtrarAgendaveis({
+      ...LAUNCH,
+      titulo: 'SAÚDE COLETIVA',
     });
 
-    it('descarta disciplina de outro periodo letivo', async () => {
-      turmaImportada.findMany.mockResolvedValue([TURMAS_MOCK[0]]);
+    expect(r.agendaveis).toEqual([]);
+    expect(r.motivo).toMatch(/nome nao confere/);
+  });
 
-      const agendaveis = await service.filtrarAgendaveis([
-        { orgUnitId: '900001', periodoLetivoId: '103' },
-        { orgUnitId: '900002', periodoLetivoId: '102' }, // semestre passado
-      ]);
+  it('desempata pelo nome quando o codigo se repete', async () => {
+    const { service } = montar([
+      { ...HISTORIA, id: 1, nomeDisciplina: 'SAÚDE COLETIVA', codigoEad: null },
+      { ...HISTORIA, id: 2 },
+    ]);
 
-      expect(agendaveis.map((d) => d.orgUnitId)).toEqual(['900001']);
+    const r = await service.filtrarAgendaveis(LAUNCH);
+
+    expect(r.agendaveis[0].nomeDisciplina).toBe(
+      'HISTÓRIA E CULTURA DO CORPO E DO MOVIMENTO',
+    );
+  });
+
+  it('nao libera nada sem contexto de turma no launch', async () => {
+    const { service } = montar([{ ...HISTORIA }]);
+
+    const r = await service.filtrarAgendaveis(undefined);
+
+    expect(r.agendaveis).toEqual([]);
+    expect(r.motivo).toMatch(/nao identificou a turma/);
+  });
+
+  describe('tabela vazia', () => {
+    it('com o filtro LIGADO (default), nada e agendavel', async () => {
+      const { service } = montar([]);
+
+      expect((await service.filtrarAgendaveis(LAUNCH)).agendaveis).toEqual([]);
     });
 
-    it('usa o nome da turma importada, nao o da Valence', async () => {
-      turmaImportada.findMany.mockResolvedValue([TURMAS_MOCK[0]]);
+    it('com o filtro DESLIGADO, a disciplina do launch passa', async () => {
+      const { service } = montar([], false);
 
-      const [disciplina] = await service.filtrarAgendaveis([
-        { orgUnitId: '900001', nome: 'nome vindo da valence' },
+      expect((await service.filtrarAgendaveis(LAUNCH)).agendaveis).toEqual([
+        {
+          orgUnitId: '6606',
+          nomeDisciplina: 'HISTÓRIA E CULTURA DO CORPO E DO MOVIMENTO',
+        },
       ]);
-
-      expect(disciplina.nomeDisciplina).toBe('ALGORITMOS E PROGRAMACAO');
-    });
-
-    it('com a tabela de turmas VAZIA, nada e agendavel', async () => {
-      turmaImportada.count.mockResolvedValue(0);
-      turmaImportada.findMany.mockResolvedValue([]);
-
-      const agendaveis = await service.filtrarAgendaveis([
-        { orgUnitId: '900001', periodoLetivoId: '103' },
-        { orgUnitId: '900002', periodoLetivoId: '103' },
-      ]);
-
-      // comportamento seguro: melhor ninguem agendar do que liberar
-      // prova para a disciplina errada
-      expect(agendaveis).toEqual([]);
-    });
-
-    it('aluno sem nenhuma disciplina devolve lista vazia', async () => {
-      await expect(service.filtrarAgendaveis([])).resolves.toEqual([]);
     });
   });
 
-  describe('com TURMAS_FILTER_ENABLED=false', () => {
-    beforeEach(async () => {
-      config.TURMAS_FILTER_ENABLED = 'false';
-      await criar();
+  describe('aprendizado do orgUnitId', () => {
+    it('grava o orgUnitId que o launch entregou', async () => {
+      // O CSV nunca traz esse id; cada launch nos da o da turma dele de graca.
+      const { service, atualizacoes } = montar([{ ...HISTORIA }]);
+
+      await service.filtrarAgendaveis(LAUNCH);
+
+      expect(atualizacoes).toEqual([{ id: 1, orgUnitId: '6606' }]);
     });
 
-    it('nao restringe: toda disciplina do periodo e agendavel', async () => {
-      const agendaveis = await service.filtrarAgendaveis([
-        { orgUnitId: '900001', periodoLetivoId: '103' },
-        { orgUnitId: '999999', periodoLetivoId: '103' },
+    it('NAO sobrescreve um orgUnitId ja gravado', async () => {
+      const { service, atualizacoes } = montar([
+        { ...HISTORIA, orgUnitId: '9999' },
       ]);
 
-      expect(agendaveis.map((d) => d.orgUnitId)).toEqual(['900001', '999999']);
-      expect(turmaImportada.findMany).not.toHaveBeenCalled();
+      await service.filtrarAgendaveis(LAUNCH);
+
+      expect(atualizacoes).toEqual([]);
     });
 
-    it('continua respeitando o periodo letivo', async () => {
-      const agendaveis = await service.filtrarAgendaveis([
-        { orgUnitId: '900001', periodoLetivoId: '102' },
-      ]);
+    it('nao aprende quando o cruzamento nao foi conclusivo', async () => {
+      const { service, atualizacoes } = montar([{ ...HISTORIA }]);
 
-      expect(agendaveis).toEqual([]);
+      await service.filtrarAgendaveis({ ...LAUNCH, titulo: 'OUTRA COISA' });
+
+      expect(atualizacoes).toEqual([]);
     });
   });
 });
