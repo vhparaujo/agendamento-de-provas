@@ -74,6 +74,45 @@ export function normalizarNome(
     .trim();
 }
 
+/**
+ * Tira o código do FIM do titulo da turma: no Brightspace o nome costuma vir
+ * como "LABORATORIO DE REDES DE COMPUTADORES - GEE11I40254" (o mesmo formato que
+ * `normalizarNome` acima ja precisa desmontar).
+ *
+ * Serve de ultimo recurso quando o launch nao traz `context.label` — acontece
+ * neste tenant. **Nao afrouxa nada**: o codigo extraido ainda precisa existir em
+ * `TurmaImportada` E o nome ainda precisa casar. Ele so recoloca o primeiro
+ * filtro de pe; quem libera continua sendo a comparacao de nome.
+ *
+ * Conservador de proposito — devolve `null` a menos que o trecho final PAREÇA
+ * codigo de turma:
+ *
+ *   "REDES - GEE11I40254"   -> "GEE11I40254"
+ *   "MATEMATICA - TURMA A"  -> null  (tem espaco)
+ *   "QUIMICA - 2"           -> null  (sem letra)
+ *   "HISTORIA DO BRASIL"    -> null  (nao ha separador)
+ */
+export function extrairCodigoDoTitulo(
+  titulo: string | null | undefined,
+): string | null {
+  const partes = String(titulo ?? '')
+    .trim()
+    .split(/\s+-\s+/);
+
+  if (partes.length < 2) return null;
+
+  const candidato = partes[partes.length - 1].trim();
+
+  const pareceCodigo =
+    candidato.length >= 5 &&
+    candidato.length <= 30 &&
+    /^[A-Za-z0-9-]+$/.test(candidato) &&
+    /[A-Za-z]/.test(candidato) &&
+    /\d/.test(candidato);
+
+  return pareceCodigo ? candidato.toUpperCase() : null;
+}
+
 /** Código sem espaços nas pontas, em maiúsculas. */
 export function normalizarCodigo(codigo: string | null | undefined): string {
   return String(codigo ?? '')
@@ -115,6 +154,8 @@ export interface TurmaCandidata {
   nomeDisciplina: string;
   codigoEad: string | null;
   orgUnitId: string | null;
+  /** Coluna Curso do CSV. Diz de qual vínculo é a disciplina. */
+  curso: string | null;
 }
 
 /**
@@ -129,6 +170,23 @@ export interface TurmaDoLaunch {
   titulo?: string | null;
   /** `context.id` — o orgUnitId. */
   orgUnitId?: string | null;
+}
+
+/**
+ * Separa, de um lote de candidatas carregado de uma vez, as que interessam a
+ * ESTA turma. É o mesmo critério da consulta que existia por turma (código, ou
+ * orgUnitId quando o código não veio) — só que aplicado em memória, para que
+ * várias turmas custem uma consulta e não N.
+ */
+export function candidatasDe(
+  turma: TurmaDoLaunch,
+  lote: TurmaCandidata[],
+): TurmaCandidata[] {
+  const codigo = normalizarCodigo(turma.codigo);
+
+  return codigo
+    ? lote.filter((c) => normalizarCodigo(c.codigoTurma) === codigo)
+    : lote.filter((c) => c.orgUnitId && c.orgUnitId === turma.orgUnitId);
 }
 
 export type ResultadoMatch =

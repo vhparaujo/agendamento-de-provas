@@ -135,6 +135,39 @@ estado, **todas as rotas devolvem 403**, exceto `/api/auth/trocar-senha` e
 O front **deve** redirecionar para a tela de troca de senha antes de qualquer
 outra coisa. Se ignorar a flag, o app trava em 403 sem explicação aparente.
 
+### 4.1-b Entrada do aluno: o `code` do redirect
+
+O aluno chega pelo Brightspace, não por um formulário. O launch é um POST do LMS
+para a **API**, mas quem precisa do token é o **portal**, no navegador dele —
+e entre os dois só existe um redirect.
+
+Como **token não pode ir na URL** (seção 1), o redirect leva um `code` opaco:
+
+```
+POST /api/lti/launch  (Brightspace → API)
+   ↓ 303
+{PORTAL_ALUNO_URL}?code=<uuid>          (navegador → portal)
+   ↓
+POST /api/lti/sessao  { "code": "<uuid>" }   → { accessToken, vinculos, ... }
+```
+
+O que o front **deve** fazer ao carregar a página do portal:
+
+1. ler `code` da query;
+2. trocá-lo por `POST /api/lti/sessao`;
+3. **limpar o `code` da URL** (`history.replaceState` ou `router.replace`) — ele
+   já foi consumido, e deixá-lo ali só enche o histórico com uma URL que produz
+   erro no F5;
+4. guardar o `accessToken` em memória, como todo o resto.
+
+O código vale **uma única vez** e por **2 minutos**. Reapresentá-lo (botão
+voltar, URL colada) responde `401` com texto pronto: *"Sessão inválida ou
+expirada. Volte ao Brightspace e abra o link da prova de novo."* Mostre essa
+mensagem — não tente resgatar de novo, porque não vai funcionar.
+
+Quando `PORTAL_ALUNO_URL` está vazia no backend, `/lti/launch` responde o JSON do
+launch direto, sem redirect. É o modo de teste, não o de produção.
+
 ### 4.2 Aluno com mais de um curso (`precisaEscolherCurso`)
 
 `POST /api/lti/launch` responde com um array `vinculos`. Se
@@ -236,6 +269,7 @@ navegador e, sem credenciais, ainda expõe a API a qualquer site.
 - [ ] `href` vindo de dado importado tem esquema validado
 - [ ] CSP configurada no servidor do front
 - [ ] `mustChangePassword: true` → redireciona para troca de senha
+- [ ] `?code=` do launch trocado em `/lti/sessao` e **removido da URL** em seguida
 - [ ] `precisaEscolherCurso: true` → pergunta o curso antes de listar horários
 - [ ] `vinculos[].ativo === false` → mensagem clara, não erro genérico
 - [ ] `401` → tenta refresh **uma vez**, depois login

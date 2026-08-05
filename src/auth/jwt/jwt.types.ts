@@ -32,7 +32,9 @@ export interface VinculoToken {
  * A turma de onde o aluno clicou o link de agendamento (claim `context` do LTI).
  *
  * Os TRES campos importam, e por motivos diferentes:
- * - `codigo`  (`context.label`) — chave de busca no CSV de turmas;
+ * - `codigo`  (`context.label`) — chave de busca no CSV de turmas. **Vem vazio
+ *   neste tenant**; nesse caso sai do fim do `title` ("NOME - CODIGO"), ver
+ *   `extrairCodigoDoTitulo`;
  * - `titulo`  (`context.title`) — desempata quando o codigo se repete;
  * - `orgUnitId` (`context.id`)  — identificador no D2L, gravado no agendamento.
  *

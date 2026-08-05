@@ -196,6 +196,9 @@ npm run lti:keygen           # gera a chave RSA da ferramenta (LTI_TOOL_PRIVATE_
 # token de aluno para testar o portal sem o Brightspace (SÓ DESENVOLVIMENTO)
 npm run token:aluno -- <RA> [orgUnitId] [título da turma]
 
+# access token da Valence a partir do refresh gravado (SÓ DESENVOLVIMENTO)
+npm run d2l:token
+
 # qualidade
 npm test                     # unitários (jest, rootDir=src)
 npm run test:cov
@@ -226,7 +229,8 @@ segredo ausente em produção.
 | `PERIODO_LETIVO_ID` | | período letivo vigente no Brightspace (ex: `103`) |
 | `TURMAS_FILTER_ENABLED` | | **default seguro `true`** — ver abaixo |
 | `LTI_*` | LTI | issuer, client id, deployment, URLs, chave RSA, claims |
-| `VALENCE_*` | D2L | credenciais OAuth 2.0 (etapa 7, ainda não implementada) |
+| `D2L_HABILITADO` | | **default `false`** — ligado, as disciplinas do aluno passam a vir dos enrollments da Valence |
+| `D2L_*` | D2L | credenciais OAuth, URL do tenant, versão da API e Type Ids de org unit |
 
 Lista completa e comentada em [`.env.example`](.env.example). **Nunca commite o
 `.env`.**
@@ -234,12 +238,14 @@ Lista completa e comentada em [`.env.example`](.env.example). **Nunca commite o
 ### `TURMAS_FILTER_ENABLED` — o default é bloquear
 
 Com `true` (default), só é agendável a disciplina que estiver na tabela de turmas
-reais. Como o CSV de turmas ainda não chegou, a tabela está vazia e **nada é
-agendável** — de propósito: é melhor ninguém agendar do que liberar prova para a
-disciplina errada. O serviço loga um aviso claro quando isso acontece.
+reais. Com a tabela vazia (CSV ainda não importado), **nada é agendável** — de
+propósito: é melhor ninguém agendar do que liberar prova para a disciplina
+errada. O serviço loga um aviso claro quando isso acontece.
 
-Com `false`, o filtro não restringe nada e toda disciplina do período vira
-agendável. Use conscientemente.
+Com `false`, o filtro não restringe nada. **Cuidado ao combinar com
+`D2L_HABILITADO=true`**: aí não é uma disciplina que passa livre, é o semestre
+inteiro do aluno — o CSV de turmas é justamente quem diz quais turmas têm prova.
+O portal loga um aviso quando as duas coisas estão ligadas ao mesmo tempo.
 
 ---
 
@@ -351,6 +357,44 @@ fechamento é justamente o caso de uso.
 Sem `status` explícito, tudo traz apenas os **confirmados** — um cancelado na
 lista do dia da prova faria alguém procurar um aluno que não vem.
 
+### Autorização da Valence (D2L)
+
+| Método | Rota | O que faz |
+|:---:|---|---|
+| `GET` | `/d2l/callback` | Recebe o `code` do Brightspace, troca por tokens e **grava o refresh token** |
+
+Rota **pública** por natureza: quem chega nela é o browser do admin, redirecionado
+pelo Brightspace depois da tela de autorização — não há como exigir o nosso JWT
+nessa navegação. O que autoriza a operação é o `code`, que só o Brightspace emite,
+vale uma vez e expira em minutos.
+
+Para usar:
+
+1. Registre o app em **Admin Tools → Manage Extensibility → OAuth 2.0**, com
+   `URI de redirecionamento` = `{TOOL_URL}/api/d2l/callback` (HTTPS obrigatório —
+   em desenvolvimento, o túnel do ngrok).
+2. Preencha `D2L_CLIENT_ID`, `D2L_CLIENT_SECRET` e `D2L_REDIRECT_URI` no `.env`.
+   O redirect é comparado **byte a byte**; uma barra final a mais já recusa.
+3. Autorize uma vez pelo browser:
+   `https://auth.brightspace.com/oauth2/auth?response_type=code&client_id=…&redirect_uri=…&scope=…&state=…`
+
+O **refresh token vai para a tabela `integracao_d2l`, não para o `.env`**: cada
+refresh emite um token novo e invalida o anterior, então um valor em arquivo
+funcionaria exatamente uma vez. O access token só volta na resposta **fora de
+produção** — ele serve para conferir os endpoints da Valence por curl, mas é
+credencial.
+
+Depois dessa autorização única, `D2lOauthService.obterAccessToken()` resolve o
+resto sozinho: reaproveita o token em cache enquanto ele durar (com 1 min de
+margem) e só então usa o refresh gravado, **persistindo o token rotacionado na
+mesma operação**. Renovações concorrentes compartilham a mesma promessa — duas
+chamadas em paralelo com o mesmo refresh token fariam a segunda receber
+`invalid_grant` depois de a primeira já ter rotacionado.
+
+Para pegar um token na mão sem repetir a autorização: `npm run d2l:token`.
+**Nunca fale com o token endpoint por fora do service** — o refresh do banco
+viraria lixo e a integração morreria depois, longe da causa.
+
 O CSV sai com **BOM UTF-8** e separado por **`;`**, para abrir direto no Excel em
 português sem estragar os acentos. Células que começam com `=`, `+`, `-` ou `@`
 são neutralizadas: os nomes vêm de planilhas de terceiros, e uma célula
@@ -385,6 +429,24 @@ fui eu".
 
 O aluno não escolhe polo, modalidade nem sala. Polo e modalidade vêm do CSV; a
 sala é resultado da alocação no instante da confirmação.
+
+**De onde vêm as disciplinas de `/portal/disciplinas`.** A fonte é decidida em um
+arquivo só (`agendamento/service/disciplinas-do-aluno.service.ts`):
+
+| `D2L_HABILITADO` | Turmas consideradas |
+|---|---|
+| `false` (default) | Só a turma de onde o aluno clicou (claim `context` do LTI) |
+| `true` | Todas as ofertas dele no período letivo cadastrado, lidas por `enrollments/users/{id}/orgUnits/` e cruzadas com os descendentes do Período Letivo |
+
+O semestre é **o que o admin cadastrou** em `PeriodoAgendamento.periodoLetivoId`
+(org unit tipo `103` neste tenant), não "o atual" segundo o relógio. Sem esse
+recorte viriam também as disciplinas de semestres passados.
+
+Quem tem **dois cursos** não leva disciplina do outro curso para a prova errada:
+os enrollments vêm pelo RA, e quem separa é a coluna **Curso** do CSV de turmas,
+comparada com o curso do vínculo (ignorando acento e caixa). Aluno de um curso só
+não passa por esse filtro — não há o que decidir, e filtrar transformaria uma
+divergência de grafia em "você não tem prova".
 
 ---
 
@@ -563,26 +625,20 @@ NUTRIÇÃO;GSPS0N10257;PRÁTICA PROFISSIONAL E ÉTICA EM NUTRIÇÃO (1-GSPS06EAD
 A terceira coluna traz **duas informações na mesma célula** — nome e código EAD —
 separadas na importação. Idempotência pelo par `[codigoTurma, nomeDisciplina]`.
 
-**O cruzamento é por código + nome.** O CSV não traz `orgUnitId`; o launch LTI
-traz o código (`context.label`) e o nome (`context.title`), e o casamento é feito
-com eles. Precisa dos dois porque o mesmo código aparece em mais de uma oferta: o
-código filtra, o nome decide. Quando não é conclusivo — nome divergente ou empate
-— **nada é liberado** e o motivo vai para o log; chutar significaria marcar prova
-para a disciplina errada.
+**Este arquivo é quem diz quais turmas têm prova.** Nada fora dele é agendável
+(`TURMAS_FILTER_ENABLED`, default `true`), e a coluna **Curso** é o que permite
+dizer de qual vínculo é cada disciplina quando o aluno tem dois cursos.
 
-O `orgUnitId` é aprendido dos launches: cada aluno que entra por uma turma
-entrega o id dela, que é gravado (nunca sobrescrito) para a futura integração.
+**O cruzamento é por código + nome.** O CSV não traz `orgUnitId`; o código e o
+nome chegam prontos das duas fontes possíveis — `context.label`/`context.title`
+no launch LTI e `OrgUnit.Code`/`OrgUnit.Name` nos enrollments da Valence. Precisa
+dos dois porque o mesmo código aparece em mais de uma oferta: o código filtra, o
+nome decide. Quando não é conclusivo — nome divergente ou empate — **aquela turma
+não é liberada** e o motivo vai para o log; chutar significaria marcar prova para
+a disciplina errada. Uma turma inconclusiva não derruba as outras.
 
-
-**O arquivo real ainda não existe.** Os cabeçalhos são provisórios
-(`orgUnitId`, `nomeDisciplina`, `codigoTurma`), mas o endpoint, a auditoria, a
-idempotência, a persistência e o cruzamento de disciplinas **já estão escritos e
-testados** com uma fixture em `test/fixtures/turmas-exemplo.csv`.
-
-Quando o arquivo real chegar, o único ponto a mudar é o mapeamento de colunas em
-[`src/importacao/service/turma-csv.columns.ts`](src/importacao/service/turma-csv.columns.ts).
-Nenhuma regra de negócio muda. `orgUnitId` é o único campo obrigatório: é a chave
-que casa a disciplina do aluno na Valence com a turma que realmente terá prova.
+O `orgUnitId` é aprendido dos acessos: cada aluno que entra entrega o id das suas
+turmas, gravado (nunca sobrescrito) para a integração.
 
 ### Idempotência
 
@@ -656,7 +712,8 @@ src/
                   alocacao.ts (regra sequencial, função pura)
                   lock-de-vagas.ts (o FOR UPDATE, compartilhado pelos 3 caminhos)
                   csv-relatorio.ts (CSV do Excel, com defesa de injeção)
-                  disciplinas-do-aluno.service.ts (costura Valence)
+                  disciplinas-do-aluno.service.ts (escolhe a fonte das
+                  disciplinas e separa por vínculo)
   aluno/          cruzamento matrícula → vínculos
   auth/
     controller/   login, refresh, trocar-senha, me
@@ -665,6 +722,7 @@ src/
     roles.decorator.ts
   components/     horario.util.ts (HH:MM → minutos)
   config/         validação do .env no boot + setup do Swagger
+  d2l/            OAuth da Valence + leitura de matrículas (d2l-enrollments)
   database/       PrismaService + driver adapter MariaDB
   dto/            respostas de rotas fora de módulo (health)
   enums/          perfil, status-curso (regra de elegibilidade)
@@ -684,7 +742,7 @@ prisma/
   seed.ts         orquestrador → modalidades, polos, admin
 
 docker/mysql/init/  grant do shadow database (só dev)
-scripts/            gerar-chave-lti.ts · token-aluno.ts (só dev)
+scripts/            gerar-chave-lti.ts · token-aluno.ts · d2l-token.ts (só dev)
 test/               e2e + fixtures
 ```
 
@@ -813,21 +871,21 @@ A ordem de implementação segue a prioridade definida para o projeto.
 |:--:|---|---|
 | 1 | Prisma schema + migrations + Docker + seeds | ✅ concluída |
 | 2 | Auth (admin JWT + LTI aluno) | ✅ concluída |
-| 3 | Importação dos CSVs + seed de polos | ✅ concluída (mapeamento do CSV de turmas provisório) |
+| 3 | Importação dos CSVs + seed de polos | ✅ concluída |
 | 4 | Estrutura: polo / sala / faixa / sala-faixa | ✅ concluída |
 | 5 | Portal do aluno: listar faixas + agendar com alocação sequencial | ✅ concluída |
 | 6 | Período de agendamento + relatório (consulta, ocupação por sala, CSV) | ✅ concluída |
 | 7 | Remanejo administrativo + cancelamento/troca pelo aluno | ✅ concluída |
-| 8 | Integração D2L (Valence + special access) | ⬜ **adiada pelo cliente** |
+| 8a | Valence: OAuth + leitura de matrículas (disciplinas do semestre) | 🟡 pronta, desligada por padrão |
+| 8b | Valence: special access no quiz | ⬜ **adiada pelo cliente** |
 
 **Pendências conhecidas**
 
-- O CSV real de turmas não chegou; o mapeamento de colunas é provisório e está
-  isolado num único arquivo.
-- A integração com a Valence API foi **adiada** (decisão de 03/08/2026): o sistema
-  agenda e emite relatório; liberar a prova no Brightspace fica para depois. A
-  referência técnica está em `docs/D2L_API_REFERENCE.md`.
-- As credenciais da Valence API ainda não existem; as variáveis `VALENCE_*` estão
-  no `.env.example` mas nenhum código as consome.
+- O **special access** no quiz foi **adiado** (decisão de 03/08/2026): o sistema
+  agenda, lê as disciplinas e emite relatório; liberar a prova no Brightspace fica
+  para depois. Referência técnica em `docs/D2L_API_REFERENCE.md`.
+- A leitura de matrículas (`D2L_HABILITADO=true`) exige a autorização OAuth feita
+  uma vez pelo browser e `D2L_BASE_URL` preenchida. Enquanto isso não acontecer,
+  o portal usa a turma do launch e nada quebra.
 - A modalidade `PRESENCIAL` existe no modelo (prova de 2h) mas ainda não tem CSV
   correspondente.

@@ -8,6 +8,7 @@ import { JwtAdminStrategy } from '../jwt/jwt-admin.strategy';
 import { JwtAlunoStrategy } from '../jwt/jwt-aluno.strategy';
 import { LtiController } from '../lti/lti.controller';
 import { LtiKeysService } from '../lti/lti-keys.service';
+import { LtiCodeStore } from '../lti/lti-code.store';
 import { LtiStateStore } from '../lti/lti-state.store';
 import { LtiService } from '../lti/lti.service';
 import { AuthService } from '../service/auth.service';
@@ -27,6 +28,7 @@ import { JwtAlunoGuard } from '../jwt/jwt-aluno.guard';
     JwtAlunoGuard,
     LtiService,
     LtiStateStore,
+    LtiCodeStore,
     LtiKeysService,
   ],
   exports: [AuthService, JwtAdminGuard, JwtAlunoGuard],

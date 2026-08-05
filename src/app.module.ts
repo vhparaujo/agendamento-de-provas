@@ -11,6 +11,7 @@ import { AutenticacaoGuard } from './auth/jwt/autenticacao.guard';
 import { AuthModule } from './auth/module/auth.module';
 import { validateEnv } from './config/env.validation';
 import { throttlerConfig } from './config/throttler.config';
+import { D2lModule } from './d2l/module/d2l.module';
 import { PrismaModule } from './database/prisma.module';
 import { FaixaModule } from './faixa/module/faixa.module';
 import { ImportacaoModule } from './importacao/module/importacao.module';
@@ -47,6 +48,8 @@ import { TurmaModule } from './turma/module/turma.module';
     // Portal do aluno (etapa 6)
     PeriodoModule,
     AgendamentoModule,
+    // Integracao D2L: por enquanto so a autorizacao OAuth (etapa 8 adiada)
+    D2lModule,
   ],
   controllers: [AppController],
   providers: [

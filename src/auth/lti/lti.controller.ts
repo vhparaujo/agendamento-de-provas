@@ -30,6 +30,7 @@ import {
   JwksResponseDto,
   LaunchResponseDto,
 } from '../dto/lti-launch.response.dto';
+import { ResgatarSessaoDto } from '../dto/resgatar-sessao.dto';
 import { LtiKeysService } from './lti-keys.service';
 import { LtiService } from './lti.service';
 import type { IniciacaoOidc } from './lti.service';
@@ -156,12 +157,22 @@ export class LtiController {
       'Passo 2. Valida assinatura, issuer, audience, state, nonce, versao 1.3.0, message type e ' +
       'deployment_id ANTES de olhar qualquer dado. So entao cruza a matricula com o CSV de alunos ' +
       'e devolve os vinculos + o JWT interno do aluno.\n\n' +
+      'A resposta depende de `PORTAL_ALUNO_URL`:\n\n' +
+      '- **configurada** — responde **303** redirecionando o navegador do aluno para o portal, ' +
+      'com um `code` de uso unico na URL. O token NAO vai na URL; o portal o obtem em ' +
+      '`POST /lti/sessao`.\n' +
+      '- **vazia** — responde o JSON abaixo, que e como se testa o launch sem front.\n\n' +
       'Nao ha como exercitar esta rota pelo Swagger UI: o `id_token` precisa ser assinado pelo ' +
       'Brightspace. O contrato abaixo serve para orientar o front.',
   })
   @ApiConsumes('application/x-www-form-urlencoded', 'application/json')
   @ApiBody({ schema: SCHEMA_LAUNCH })
   @ApiOkResponse({ type: LaunchResponseDto })
+  @ApiResponse({
+    status: 303,
+    description:
+      'PORTAL_ALUNO_URL configurada: redirect para o portal com `?code=` de uso unico',
+  })
   @ApiBadRequestResponse({ description: 'id_token ou state ausentes' })
   @ApiUnauthorizedResponse({
     description:
@@ -173,11 +184,47 @@ export class LtiController {
       'Matricula valida no LMS mas ausente da base importada: sem a linha do CSV nao ha modalidade ' +
       'nem polo, entao nao ha o que agendar',
   })
-  launch(@Body() body: CorpoLaunch) {
-    return this.ltiService.processarLaunch(
+  async launch(@Body() body: CorpoLaunch, @Res() res: Response): Promise<void> {
+    const resultado = await this.ltiService.processarLaunch(
       body.id_token ?? '',
       body.state ?? '',
     );
+
+    const destino = this.ltiService.montarDestinoDoPortal(resultado);
+
+    if (!destino) {
+      // Sem front configurado, devolve o proprio resultado — util para testar.
+      res.status(HttpStatus.OK).json(resultado);
+      return;
+    }
+
+    // 303 e nao 302: o launch e um POST, e o navegador precisa buscar o portal
+    // com GET. Com 302 o comportamento depende do navegador; com 303 e definido.
+    res.redirect(HttpStatus.SEE_OTHER, destino);
+  }
+
+  @Post('sessao')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Troca o codigo do redirect pelo token do aluno',
+    description:
+      'Fecha o fluxo iniciado no launch: o portal recebe um `code` na URL e o troca aqui pelo ' +
+      'JWT do aluno e pelos vinculos.\n\n' +
+      'Existe porque o **token nao pode viajar na URL** — ela vai para o historico do navegador, ' +
+      'para o log de proxy e para o header `Referer`. O codigo e opaco, vale **uma unica vez** e ' +
+      'expira em 2 minutos.\n\n' +
+      'Nao usa o limite de 5/min das rotas de credencial de proposito: o codigo e um UUID v4 ' +
+      'consumido na primeira troca — nao ha o que adivinhar por forca bruta —, e apertar aqui ' +
+      'penalizaria um laboratorio inteiro atras do mesmo IP, onde cada launch legitimo passa por ' +
+      'esta rota.',
+  })
+  @ApiOkResponse({ type: LaunchResponseDto })
+  @ApiBadRequestResponse({ description: '`code` ausente ou fora do formato' })
+  @ApiUnauthorizedResponse({
+    description: 'Codigo invalido, expirado, ou ja utilizado',
+  })
+  sessao(@Body() dto: ResgatarSessaoDto) {
+    return this.ltiService.resgatarSessao(dto.code);
   }
 
   /** Chave publica da ferramenta, consumida pelo Brightspace. */

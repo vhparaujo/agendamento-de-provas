@@ -9,6 +9,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { createRemoteJWKSet, jwtVerify, JWTPayload } from 'jose';
 import { AlunoService } from '../../aluno/service/aluno.service';
+import { extrairCodigoDoTitulo } from '../../turma/service/turma-match';
 import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 import type { ContextoLaunch } from '../jwt/jwt.types';
 import { AuthService } from '../service/auth.service';
@@ -22,6 +23,7 @@ import {
   lerPrimeiroClaim,
   LtiConfig,
 } from './lti.config';
+import { LtiCodeStore } from './lti-code.store';
 import { LtiStateStore } from './lti-state.store';
 
 export interface IniciacaoOidc {
@@ -54,7 +56,6 @@ export interface ResultadoLaunch {
   vinculos: VinculoLaunch[];
   /** Turma de onde o aluno clicou. Ausente se o Brightspace nao mandar o claim. */
   contexto?: ContextoLaunch;
-  redirecionarPara?: string;
 }
 
 @Injectable()
@@ -65,6 +66,7 @@ export class LtiService {
   constructor(
     private readonly config: ConfigService,
     private readonly stateStore: LtiStateStore,
+    private readonly codeStore: LtiCodeStore,
     private readonly authService: AuthService,
     private readonly alunoService: AlunoService,
     private readonly auditoria: AuditoriaService,
@@ -239,8 +241,56 @@ export class LtiService {
         polo: { id: v.polo.id, nome: v.polo.nome },
       })),
       contexto,
-      redirecionarPara: lti.portalAlunoUrl,
     };
+  }
+
+  /**
+   * Para onde mandar o navegador do aluno depois do launch.
+   *
+   * `undefined` quando `PORTAL_ALUNO_URL` nao esta configurada — nesse caso a
+   * rota responde o JSON do launch, que e como se testa sem front.
+   *
+   * A URL carrega um CODIGO de uso unico, nunca o token: URL vai para historico
+   * do navegador, log de proxy e header `Referer`
+   * (docs/SEGURANCA-FRONTEND.md, secao 1). Quem troca o codigo pelo token e o
+   * portal, num POST — ver `resgatarSessao`.
+   */
+  montarDestinoDoPortal(resultado: ResultadoLaunch): string | undefined {
+    const destino = this.exigirConfig().portalAlunoUrl;
+
+    if (!destino) return undefined;
+
+    const url = new URL(destino);
+
+    url.searchParams.set('code', this.codeStore.criar(resultado));
+
+    return url.toString();
+  }
+
+  /**
+   * Troca o codigo do redirect pelo resultado do launch (token + vinculos).
+   *
+   * O codigo vale UMA vez e por 2 minutos. Reapresenta-lo — aluno que usa o
+   * botao voltar, ou alguem que pescou a URL do historico — cai aqui como
+   * recusa, porque a primeira troca ja o consumiu.
+   */
+  resgatarSessao(codigo: string): ResultadoLaunch {
+    const resultado = codigo ? this.codeStore.consumir(codigo) : undefined;
+
+    if (!resultado) {
+      this.auditoria.registrar('LTI_SESSAO_RECUSADA', {
+        detalhe: 'codigo de sessao invalido, expirado ou ja utilizado',
+      });
+
+      throw new UnauthorizedException(
+        'Sessao invalida ou expirada. Volte ao Brightspace e abra o link da ' +
+          'prova de novo.',
+      );
+    }
+
+    this.auditoria.registrar('LTI_SESSAO_OK', { ator: resultado.matricula });
+
+    return resultado;
   }
 
   /**
@@ -271,9 +321,21 @@ export class LtiService {
 
     const titulo = [title, label].find(
       (v) => typeof v === 'string' && v.trim(),
-    );
+    ) as string | undefined;
 
-    return { orgUnitId, titulo: titulo as string | undefined };
+    const rotulo = typeof label === 'string' ? label.trim() : '';
+
+    /**
+     * `context.label` e a chave de busca no CSV de turmas. Quando o Brightspace
+     * nao o envia — e neste tenant ele vem vazio —, o codigo ainda chega grudado
+     * no fim do titulo ("NOME - CODIGO"), que e o formato que `normalizarNome`
+     * ja conhece. Sem esta segunda tentativa o `codigo` fica vazio, a busca por
+     * turma nao tem por onde comecar e TODO launch real termina em
+     * "o launch nao trouxe codigo de turma para procurar".
+     */
+    const codigo = rotulo || extrairCodigoDoTitulo(titulo) || undefined;
+
+    return { orgUnitId, codigo, titulo };
   }
 
   private async verificarIdToken(
@@ -338,6 +400,13 @@ export class LtiService {
     // caminho configurado esta errado.
     this.logger.debug(
       `[LTI debug] ${CLAIM_BRIGHTSPACE}: ${JSON.stringify(payload[CLAIM_BRIGHTSPACE] ?? null)}`,
+    );
+    // O `context` decide QUAIS disciplinas o aluno consegue agendar: `label` e a
+    // chave de busca no CSV de turmas e `title` desempata. Sem ele no log, um
+    // "turma nao encontrada" nao diz se o Brightspace nao mandou o codigo ou se
+    // a turma e que nao esta importada — foram horas de diagnostico em 04/08/2026.
+    this.logger.debug(
+      `[LTI debug] context: ${JSON.stringify(payload[CLAIM_CONTEXT] ?? null)}`,
     );
     this.logger.debug(
       `[LTI debug] sub=${String(payload.sub)} matricula=${matricula ?? 'NAO ENCONTRADA'} userIdD2L=${userIdD2L ?? 'NAO ENCONTRADO'}`,

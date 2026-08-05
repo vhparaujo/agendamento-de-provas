@@ -117,12 +117,6 @@ export class LaunchResponseDto implements ResultadoLaunch {
       'nao ha disciplina para liberar no Brightspace.',
   })
   contexto?: ContextoLaunchDto;
-
-  @ApiPropertyOptional({
-    description:
-      'Front para onde redirecionar apos o launch (PORTAL_ALUNO_URL). Vazio = a rota responde em JSON, util para testes.',
-  })
-  redirecionarPara?: string;
 }
 
 /** Chave publica da ferramenta, no formato JWKS consumido pelo Brightspace. */

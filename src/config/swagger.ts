@@ -27,6 +27,7 @@ export const TAGS = {
   PORTAL: 'Portal do Aluno',
   PERIODO: 'Periodo de agendamento',
   AGENDAMENTOS: 'Agendamentos (admin)',
+  D2L: 'Integracao D2L (Valence)',
 } as const;
 
 const DESCRICAO = `
@@ -127,6 +128,10 @@ export function construirDocumento(app: INestApplication): OpenAPIObject {
     .addTag(
       TAGS.AGENDAMENTOS,
       'Consulta, ocupacao por sala e exportacao do relatorio de agendamentos',
+    )
+    .addTag(
+      TAGS.D2L,
+      'Autorizacao OAuth 2.0 da Valence — obter e persistir o refresh token do Brightspace',
     )
     .build();
 

@@ -183,6 +183,31 @@ O teste roda em `npm run test:e2e` e exige banco de pé.
 Decorators prontos em `src/auth/roles.decorator.ts`: `@SomenteAdmin()`,
 `@SomenteAluno()`, `@AdminLogado()`, `@AlunoLogado()`, `@UsuarioLogado()`.
 
+### Como o token do aluno chega ao front (código de uso único)
+
+O launch é um POST do Brightspace para **nós**; quem precisa do token é o portal,
+que roda no **navegador do aluno**. Entre os dois só existe um redirect, e
+redirect só carrega URL — mas **o token não pode ir na URL** (histórico do
+navegador, log de proxy, header `Referer`).
+
+Por isso o handoff é em duas etapas, e `PORTAL_ALUNO_URL` decide qual caminho:
+
+| `PORTAL_ALUNO_URL` | `POST /lti/launch` responde |
+|---|---|
+| preenchida | **303** para `{PORTAL_ALUNO_URL}?code=<uuid>` |
+| vazia | o JSON do launch — é assim que se testa sem front |
+
+O portal então chama `POST /lti/sessao` com o `code` e recebe o token. O código é
+UUID v4, **de uso único**, TTL de 2 min, guardado em `LtiCodeStore` — mesmo
+desenho e mesmas garantias do `state` em `LtiStateStore`, por isso os dois
+arquivos são propositalmente parecidos (e têm a **mesma limitação**: memória, uma
+instância só).
+
+`/lti/sessao` **não** usa o limite de 5/min das rotas de credencial: um UUID v4
+consumido na primeira troca não tem o que ser adivinhado por força bruta, e
+apertar ali penalizaria um laboratório inteiro atrás do mesmo IP — onde *todo*
+launch legítimo passa por essa rota.
+
 ## Segurança (controles ativos — não desfazer sem substituir)
 
 **Nega por padrão.** `AutenticacaoGuard` é global (`APP_GUARD`): rota **sem
@@ -236,6 +261,7 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `POST /auth/login` · `/auth/refresh` | — | Tokens do admin |
 | `POST /auth/trocar-senha` · `GET /auth/me` | admin | Liberadas com senha provisória |
 | `GET/POST /lti/login` · `POST /lti/launch` · `GET /lti/jwks` | — | Fluxo LTI (autentica pela assinatura do Brightspace) |
+| `POST /lti/sessao` | — | Troca o `code` do redirect pelo token do aluno (ver abaixo) |
 | `GET/POST /admins` · `POST /admins/:id/resetar-senha` · `PATCH /admins/:id/ativo` | admin | Gestão de administradores |
 | `POST /importacao/alunos` · `/importacao/turmas` · `GET /importacao` | admin | CSVs + auditoria |
 | `GET /modalidades` · `GET/POST/PATCH /polos` · `/salas` · `/faixas` · `/sala-faixas` | admin | Estrutura física e oferta de vagas |
@@ -246,8 +272,10 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `PATCH /agendamentos/:id/remanejar` · `DELETE /agendamentos/:id` | admin | Mover de sala/horário e cancelar |
 | `PATCH /portal/agendamentos/:id` · `DELETE` | aluno | Trocar de horário (atômico) e cancelar |
 | `GET /agendamentos/:id/historico` | admin | Quem alterou: aluno ou administrador |
+| `GET /d2l/callback` | — | Callback OAuth da Valence: troca o `code` e grava o refresh token |
 
-Pendente: integração D2L (adiada pelo cliente).
+Pendente: special access no quiz (adiado pelo cliente). OAuth e leitura de
+matrículas existem — ver "Disciplinas do aluno: launch ou enrollments".
 
 ## Cadastro: polos, salas e os 2 CSVs
 
@@ -310,9 +338,32 @@ controlado por um flag claro e invertível (`TURMAS_FILTER_ENABLED`, default `tr
 ### O cruzamento é por CÓDIGO + NOME, não por orgUnitId
 
 **O CSV de turmas não traz orgUnitId.** Descobri-lo exigiria consultar o
-Brightspace — a integração adiada. Mas o launch LTI já entrega os dois campos
-necessários: `context.label` (código) e `context.title` (nome). Então o
-cruzamento acontece sem nenhuma chamada de API.
+Brightspace. Mas os dois campos necessários — código e nome — chegam prontos das
+**duas** fontes possíveis: `context.label`/`context.title` no launch LTI, e
+`OrgUnit.Code`/`OrgUnit.Name` nos enrollments da Valence. Por isso
+`filtrarAgendaveis` recebe uma **lista** de turmas e decide cada uma sozinha: uma
+inconclusiva não derruba as outras, e o `motivo` só vai para a tela do aluno
+quando **nada** passou (com uma disciplina liberada, ele agenda).
+
+**⚠️ `context.label` vem VAZIO neste tenant** — observado num launch real em
+04/08/2026. O código chega grudado no fim do `title`:
+
+```
+context: { id: 137677, title: "LABORATÓRIO DE REDES DE COMPUTADORES - GEE11I40254", label: "" }
+```
+
+É o mesmo formato `"NOME - CÓDIGO"` que `normalizarNome` já precisava desmontar.
+Por isso `lerContexto` tenta o `label` e, **só se ele vier vazio**, extrai o
+código do fim do título (`extrairCodigoDoTitulo`, em `turma-match.ts`).
+
+Isso não afrouxa nada: o código extraído ainda precisa existir em
+`TurmaImportada` **e** o nome ainda precisa casar. A extração é conservadora de
+propósito — recusa qualquer trecho final que não pareça código (com espaço, só
+letras, ou só números), porque um falso positivo aqui viraria busca por um código
+inexistente e o aluno perderia a disciplina. Há teste para cada recusa.
+
+Sem isso, **todo launch real** terminava em "o launch não trouxe código de turma
+para procurar", e nenhum aluno conseguia agendar.
 
 **E precisa dos dois.** O mesmo código aparece em mais de uma oferta (semestres,
 turmas diferentes): o código é o primeiro filtro, o **nome é quem decide**. Regra
@@ -329,15 +380,58 @@ abaixo disso, "ADM" casaria com qualquer coisa.
 **O orgUnitId é aprendido de graça.** Todo launch entrega o `context.id` da turma
 de onde o aluno clicou; quando o cruzamento fecha e a linha ainda não tem
 orgUnitId, ele é gravado (nunca sobrescrito). Ao longo do período de agendamento
-a tabela se completa sozinha, e a futura integração chega com o trabalho pronto.
+a tabela se completa sozinha. Com os enrollments ligados o aprendizado acelera:
+cada acesso resolve **todas** as turmas do aluno, não só a que ele clicou.
 
 ## Integração D2L
 
 - **LTI 1.3**: entrada do aluno. ✅ **Implementado e validado contra um launch real.**
-- **Valence API (OAuth 2.0)**: ⬜ **ADIADA (decisão de 03/08/2026).** O sistema
-  hoje só agenda e emite relatório; a liberação de special access nos quizzes
-  fica para uma fase posterior. Não implemente nada de quiz/special access sem
-  o cliente pedir.
+- **Valence API — OAuth + leitura de matrículas**: 🟡 implementado, desligado por
+  padrão (`D2L_HABILITADO=false`). É o que descobre **todas** as disciplinas do
+  aluno no semestre; ver "Disciplinas do aluno" abaixo.
+- **Valence API — special access nos quizzes**: ⬜ **ADIADA (decisão de
+  03/08/2026).** O sistema hoje só agenda e emite relatório; a liberação da prova
+  fica para uma fase posterior. Não implemente nada de quiz/special access sem o
+  cliente pedir.
+
+### Disciplinas do aluno: launch ou enrollments
+
+A fonte é decidida em **um arquivo só** (`disciplinas-do-aluno.service.ts`), e o
+cruzamento com o CSV é o mesmo nos dois casos:
+
+| `D2L_HABILITADO` | De onde vêm as turmas |
+|---|---|
+| `false` (default) | A turma de onde o aluno clicou (claim `context` do LTI) — uma só |
+| `true` | Todas as ofertas dele no período letivo cadastrado, via `enrollments/users/{id}/orgUnits/` |
+
+**O semestre é o que o admin cadastrou**, não "o atual" segundo o relógio:
+`PeriodoAgendamento.periodoLetivoId` é o org unit do Período Letivo (tipo **103**
+neste tenant, não o Semester padrão 5). O filtro é a interseção com
+`orgstructure/{id}/descendants/` — sem ele viriam também os semestres passados.
+Essa árvore fica em cache de 10 min por período: é igual para todos os alunos, e
+virar o semestre já é outra chave.
+
+**Normalize os ids para string.** O `OrgUnit.Id` vem número nos enrollments e
+`Identifier` string nos descendentes; comparar sem normalizar dá interseção vazia
+**sem erro nenhum** (§4.3 da referência). Há teste que trava isso.
+
+**`TURMAS_FILTER_ENABLED=false` ficou muito mais perigoso.** Com a turma clicada,
+desligar o filtro liberava uma disciplina; com os enrollments, libera o semestre
+inteiro do aluno — o CSV de turmas é justamente quem diz quais turmas têm prova.
+O serviço loga um aviso quando as duas coisas estão ligadas ao mesmo tempo.
+
+**De qual vínculo é cada disciplina.** Os enrollments vêm pelo RA, não por curso:
+para quem tem dois vínculos, chegam misturados, e um agendamento cobre as
+disciplinas de **um** vínculo (regra 4 — as durações são diferentes). Quem separa
+é a coluna **Curso** do CSV de turmas, comparada com o curso do vínculo ignorando
+acento e caixa. Detalhes que não são acidentais:
+
+- **Vínculo único não passa pelo filtro.** Não há o que decidir, e filtrar
+  transformaria qualquer divergência de grafia entre os dois CSVs em "você não
+  tem prova".
+- **Disciplina sem curso no CSV** entra pelo caminho do launch (o aluno *clicou*
+  nela) e fica de fora pelos enrollments (ninguém escolheu, e não há nada que a
+  ligue àquele vínculo).
 - Referência completa da API em [`docs/D2L_API_REFERENCE.md`](docs/D2L_API_REFERENCE.md)
   (autenticação, endpoints, armadilhas). O projeto `../lti-spike` tem um launch
   LTI funcionando contra `catolicatest.brightspace.com` — é a fonte de verdade
@@ -369,7 +463,8 @@ src/
   modalidade/  ✅  polo/  ✅  sala/  ✅  faixa/  ✅  sala-faixa/  ✅
   agendamento/ ✅ portal do aluno · alocacao.ts (pura) · disciplinas-do-aluno.service.ts
   periodo/     ✅ CRUD do admin + leitura usada pelo portal
-  d2l/         ⬜ adiado — não criar sem o cliente pedir
+  d2l/         🟡 autorização OAuth + leitura de matrículas (d2l-enrollments).
+               Special access continua adiado — não criar sem pedido.
 
   app.module.ts  app.controller.ts (health)  main.ts
 ```
@@ -426,6 +521,11 @@ npm run lti:keygen           # gera a chave RSA da ferramenta (LTI_TOOL_PRIVATE_
 
 # token de aluno para testar o portal sem o Brightspace (recusa em producao)
 npm run token:aluno -- <RA> [orgUnitId] [titulo da turma]
+
+# access token da Valence a partir do refresh gravado (recusa em producao).
+# Usa o D2lOauthService, entao a ROTACAO do refresh e persistida — nunca fale
+# com o token endpoint por fora, ou o refresh do banco vira lixo.
+npm run d2l:token
 
 # dev / qualidade
 npm run start:dev            # doc em http://localhost:3000/api/docs
@@ -536,7 +636,7 @@ alocador precisam ver o mesmo número, senão um dos dois está mentindo.
 |---|---|
 | STATUS CURSO bloqueia (Cancelado, Trancado…) | 403 com o status citado |
 | Período fechado / ainda não abriu / não configurado | 403 com o motivo exato |
-| Nenhuma disciplina com prova | 403 |
+| Nenhuma disciplina com prova | 403 com o motivo do cruzamento (turma divergente, semestre sem disciplina, nada do curso escolhido) |
 | Faixa de outro polo | 403 |
 | Faixa inativa ou com data passada | 409 |
 | Já tem prova marcada para o vínculo | 409 |
@@ -544,9 +644,10 @@ alocador precisam ver o mesmo número, senão um dos dois está mentindo.
 | `alunoId` que não está no token | 403 + auditoria |
 
 **Fonte das disciplinas é uma costura de um arquivo só**
-(`disciplinas-do-aluno.service.ts`). Hoje: a turma de onde o aluno clicou (claim
-`context` do LTI, que agora vai no JWT). Na etapa 7 vira o enrollments da Valence
-— nada mais muda.
+(`disciplinas-do-aluno.service.ts`): a turma clicada (claim `context`, que vai no
+JWT) ou os enrollments da Valence, conforme `D2L_HABILITADO`. A regra completa —
+período letivo, atribuição por curso, armadilhas — está em "Disciplinas do aluno:
+launch ou enrollments", na seção de integração D2L.
 
 **A fila do D2L nasce na mesma transação** do agendamento: um agendamento gravado
 sem sua fila seria prova marcada que nunca é liberada no Brightspace, e ninguém
@@ -588,8 +689,11 @@ assinatura do Brightspace. **Recusa rodar com `NODE_ENV=production`.**
 5. ✅ Portal do aluno (listar faixas + agendar com alocação sequencial).
 6. ✅ Período de agendamento + relatório (consulta, ocupação por sala, CSV).
 7. ✅ Remanejo administrativo + cancelamento/troca pelo aluno.
-8. ⬜ Integração D2L (Valence + special access) — **adiada pelo cliente.**
+8. 🟡 Valence: OAuth + enrollments (todas as disciplinas do semestre) prontos e
+   desligados por padrão. Special access no quiz — **adiado pelo cliente.**
 
-**Bloqueios externos:** o CSV real de turmas não chegou (mapeamento provisório).
-As credenciais da Valence não existem, mas isso deixou de ser bloqueio: a
-integração foi adiada pelo cliente.
+**Bloqueios externos:** nenhum aberto. O CSV real de turmas chegou em 04/08/2026
+e confirmou o mapeamento (`Curso;Código da Turma;Disciplina / Código EAD`, `;`,
+UTF-8, nome e código EAD na mesma célula) — é ele quem diz **quais turmas têm
+prova**, e a coluna Curso é o que separa as disciplinas por vínculo. O special
+access continua adiado pelo cliente.

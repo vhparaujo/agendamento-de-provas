@@ -146,17 +146,29 @@ export class AgendamentoService {
     alunoId?: number,
   ): Promise<DisciplinasDoVinculo> {
     const vinculo = await this.exigirVinculo(aluno, alunoId);
-    const disciplinas = await this.disciplinasDoAluno.agendaveis(aluno);
+
+    const { agendaveis, motivo } = await this.disciplinasDoAluno.cruzar(
+      aluno,
+      vinculo,
+    );
 
     return {
       alunoId: vinculo.id,
       curso: vinculo.curso,
-      disciplinas,
-      podeAgendar: vinculo.ativo && disciplinas.length > 0,
+      // So o que o aluno precisa ver: `curso` e interno, usado para separar as
+      // disciplinas por vinculo, e repeti-lo em cada linha seria ruido.
+      disciplinas: agendaveis.map((d) => ({
+        orgUnitId: d.orgUnitId,
+        nomeDisciplina: d.nomeDisciplina,
+      })),
+      podeAgendar: vinculo.ativo && agendaveis.length > 0,
       motivo: !vinculo.ativo
         ? motivoStatus(vinculo.curso, vinculo.statusCurso)
-        : disciplinas.length === 0
-          ? SEM_DISCIPLINA
+        : agendaveis.length === 0
+          ? // O motivo especifico (turma divergente, semestre sem disciplina,
+            // curso que nao bate) diz mais que a frase generica. Ela fica de
+            // reserva para quando o cruzamento nao souber explicar.
+            (motivo ?? SEM_DISCIPLINA)
           : undefined,
     };
   }
@@ -192,10 +204,14 @@ export class AgendamentoService {
 
     const periodo = await this.periodo.exigirAberto();
 
-    const disciplinas = await this.disciplinasDoAluno.agendaveis(aluno);
+    const cruzamento = await this.disciplinasDoAluno.cruzar(aluno, vinculo);
+    const disciplinas = cruzamento.agendaveis;
 
     if (disciplinas.length === 0) {
-      recusar(SEM_DISCIPLINA, 'nenhuma disciplina agendavel');
+      recusar(
+        cruzamento.motivo ?? SEM_DISCIPLINA,
+        'nenhuma disciplina agendavel',
+      );
     }
 
     const faixa = await this.exigirFaixaValida(dados.faixaId, vinculo, recusar);

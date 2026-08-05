@@ -1,6 +1,7 @@
 import {
   compararNomes,
   escolherTurma,
+  extrairCodigoDoTitulo,
   normalizarCodigo,
   normalizarNome,
   TIPO_MATCH,
@@ -19,6 +20,7 @@ const turma = (
   nomeDisciplina,
   codigoEad,
   orgUnitId: null,
+  curso: null,
 });
 
 const HISTORIA = turma(
@@ -212,6 +214,58 @@ describe('escolherTurma', () => {
       ]);
 
       expect(r.situacao).toBe('AMBIGUA');
+    });
+  });
+
+  /**
+   * O tenant da UCB manda `context.label` VAZIO e o codigo grudado no fim do
+   * titulo. Sem extrair dali, todo launch real termina em "o launch nao trouxe
+   * codigo de turma para procurar" — foi o que aconteceu em 04/08/2026.
+   */
+  describe('extrairCodigoDoTitulo', () => {
+    it('extrai o codigo do fim do titulo (formato real do Brightspace)', () => {
+      expect(
+        extrairCodigoDoTitulo(
+          'LABORATÓRIO DE REDES DE COMPUTADORES - GEE11I40254',
+        ),
+      ).toBe('GEE11I40254');
+    });
+
+    it('usa o ULTIMO trecho quando o nome tem hifen no meio', () => {
+      expect(
+        extrairCodigoDoTitulo('TEORIA E PRATICA - ESTAGIO - GSPS0I10227'),
+      ).toBe('GSPS0I10227');
+    });
+
+    it('sobe para maiusculas', () => {
+      expect(extrairCodigoDoTitulo('REDES - gee11i40254')).toBe('GEE11I40254');
+    });
+
+    // As recusas importam mais que os acertos: um falso positivo aqui viraria
+    // busca por um codigo que nao existe, e o aluno perderia a disciplina.
+    it('recusa trecho com espaco ("TURMA A" nao e codigo)', () => {
+      expect(extrairCodigoDoTitulo('MATEMATICA - TURMA A')).toBeNull();
+    });
+
+    it('recusa trecho so de numeros', () => {
+      expect(extrairCodigoDoTitulo('QUIMICA GERAL - 2')).toBeNull();
+    });
+
+    it('recusa trecho so de letras', () => {
+      expect(extrairCodigoDoTitulo('HISTORIA - NOTURNO')).toBeNull();
+    });
+
+    it('recusa titulo sem separador', () => {
+      expect(extrairCodigoDoTitulo('HISTORIA DO BRASIL')).toBeNull();
+    });
+
+    it('recusa hifen sem espacos (faz parte do nome)', () => {
+      expect(extrairCodigoDoTitulo('LUSO-BRASILEIRA 2')).toBeNull();
+    });
+
+    it('tolera nulo e vazio', () => {
+      expect(extrairCodigoDoTitulo(null)).toBeNull();
+      expect(extrairCodigoDoTitulo('')).toBeNull();
     });
   });
 });

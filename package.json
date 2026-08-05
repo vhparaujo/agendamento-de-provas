@@ -27,7 +27,8 @@
     "db:down": "docker compose down",
     "db:reset": "prisma migrate reset",
     "lti:keygen": "tsx scripts/gerar-chave-lti.ts",
-    "token:aluno": "tsx scripts/token-aluno.ts"
+    "token:aluno": "tsx scripts/token-aluno.ts",
+    "d2l:token": "tsx scripts/d2l-token.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
