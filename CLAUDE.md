@@ -323,7 +323,9 @@ Importação **idempotente**: upsert por `[matricula, curso]` (alunos) e `orgUni
 - `GET /api/importacao` — histórico de auditoria
 
 **Linha rejeitada não interrompe a importação.** O resto entra e a resposta traz
-`rejeitadas[]` (nº da linha, RA, motivo), `statusDesconhecidos[]` e
+`rejeitadas[]` (nº da linha, RA, **nome, curso, campus** e motivo — quem corrige
+a planilha procura pelo aluno, e a linha rejeitada pode ser justamente a do RA
+vazio; o front lista tudo e exporta em CSV), `statusDesconhecidos[]` e
 `polosNaoEncontrados[]`. Nada é descartado em silêncio — mas nada é inventado
 também: sem CAMPUS não há como definir o polo, e polo é obrigatório para alocar
 sala. O admin corrige a planilha e reenvia.

@@ -12,8 +12,24 @@ export class LinhaRejeitadaDto implements LinhaRejeitada {
   })
   linha!: number;
 
-  @ApiProperty({ example: 'A06103080' })
+  @ApiProperty({
+    example: 'A06103080',
+    description: 'RA da linha. Vazio quando o proprio RA foi o motivo.',
+  })
   matricula!: string;
+
+  @ApiProperty({
+    example: 'MARIA DE SOUZA',
+    description:
+      'Coluna ALUNO, como veio no arquivo. Serve para achar a linha na planilha.',
+  })
+  nome!: string;
+
+  @ApiProperty({ example: 'ADMINISTRACAO', description: 'Coluna CURSO.' })
+  curso!: string;
+
+  @ApiProperty({ example: 'Campus Ceilandia', description: 'Coluna CAMPUS.' })
+  campus!: string;
 
   @ApiProperty({
     example: 'CAMPUS "Polo Inexistente" nao casou com nenhum polo',

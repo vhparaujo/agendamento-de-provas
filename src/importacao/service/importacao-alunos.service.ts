@@ -20,6 +20,14 @@ export const ALUNO_CSV_COLUNAS = {
 export interface LinhaRejeitada {
   linha: number; // numero da linha no arquivo (1 = primeira apos o cabecalho)
   matricula: string;
+  /**
+   * Nome, curso e campus vao junto do RA porque quem corrige a planilha procura
+   * pelo aluno, nao pelo numero da linha — e a linha rejeitada pode ser
+   * justamente a que esta com o RA vazio.
+   */
+  nome: string;
+  curso: string;
+  campus: string;
   motivo: string;
 }
 
@@ -158,6 +166,7 @@ export class ImportacaoAlunosService {
     },
   ) {
     const matricula = coluna(linha, ALUNO_CSV_COLUNAS.matricula).toUpperCase();
+    const nome = coluna(linha, ALUNO_CSV_COLUNAS.nome);
     const curso = coluna(linha, ALUNO_CSV_COLUNAS.curso);
     const campus = coluna(linha, ALUNO_CSV_COLUNAS.polo);
     const status = coluna(linha, ALUNO_CSV_COLUNAS.status);
@@ -165,7 +174,7 @@ export class ImportacaoAlunosService {
     const rejeitar = (motivo: string, campusNaoEncontrado?: string) =>
       ({
         tipo: 'rejeitada' as const,
-        rejeicao: { linha: numero, matricula, motivo },
+        rejeicao: { linha: numero, matricula, nome, curso, campus, motivo },
         campusNaoEncontrado,
       }) as const;
 
