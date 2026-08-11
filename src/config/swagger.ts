@@ -20,6 +20,8 @@ export const TAGS = {
   AUTH_ALUNO: 'Autenticacao — Aluno (LTI 1.3)',
   ADMINS: 'Administradores',
   IMPORTACAO: 'Importacao de CSV',
+  ALUNOS: 'Alunos importados (admin)',
+  TURMAS: 'Turmas e disciplinas importadas (admin)',
   MODALIDADES: 'Modalidades',
   POLOS: 'Polos',
   SALAS: 'Salas',
@@ -105,6 +107,15 @@ export function construirDocumento(app: INestApplication): OpenAPIObject {
     .addTag(
       TAGS.IMPORTACAO,
       'Upload dos CSVs de alunos e de turmas reais, com auditoria',
+    )
+    .addTag(
+      TAGS.ALUNOS,
+      'Consulta dos vinculos (aluno + curso) que vieram dos CSVs — busca, ' +
+        'filtros e situacao de agendamento de cada um',
+    )
+    .addTag(
+      TAGS.TURMAS,
+      'Consulta das turmas/disciplinas do CSV — o catalogo do que tem prova',
     )
     .addTag(TAGS.MODALIDADES, 'Modalidades e a duracao de prova de cada uma')
     .addTag(TAGS.POLOS, 'Unidades fisicas (populadas por seed a partir do CSV)')

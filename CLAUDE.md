@@ -264,6 +264,8 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `POST /lti/sessao` | — | Troca o `code` do redirect pelo token do aluno (ver abaixo) |
 | `GET/POST /admins` · `POST /admins/:id/resetar-senha` · `PATCH /admins/:id/ativo` | admin | Gestão de administradores |
 | `POST /importacao/alunos` · `/importacao/turmas` · `GET /importacao` | admin | CSVs + auditoria |
+| `GET /alunos` · `/alunos/cursos` · `/alunos/:id` | admin | Pesquisa os vínculos importados (só leitura) |
+| `GET /turmas` · `/turmas/:id` | admin | Pesquisa as turmas/disciplinas do CSV (só leitura) |
 | `GET /modalidades` · `GET/POST/PATCH /polos` · `/salas` · `/faixas` · `/sala-faixas` | admin | Estrutura física e oferta de vagas |
 | `GET /portal/periodo` · `/portal/disciplinas` · `/portal/faixas` | aluno | O que ele pode escolher |
 | `GET/POST /portal/agendamentos` | aluno | Confirmar a prova e consultar o que já marcou |
@@ -322,6 +324,32 @@ nunca duplica.
   (`EAD|SEMI|MODULAR|PRESENCIAL`, o dropdown da aba de origem)
 - `POST /api/importacao/turmas` — multipart: `arquivo`
 - `GET /api/importacao` — histórico de auditoria
+
+**Consultar o que entrou** (também só com JWT de admin):
+
+- `GET /api/alunos` — pesquisa os **vínculos** (aluno + curso), paginada.
+  `busca` casa com matrícula, nome, e-mail **ou** curso ao mesmo tempo; filtros
+  por `poloId`, `modalidadeId`, `curso`, `ativo`, `importacaoId` e `agendado`.
+- `GET /api/alunos/cursos` · `GET /api/alunos/:id` — dropdown do filtro e a tela
+  de atendimento (origem do registro, **outros vínculos do mesmo RA** e as provas
+  marcadas, canceladas inclusive).
+- `GET /api/turmas` · `GET /api/turmas/:id` — o catálogo do que tem prova.
+  `busca` casa com código da turma, nome da disciplina, código EAD ou
+  `orgUnitId`; `comOrgUnitId=false` isola o que nenhum launch alcançou ainda.
+
+**São só leitura, de propósito.** A planilha é a fonte de verdade: um aluno
+editado ou criado pela API seria sobrescrito/ignorado no próximo upload sem
+ninguém perceber. Correção se faz no CSV e reimporta — que é idempotente.
+
+**Os filtros são lidos à mão, sem DTO** (como no relatório de agendamentos): com
+`forbidNonWhitelisted`, um parâmetro a mais na URL derrubaria a requisição, e URL
+de busca é coisa que se cola, edita e compartilha.
+
+Dois detalhes que a tela não deve traduzir errado: `ativo` significa **pode
+agendar** (derivado de `statusCurso`, não igual a `STATUS CURSO == "Ativo"`), e
+`totalAgendamentos` de uma turma vem **null, não zero**, enquanto o `orgUnitId`
+não tiver sido aprendido — sem ele não há como contar, e "0" faria parecer que
+ninguém marcou.
 
 **Linha rejeitada não interrompe a importação.** O resto entra e a resposta traz
 `rejeitadas[]` (nº da linha, RA, **nome, curso, campus** e motivo — quem corrige
@@ -506,7 +534,9 @@ Modular por domínio. Cada módulo segue subpastas:
 ```
 src/
   auth/        ✅ controller/ dto/ jwt/ lti/ service/ module/ roles.decorator.ts
-  admin/       ✅   aluno/  ✅   importacao/ ✅ (2 CSVs)   turma/ ✅ (filtro por id)
+  admin/       ✅   importacao/ ✅ (2 CSVs)
+  aluno/       ✅ vínculos do launch (aluno.service) + consulta do admin (aluno-admin)
+  turma/       ✅ filtro do que tem prova (turma.service) + consulta do admin (turma-admin)
   config/      ✅ env.validation.ts · swagger.ts · helmet.config.ts · throttler.config.ts
   seguranca/   ✅ auditoria (log de eventos) · filtro global de excecoes
   database/    ✅ prisma.service.ts · mariadb-adapter.ts · prisma.module.ts

@@ -307,6 +307,38 @@ limite de 15 MB, extensão `.csv` obrigatória.
 | `POST` | `/importacao/turmas` | CSV de turmas reais |
 | `GET` | `/importacao` | Histórico de importações (auditoria) |
 
+### Consulta do que foi importado
+
+Todas exigem JWT de admin e são **somente leitura**: a planilha é a fonte de
+verdade, e um ajuste feito por aqui seria desfeito no próximo upload sem ninguém
+perceber. Para corrigir um registro, corrige-se o CSV e reimporta.
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `GET` | `/alunos` | Pesquisa os vínculos importados — paginada |
+| `GET` | `/alunos/cursos` | Cursos distintos, para o dropdown do filtro |
+| `GET` | `/alunos/:id` | O vínculo: origem, outros vínculos do mesmo RA e provas marcadas |
+| `GET` | `/turmas` | Pesquisa as turmas/disciplinas do CSV — paginada |
+| `GET` | `/turmas/:id` | A turma: origem e quantos agendamentos a cobrem |
+
+**Cada item de `/alunos` é um vínculo (aluno + curso), não um aluno.** O mesmo RA
+em dois cursos aparece como duas linhas, com modalidades possivelmente diferentes
+e um agendamento para cada.
+
+`busca` é um campo só e casa com vários ao mesmo tempo — matrícula, nome, e-mail
+ou curso em `/alunos`; código da turma, nome da disciplina, código EAD ou
+`orgUnitId` em `/turmas`. Quem atende no balcão nem sempre sabe qual dado a
+pessoa tem em mãos.
+
+Filtros úteis: `agendado=false` (quem ainda **não** marcou prova — a lista de
+quem precisa ser cobrado), `ativo=false` (quem está na base mas o STATUS CURSO
+bloqueia), `importacaoId` (o que veio de um upload específico) e
+`comOrgUnitId=false` (turmas que nenhum launch alcançou ainda).
+
+Parâmetro desconhecido na URL **não derruba a requisição** aqui: os filtros são
+lidos à mão, sem DTO, porque URL de busca é coisa que se cola, edita e
+compartilha.
+
 ### Estrutura física e oferta de vagas
 
 Todas exigem JWT de admin. A oferta (`SalaFaixa`) nunca nasce solta: ela é criada
