@@ -1,6 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import type {
+  AlteracaoComAgendamento,
   LinhaRejeitada,
+  Mudanca,
   ResultadoImportacaoAlunos,
 } from '../service/importacao-alunos.service';
 import type { ResultadoImportacaoTurmas } from '../service/importacao-turmas.service';
@@ -61,9 +63,66 @@ export class PoloNaoEncontradoDto {
   ocorrencias!: number;
 }
 
+export class MudancaDto implements Mudanca {
+  @ApiProperty({ example: 'EaD', description: 'Valor anterior.' })
+  de!: string;
+
+  @ApiProperty({ example: 'Modular', description: 'Valor gravado agora.' })
+  para!: string;
+}
+
+/**
+ * Um vinculo que JA TINHA PROVA MARCADA e mudou de modalidade ou de polo.
+ *
+ * A reserva continua apontando para a sala antiga — prova de outra duracao, ou
+ * em outro campus — e nada mais no sistema reclama. O aviso existe porque o
+ * sintoma so aparece dias depois e disfarcado: o remanejo passa a ser recusado
+ * com "esta sala nao e da modalidade do aluno".
+ */
+export class AlteracaoComAgendamentoDto implements AlteracaoComAgendamento {
+  @ApiProperty({
+    example: 128,
+    description: 'Numero da linha no arquivo (1 = primeira apos o cabecalho).',
+  })
+  linha!: number;
+
+  @ApiProperty({ example: 'UC24424289' })
+  matricula!: string;
+
+  @ApiProperty({ example: 'MONICA RIBEIRO MARQUES' })
+  nome!: string;
+
+  @ApiProperty({ example: 'PEDAGOGIA' })
+  curso!: string;
+
+  @ApiPropertyOptional({
+    type: MudancaDto,
+    description:
+      'Presente so quando a modalidade mudou. A prova marcada passa a ter outra ' +
+      'duracao que a da sala em que o aluno esta alocado.',
+  })
+  modalidade?: MudancaDto;
+
+  @ApiPropertyOptional({
+    type: MudancaDto,
+    description:
+      'Presente so quando o polo mudou. A prova marcada continua no campus anterior.',
+  })
+  polo?: MudancaDto;
+
+  @ApiProperty({
+    example: 1,
+    description:
+      'Reservas confirmadas do vinculo. Conta so o semestre vigente quando ha ' +
+      'periodo cadastrado — prova de semestre passado ja aconteceu.',
+  })
+  agendamentosConfirmados!: number;
+}
+
 /**
  * Alem dos numeros, a resposta destaca tudo que precisa de decisao humana:
- * linhas rejeitadas, status nunca vistos e polos que nao casaram.
+ * linhas rejeitadas, status nunca vistos, polos que nao casaram e trocas que
+ * mexeram em quem ja tem prova marcada.
  */
 export class ResultadoImportacaoAlunosDto implements ResultadoImportacaoAlunos {
   @ApiProperty({ example: 7, description: 'Id do registro de auditoria.' })
@@ -107,6 +166,16 @@ export class ResultadoImportacaoAlunosDto implements ResultadoImportacaoAlunos {
 
   @ApiProperty({ type: [PoloNaoEncontradoDto] })
   polosNaoEncontrados!: PoloNaoEncontradoDto[];
+
+  @ApiProperty({
+    type: [AlteracaoComAgendamentoDto],
+    description:
+      'Vinculos COM PROVA MARCADA cuja modalidade ou polo mudaram nesta ' +
+      'importacao. Nao bloqueia o upload — a planilha e a fonte de verdade e ' +
+      'pode estar corrigindo um cadastro errado —, mas cada linha aqui pede ' +
+      'decisao: remanejar a reserva ou cancela-la.',
+  })
+  alteracoesComAgendamento!: AlteracaoComAgendamentoDto[];
 }
 
 export class TurmaRejeitadaDto {

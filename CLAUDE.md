@@ -304,13 +304,22 @@ como opção alternativa secundária; o padrão é manual.
 
   | Permitem agendar | Bloqueiam |
   |---|---|
-  | Ativo · Transf. Interna · Transf. de Curriculo · Alter. de Habilitação | Desistente · Trancado · Cancelado · Formado |
+  | Ativo | Desistente · Trancado · Cancelado · Formado · Transf. Interna · Transf. de Curriculo · Alter. de Habilitação |
 
-  **Racional (31/07/2026):** situações de *transição* (transferência, mudança de
-  habilitação) mantêm o aluno apto; só estados *terminais* barram.
+  **Regra vigente (11/08/2026): só "Ativo" agenda.** Isto **reverte** a decisão
+  de 31/07/2026, que tratava as situações de transição como aptas. As grafias de
+  transição continuam listadas (do lado que bloqueia) de propósito: são valores
+  reais dos arquivos, e sinalizá-las como "desconhecidas" pediria a cada
+  importação uma decisão que já foi tomada.
   Status fora das duas listas **bloqueia** e é reportado na importação, para que
   alguém decida em qual lista ele entra. A comparação ignora acento e caixa.
-  Como `statusCurso` fica gravado cru, mudar a regra não exige reimportar os CSVs.
+
+  ⚠️ **Mudar a lista não reclassifica quem já está no banco.** `ativo` é derivado
+  na importação e **gravado**, e é a coluna que o agendamento consulta
+  (`exigirVinculo`). Como `statusCurso` fica cru, dá para reclassificar sem
+  reimportar: `npm run alunos:recalcular` (simula; `-- --gravar` aplica). Ele
+  também aponta quem perde a elegibilidade **com prova já marcada** — e não
+  cancela nada, porque cancelar em massa é decisão de negócio.
 - **CURSO**: puramente informativo, exibido para o aluno. Não entra em filtro/alocação.
 - **CAMPUS→polo**: casa com `Polo.nome` por string exata (mesma origem do seed).
 
@@ -358,6 +367,25 @@ vazio; o front lista tudo e exporta em CSV), `statusDesconhecidos[]` e
 `polosNaoEncontrados[]`. Nada é descartado em silêncio — mas nada é inventado
 também: sem CAMPUS não há como definir o polo, e polo é obrigatório para alocar
 sala. O admin corrige a planilha e reenvia.
+
+**A importação nunca apaga.** Quem não está no arquivo não é tocado — para
+incluir uma pessoa, basta um CSV com a linha dela.
+
+⚠️ **`alteracoesComAgendamento[]`: troca de modalidade ou polo em quem já tem
+prova marcada.** São os dois campos que a importação muda **por baixo de uma
+reserva confirmada** sem que nada mais reclame — a modalidade vem do dropdown e
+sobrescreve todas as linhas do arquivo; o polo segue a coluna CAMPUS. A reserva
+continua na sala antiga (outra duração, ou outro campus), e o sintoma aparece
+depois e disfarçado: **o remanejo passa a ser recusado** com "esta sala não é da
+modalidade do aluno". Por isso a importação passou a reportar essas linhas
+(`importacao-alunos.service.ts` → `avisarSeMexeEmProvaMarcada`), com `de`/`para`
+em nomes, e a logar em WARN.
+
+Duas escolhas conscientes ali: **avisa e não bloqueia** (a planilha é a fonte de
+verdade e pode estar corrigindo um cadastro errado — quem decide entre remanejar
+e cancelar é a secretaria), e conta **só o semestre vigente** (prova de semestre
+passado já aconteceu; avisar sobre ela seria o ruído que ensina o time a ignorar
+o aviso).
 
 **Encoding é detectado, não presumido**: latin1 (arquivos atuais) ou UTF-8/BOM
 (se a planilha for reexportada). Ler errado quebraria o casamento do polo por nome.
@@ -605,6 +633,11 @@ npm run lti:keygen           # gera a chave RSA da ferramenta (LTI_TOOL_PRIVATE_
 
 # token de aluno para testar o portal sem o Brightspace (recusa em producao)
 npm run token:aluno -- <RA> [orgUnitId]
+
+# reclassifica `ativo` a partir do statusCurso gravado — rode depois de mexer
+# em status-curso.enum.ts. Sem `--gravar` e simulacao.
+npm run alunos:recalcular
+npm run alunos:recalcular -- --gravar
 
 # access token da Valence a partir do refresh gravado (recusa em producao).
 # Usa o D2lOauthService, entao a ROTACAO do refresh e persistida — nunca fale

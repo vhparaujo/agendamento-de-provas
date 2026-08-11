@@ -80,7 +80,15 @@ export class ImportacaoController {
       '**CAMPUS** (CENTRO DE CUSTO e ignorada). Um registro por **vinculo** (RA + curso): um mesmo RA ' +
       'em dois cursos gera duas linhas.\n\n' +
       'Idempotente — upsert por `matricula + curso`. CAMPUS casa com `Polo.nome` por string exata; ' +
-      'valores sem correspondencia sao reportados em `polosNaoEncontrados` em vez de derrubar a carga.',
+      'valores sem correspondencia sao reportados em `polosNaoEncontrados` em vez de derrubar a carga.\n\n' +
+      '**Nada e apagado**: quem nao esta no arquivo nao e tocado. Para incluir uma pessoa, ' +
+      'basta um CSV com a linha dela.\n\n' +
+      '⚠️ A modalidade vem do dropdown e sobrescreve a de TODAS as linhas do arquivo, e o polo ' +
+      'segue a coluna CAMPUS. Quando uma dessas duas muda em quem **ja tem prova marcada**, a ' +
+      'reserva continua na sala antiga (outra duracao, ou outro campus) e nada mais reclama — ' +
+      'por isso essas linhas saem em `alteracoesComAgendamento`. O upload nao e bloqueado: a ' +
+      'planilha pode estar corrigindo um cadastro errado, e quem decide entre remanejar e ' +
+      'cancelar e a secretaria.',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({

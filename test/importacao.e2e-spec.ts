@@ -200,6 +200,234 @@ describe('Importacao de CSVs (e2e)', () => {
     });
   });
 
+  /**
+   * O aviso de troca com prova marcada.
+   *
+   * Modalidade e polo sao os dois campos que a importacao troca POR BAIXO de uma
+   * reserva confirmada sem que nada mais reclame — a reserva continua na sala
+   * antiga, com outra duracao ou em outro campus. Aqui se prova que a
+   * importacao passou a dizer isso em voz alta, e que nao grita a toa.
+   */
+  describe('aviso: troca de modalidade/polo em quem ja tem prova marcada', () => {
+    const RA = 'E2EAVISO01';
+    const RA_SEM_PROVA = 'E2EAVISO02';
+    const CURSO = 'CURSO E2E AVISO';
+    const POLO_A = 'Polo E2E Aviso A';
+    const POLO_B = 'Polo E2E Aviso B';
+    const PERIODO_VIGENTE = 'E2E-AVISO-VIGENTE';
+    const PERIODO_ANTIGO = 'E2E-AVISO-ANTIGO';
+
+    let poloAId: number;
+    let alunoId: number;
+    let salaFaixaId: number;
+    // Nomes de exibicao vindos do seed ("EaD", "Modular / Hibrido") — o aviso
+    // fala em nomes, nao em ids, entao o teste tambem.
+    let nomeEad: string;
+    let nomeModular: string;
+
+    const csv = (campus: string) =>
+      [
+        'RA;ALUNO;EMAIL INSTITUCIONAL;CURSO;STATUS CURSO;CAMPUS',
+        `${RA};ALUNO COM PROVA;;${CURSO};Ativo;${campus}`,
+        `${RA_SEM_PROVA};ALUNO SEM PROVA;;${CURSO};Ativo;${campus}`,
+      ].join('\r\n');
+
+    const subir = (campus: string, modalidade: string) =>
+      request(app.getHttpServer())
+        .post('/api/importacao/alunos')
+        .set('Authorization', `Bearer ${token}`)
+        .field('modalidade', modalidade)
+        .attach('arquivo', Buffer.from(csv(campus), 'utf8'), 'alunos-e2e.csv');
+
+    async function limpar() {
+      await prisma.agendamento.deleteMany({
+        where: { matricula: { in: [RA, RA_SEM_PROVA] } },
+      });
+
+      for (const nome of [POLO_A, POLO_B]) {
+        const polo = await prisma.polo.findUnique({ where: { nome } });
+
+        if (!polo) continue;
+
+        await prisma.salaFaixa.deleteMany({
+          where: { faixa: { poloId: polo.id } },
+        });
+        await prisma.faixa.deleteMany({ where: { poloId: polo.id } });
+        await prisma.sala.deleteMany({ where: { poloId: polo.id } });
+        await prisma.alunoImportado.deleteMany({ where: { poloId: polo.id } });
+        await prisma.polo.delete({ where: { id: polo.id } });
+      }
+
+      await prisma.periodoAgendamento.deleteMany({
+        where: { periodoLetivoId: { in: [PERIODO_VIGENTE, PERIODO_ANTIGO] } },
+      });
+    }
+
+    beforeAll(async () => {
+      await limpar();
+
+      poloAId = (await prisma.polo.create({ data: { nome: POLO_A } })).id;
+      await prisma.polo.create({ data: { nome: POLO_B } });
+
+      const ead = await prisma.modalidade.findUniqueOrThrow({
+        where: { codigo: 'EAD' },
+      });
+
+      nomeEad = ead.nome;
+      nomeModular = (
+        await prisma.modalidade.findUniqueOrThrow({
+          where: { codigo: 'MODULAR' },
+        })
+      ).nome;
+
+      const sala = await prisma.sala.create({
+        data: { poloId: poloAId, nome: 'AVISO-101', capacidade: 5 },
+      });
+
+      const faixa = await prisma.faixa.create({
+        data: {
+          poloId: poloAId,
+          data: new Date('2026-12-10T00:00:00.000Z'),
+          horaInicio: '08:30',
+          horaFim: '11:30',
+          salaFaixas: {
+            create: {
+              salaId: sala.id,
+              modalidadeId: ead.id,
+              vagas: 5,
+              ordem: 1,
+            },
+          },
+        },
+        include: { salaFaixas: true },
+      });
+
+      salaFaixaId = faixa.salaFaixas[0].id;
+
+      // O vigente e o cadastrado mais recentemente — por isso este vem por ultimo.
+      await prisma.periodoAgendamento.create({
+        data: {
+          periodoLetivoId: PERIODO_ANTIGO,
+          dataFechamento: new Date('2026-01-31T23:59:00.000Z'),
+        },
+      });
+      await prisma.periodoAgendamento.create({
+        data: {
+          periodoLetivoId: PERIODO_VIGENTE,
+          aberto: true,
+          dataFechamento: new Date('2026-12-01T23:59:00.000Z'),
+        },
+      });
+
+      // Carga inicial: os dois alunos entram como EaD no polo A.
+      const primeira = await subir(POLO_A, 'EAD').expect(201);
+
+      expect(primeira.body.criados).toBe(2);
+      expect(primeira.body.alteracoesComAgendamento).toEqual([]);
+
+      alunoId = (
+        await prisma.alunoImportado.findFirstOrThrow({
+          where: { matricula: RA },
+        })
+      ).id;
+
+      // So o primeiro aluno marca prova.
+      await prisma.agendamento.create({
+        data: {
+          alunoId,
+          salaFaixaId,
+          matricula: RA,
+          userIdD2L: '77777',
+          periodoLetivoId: PERIODO_VIGENTE,
+        },
+      });
+    }, 60_000);
+
+    afterAll(limpar);
+
+    it('reimportar identico nao gera aviso nenhum', async () => {
+      const res = await subir(POLO_A, 'EAD').expect(201);
+
+      expect(res.body.atualizados).toBe(2);
+      expect(res.body.alteracoesComAgendamento).toEqual([]);
+    });
+
+    it('avisa quando a MODALIDADE muda em quem tem prova marcada', async () => {
+      const res = await subir(POLO_A, 'MODULAR').expect(201);
+
+      // O aluno sem prova mudou igual, e NAO entra no aviso: nao ha reserva
+      // para ficar inconsistente.
+      expect(res.body.alteracoesComAgendamento).toHaveLength(1);
+
+      const aviso = res.body.alteracoesComAgendamento[0];
+
+      expect(aviso).toMatchObject({
+        matricula: RA,
+        curso: CURSO,
+        agendamentosConfirmados: 1,
+        modalidade: { de: nomeEad, para: nomeModular },
+      });
+      // so a modalidade mudou
+      expect(aviso.polo).toBeUndefined();
+
+      // Avisa, mas NAO bloqueia: a gravacao acontece.
+      const depois = await prisma.alunoImportado.findFirstOrThrow({
+        where: { matricula: RA },
+        include: { modalidade: true },
+      });
+      expect(depois.modalidade.codigo).toBe('MODULAR');
+    });
+
+    it('avisa quando o POLO muda, e reporta as duas trocas juntas', async () => {
+      const res = await subir(POLO_B, 'EAD').expect(201);
+
+      const aviso = res.body.alteracoesComAgendamento[0];
+
+      expect(res.body.alteracoesComAgendamento).toHaveLength(1);
+      expect(aviso).toMatchObject({
+        matricula: RA,
+        polo: { de: POLO_A, para: POLO_B },
+        // desfazendo a troca do teste anterior
+        modalidade: { de: nomeModular, para: nomeEad },
+        agendamentosConfirmados: 1,
+      });
+    });
+
+    it('prova de semestre passado nao vira ruido', async () => {
+      // A reserva do semestre anterior ja aconteceu: avisar sobre ela ensinaria
+      // o time a ignorar o aviso.
+      await prisma.agendamento.updateMany({
+        where: { matricula: RA },
+        data: { periodoLetivoId: PERIODO_ANTIGO },
+      });
+
+      const res = await subir(POLO_A, 'MODULAR').expect(201);
+
+      expect(res.body.alteracoesComAgendamento).toEqual([]);
+
+      await prisma.agendamento.updateMany({
+        where: { matricula: RA },
+        data: { periodoLetivoId: PERIODO_VIGENTE },
+      });
+    });
+
+    it('reserva CANCELADA tambem nao gera aviso', async () => {
+      await prisma.agendamento.updateMany({
+        where: { matricula: RA },
+        data: { status: 'CANCELADO' },
+      });
+
+      const res = await subir(POLO_A, 'EAD').expect(201);
+
+      expect(res.body.alteracoesComAgendamento).toEqual([]);
+
+      await prisma.agendamento.updateMany({
+        where: { matricula: RA },
+        data: { status: 'CONFIRMADO' },
+      });
+    });
+  });
+
   seTemCsvReais('com os 3 CSVs reais de alunos', () => {
     const resumo: Record<string, any> = {};
 
@@ -244,22 +472,33 @@ describe('Importacao de CSVs (e2e)', () => {
       // 7.521 linhas nos arquivos - 11 rejeitadas (CAMPUS vazio) = 7.510 gravadas
       expect(podem + bloqueados).toBe(7510);
 
-      // Bloqueados: Cancelado 130 + Trancado 116 + Desistente 20 + Formado 3
-      expect(bloqueados).toBe(269);
+      // REGRA VIGENTE (11/08/2026): so "Ativo" agenda.
+      // Bloqueados = Cancelado 130 + Trancado 116 + Desistente 20 + Formado 3
+      // + as situacoes de transicao, que voltaram a barrar:
+      // Transf. Interna 12 + Transf. de Curriculo 1 + Alter. de Habilitacao 1.
+      expect(bloqueados).toBe(269 + 14);
 
-      // Elegiveis pelo status seriam 7.252 (Ativo 7.238 + Transf. Interna 12
-      // + Transf. de Curriculo 1 + Alter. de Habilitacao 1). Ficam 11 a menos
-      // porque as 11 linhas sem CAMPUS sao todas "Ativo" e foram rejeitadas —
-      // sao alunos elegiveis que NAO estao no sistema ate a planilha ser corrigida.
-      expect(podem).toBe(7252 - 11);
+      // Ativos sao 7.238 na planilha; ficam 11 a menos porque as 11 linhas sem
+      // CAMPUS sao todas "Ativo" e foram rejeitadas — sao alunos elegiveis que
+      // NAO estao no sistema ate a planilha ser corrigida.
+      expect(podem).toBe(7238 - 11);
     });
 
-    it('guarda o STATUS CURSO bruto, permitindo mudar a regra sem reimportar', async () => {
+    it('guarda o STATUS CURSO bruto, para a regra poder mudar sem reimportar', async () => {
       const transferencias = await prisma.alunoImportado.count({
         where: { statusCurso: 'Transf. Interna' },
       });
 
       expect(transferencias).toBe(12);
+
+      // O valor cru sobrevive; o que NAO se recalcula sozinho e a coluna
+      // `ativo`, derivada na importacao. Trocar a lista de elegibilidade exige
+      // `npm run alunos:recalcular` (ou reimportar) para a base seguir a regra.
+      const transferenciasAtivas = await prisma.alunoImportado.count({
+        where: { statusCurso: 'Transf. Interna', ativo: true },
+      });
+
+      expect(transferenciasAtivas).toBe(0);
     });
 
     it('grava os dois vinculos da aluna em dois cursos', async () => {
@@ -277,13 +516,17 @@ describe('Importacao de CSVs (e2e)', () => {
       expect(monica.every((v) => v.ativo)).toBe(true);
     });
 
-    it('a aluna em Transf. Interna + Ativo tambem tem dois vinculos elegiveis', async () => {
+    it('a aluna em Transf. Interna + Ativo agenda SO pelo vinculo ativo', async () => {
       const karen = await prisma.alunoImportado.findMany({
         where: { matricula: 'UC25426277' },
       });
 
+      // Caso real de dois vinculos com status diferentes. Sob a regra vigente
+      // (so "Ativo" agenda), a transferencia nao entra: ela faz a prova de um
+      // curso so.
       expect(karen).toHaveLength(2);
-      expect(karen.every((v) => v.ativo)).toBe(true);
+      expect(karen.filter((v) => v.ativo)).toHaveLength(1);
+      expect(karen.find((v) => !v.ativo)?.statusCurso).toBe('Transf. Interna');
     });
 
     it('reimportar o mesmo arquivo nao duplica nada', async () => {

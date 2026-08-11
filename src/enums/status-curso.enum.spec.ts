@@ -18,27 +18,48 @@ describe('elegibilidade por STATUS CURSO', () => {
     });
   });
 
-  it('nao confunde "Transf. Interna" (permite) com "Trancado" (bloqueia)', () => {
-    expect(permiteAgendar('Transf. Interna')).toBe(true);
-    expect(permiteAgendar('Trancado')).toBe(false);
+  /**
+   * A regra vigente (11/08/2026) e "SO Ativo agenda" — as situacoes de
+   * transicao voltaram a bloquear. Estes casos existem para que uma reversao
+   * acidental da lista quebre um teste com nome, e nao passe despercebida.
+   */
+  describe('situacoes de transicao BLOQUEIAM', () => {
+    it.each([
+      'Transf. Interna',
+      'Transf. de Curriculo',
+      'Alter. de Habilitação',
+    ])('%s nao agenda', (status) => {
+      expect(permiteAgendar(status)).toBe(false);
+    });
+
+    it('mas continuam sendo status CONHECIDOS — nao viram novidade na importacao', () => {
+      expect(statusDesconhecido('Transf. Interna')).toBe(false);
+      expect(statusDesconhecido('Alter. de Habilitação')).toBe(false);
+    });
+  });
+
+  it('so "Ativo" esta na lista de permitidos', () => {
+    expect([...STATUS_PERMITEM_AGENDAR]).toEqual(['Ativo']);
   });
 
   describe('tolerancia de grafia', () => {
-    // O CSV e ISO-8859-1; um acento perdido na reexportacao nao pode barrar
-    // um aluno que tem direito a fazer prova.
-    it('aceita "Alter. de Habilitacao" sem acento', () => {
-      expect(permiteAgendar('Alter. de Habilitacao')).toBe(true);
-      expect(permiteAgendar('Alter. de Habilitação')).toBe(true);
+    // O CSV e ISO-8859-1; um acento perdido na reexportacao nao pode mudar a
+    // situacao de um aluno — nem para liberar, nem para barrar.
+    it('aceita "Alter. de Habilitacao" sem acento (e bloqueia dos dois jeitos)', () => {
+      expect(permiteAgendar('Alter. de Habilitacao')).toBe(false);
+      expect(statusDesconhecido('Alter. de Habilitacao')).toBe(false);
+      expect(statusDesconhecido('Alter. de Habilitação')).toBe(false);
     });
 
     it('aceita "Transf. de Curriculo" com e sem acento', () => {
-      expect(permiteAgendar('Transf. de Curriculo')).toBe(true);
-      expect(permiteAgendar('Transf. de Currículo')).toBe(true);
+      expect(statusDesconhecido('Transf. de Curriculo')).toBe(false);
+      expect(statusDesconhecido('Transf. de Currículo')).toBe(false);
     });
 
     it('ignora caixa e espacos sobrando', () => {
       expect(permiteAgendar('  ATIVO ')).toBe(true);
-      expect(permiteAgendar('transf.  interna')).toBe(true);
+      expect(permiteAgendar('ativo')).toBe(true);
+      expect(permiteAgendar('transf.  interna')).toBe(false);
     });
   });
 

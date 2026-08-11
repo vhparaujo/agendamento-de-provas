@@ -28,6 +28,7 @@
     "db:reset": "prisma migrate reset",
     "lti:keygen": "tsx scripts/gerar-chave-lti.ts",
     "token:aluno": "tsx scripts/token-aluno.ts",
+    "alunos:recalcular": "tsx scripts/recalcular-elegibilidade.ts",
     "d2l:token": "tsx scripts/d2l-token.ts"
   },
   "dependencies": {

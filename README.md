@@ -626,22 +626,49 @@ não é preciso converter nada à mão.
 [`src/enums/status-curso.enum.ts`](src/enums/status-curso.enum.ts), único ponto a
 alterar. Não é configurável por `.env`.
 
-- **Permitem agendar:** `Ativo`, `Transf. Interna`, `Transf. de Curriculo`,
-  `Alter. de Habilitação` — situações de transição mantêm o aluno apto.
-- **Bloqueiam:** `Desistente`, `Trancado`, `Cancelado`, `Formado`.
+- **Permite agendar:** `Ativo` — e só ele (regra vigente desde 11/08/2026).
+- **Bloqueiam:** `Desistente`, `Trancado`, `Cancelado`, `Formado`,
+  `Transf. Interna`, `Transf. de Curriculo`, `Alter. de Habilitação`.
+  As três últimas são situações de *transição*; estiveram na lista de permitidos
+  entre 31/07 e 11/08/2026 e voltaram a barrar. Continuam **listadas** (e não
+  tratadas como desconhecidas) porque são grafias reais dos arquivos.
 - **Status desconhecido bloqueia por segurança** e é reportado no resultado da
   importação, para que alguém decida conscientemente em qual lista ele entra.
 
 A comparação ignora acentos, caixa e espaços repetidos — um acento perdido numa
-reexportação não pode barrar um aluno que tem direito a fazer prova.
+reexportação não pode mudar a situação de um aluno.
+
+> ⚠️ **Mudar a lista não reclassifica quem já está no banco.** O campo `ativo` é
+> derivado na importação e gravado, e é ele que o agendamento consulta. Como
+> `statusCurso` fica gravado cru, dá para reclassificar sem reimportar:
+> `npm run alunos:recalcular` (simulação) e `-- --gravar` para aplicar. O script
+> também lista quem **perde a elegibilidade com prova já marcada** — sem cancelar
+> nada, porque cancelar em massa é decisão de negócio.
 
 O status **não bloqueia o login**: um aluno com matrícula cancelada é reconhecido
 no launch e vê uma mensagem clara, em vez de um "não encontrado". O bloqueio
 acontece no agendamento.
 
 **Resposta do upload** — além de criados/atualizados, devolve o que precisa de
-atenção humana: linhas rejeitadas com motivo, status desconhecidos com contagem, e
-valores de `CAMPUS` que não casaram com nenhum polo do seed.
+atenção humana: linhas rejeitadas com motivo, status desconhecidos com contagem,
+valores de `CAMPUS` que não casaram com nenhum polo do seed, e
+`alteracoesComAgendamento[]` (abaixo).
+
+**A importação nunca apaga**: quem não está no arquivo não é tocado. Para incluir
+uma pessoa, basta um CSV com a linha dela — o `upsert` é por `[matricula, curso]`.
+
+> ⚠️ **`alteracoesComAgendamento[]` — troca de modalidade ou polo em quem já tem
+> prova marcada.** São os dois campos que a importação muda *por baixo* de uma
+> reserva confirmada: a modalidade vem do dropdown e sobrescreve todas as linhas
+> do arquivo, e o polo segue a coluna `CAMPUS`. A reserva continua na sala antiga
+> — prova de outra duração, ou em outro campus — e nada mais no sistema reclama.
+> O sintoma aparece depois e disfarçado: o remanejo passa a ser recusado com
+> *"esta sala não é da modalidade do aluno"*.
+>
+> O upload **não é bloqueado** (a planilha pode estar corrigindo um cadastro
+> errado), mas cada linha dessas pede decisão: remanejar ou cancelar a reserva.
+> A contagem considera só o **semestre vigente** — prova de semestre passado já
+> aconteceu, e avisar sobre ela seria o ruído que faz o aviso ser ignorado.
 
 ### CSV de turmas
 
