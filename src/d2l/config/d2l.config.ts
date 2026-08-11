@@ -88,8 +88,25 @@ export function faltandoParaRefresh(cfg: D2lOauthConfig): string[] {
 // O OAuth fala com um endpoint GLOBAL da D2L; as chamadas REST falam com o
 // TENANT. Por isso a configuracao e outra, e so ela precisa da `D2L_BASE_URL`.
 
-/** 1.82+ e obrigatorio: rotas de quiz anteriores estao obsoletas. */
-export const D2L_API_VERSION_PADRAO = '1.82';
+/**
+ * A VERSAO E POR PRODUTO, e os dois numeram em ritmos diferentes.
+ *
+ * Uma variavel so para `lp` e `le` parece economia e nao e: em 11/08/2026 o
+ * `.env` tinha `D2L_API_VERSION=1.82` — numero correto para o `le`, INEXISTENTE
+ * no `lp` (que ia so ate 1.62 no tenant da UCB). O resultado foi `404 com corpo
+ * VAZIO` em toda chamada de matricula e de orgstructure: nao ha mensagem, nao ha
+ * `error`, e o erro parece "o aluno nao tem disciplina" em vez de "a URL nao
+ * existe". Custou uma investigacao inteira.
+ *
+ * Confira o teto de cada produto em `GET /d2l/api/versions/` (rota publica) antes
+ * de subir qualquer um dos dois — o limite e do TENANT, nao da D2L.
+ */
+
+/** Learning Platform: orgstructure e enrollments — o que o portal usa hoje. */
+export const D2L_API_VERSION_LP_PADRAO = '1.62';
+
+/** Learning Environment: quizzes. 1.82+ e obrigatorio — rotas anteriores estao obsoletas. */
+export const D2L_API_VERSION_LE_PADRAO = '1.82';
 
 /**
  * Type Ids de org unit DESTE tenant, validados no Postman (§4.2 da referencia).
@@ -104,7 +121,9 @@ export interface D2lApiConfig {
   /** `false` (default) = nenhuma chamada de rede sai daqui. */
   habilitado: boolean;
   baseUrl: string;
-  apiVersion: string;
+  /** Ver `D2L_API_VERSION_LP_PADRAO`: uma versao por produto, nunca uma so. */
+  apiVersaoLp: string;
+  apiVersaoLe: string;
   tipoOferta: number;
   tipoPeriodoLetivo: number;
 }
@@ -123,7 +142,8 @@ export function carregarD2lApiConfig(config: ConfigService): D2lApiConfig {
     habilitado: ler(config, 'D2L_HABILITADO') === 'true',
     // Sem barra final: as rotas sao montadas com `/d2l/api/...` na frente.
     baseUrl: ler(config, 'D2L_BASE_URL').replace(/\/+$/, ''),
-    apiVersion: ler(config, 'D2L_API_VERSION', D2L_API_VERSION_PADRAO),
+    apiVersaoLp: ler(config, 'D2L_API_VERSION_LP', D2L_API_VERSION_LP_PADRAO),
+    apiVersaoLe: ler(config, 'D2L_API_VERSION_LE', D2L_API_VERSION_LE_PADRAO),
     tipoOferta: lerNumero(config, 'D2L_TIPO_OFERTA', D2L_TIPO_OFERTA_PADRAO),
     tipoPeriodoLetivo: lerNumero(
       config,

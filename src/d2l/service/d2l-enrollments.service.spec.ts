@@ -16,7 +16,8 @@ describe('D2lEnrollmentsService', () => {
   const ENV = {
     D2L_HABILITADO: 'true',
     D2L_BASE_URL: 'https://catolicatest.brightspace.com',
-    D2L_API_VERSION: '1.82',
+    D2L_API_VERSION_LP: '1.62',
+    D2L_API_VERSION_LE: '1.82',
   };
 
   let fetchOriginal: typeof globalThis.fetch;
@@ -98,6 +99,28 @@ describe('D2lEnrollmentsService', () => {
         titulo: 'HISTORIA E CULTURA DO CORPO',
       },
     ]);
+  });
+
+  it('monta as rotas LP com a versao do LP, nunca com a do LE', async () => {
+    // A regressao de 11/08/2026: a versao do LE (1.82) valia para os dois
+    // produtos e NAO EXISTE no LP. Toda chamada voltava 404 de corpo vazio, e o
+    // sintoma no portal era "o aluno nao tem disciplina" — nada apontava a URL.
+    responder(UMA_PAGINA([matricula(6606, 'GSPS0I10227', 'HISTORIA')]), [
+      descendente('6606'),
+    ]);
+
+    await servico().ofertasDoPeriodo('76629', '103');
+
+    const chamadas = (globalThis.fetch as jest.Mock).mock.calls.map(
+      ([url]: [string]) => url,
+    );
+
+    expect(chamadas.length).toBeGreaterThan(0);
+
+    for (const url of chamadas) {
+      expect(url).toContain('/d2l/api/lp/1.62/');
+      expect(url).not.toContain('/1.82/');
+    }
   });
 
   it('casa o Id NUMERO das matriculas com o Identifier STRING dos descendentes', async () => {
@@ -204,6 +227,172 @@ describe('D2lEnrollmentsService', () => {
     await expect(service.ofertasDoPeriodo('76629', '103')).rejects.toThrow(
       /desligada/,
     );
+  });
+
+  /**
+   * O dropdown do admin. Sem ele, o `periodoLetivoId` e digitado a mao — e um id
+   * errado nao da erro nenhum, so esvazia a lista de disciplinas de todo aluno.
+   */
+  /**
+   * O dropdown do admin. Sem ele, o `periodoLetivoId` e digitado a mao — e um id
+   * errado nao da erro nenhum, so esvazia a lista de disciplinas de todo aluno.
+   */
+  describe('periodosLetivos', () => {
+    const periodo = (id: string, nome: string, tipo = 103) => ({
+      Identifier: id,
+      Name: nome,
+      Code: nome.replace('/', '_'),
+      Type: { Id: tipo, Code: 'Período Letivo', Name: 'Período Letivo' },
+    });
+
+    /** Responde `orgstructure/` paginado por bookmark, como o tenant real. */
+    const responderPaginado = (paginas: unknown[][]) => {
+      globalThis.fetch = jest.fn().mockImplementation((url: string) => {
+        const bookmark = new URL(url).searchParams.get('bookmark');
+        const indice = bookmark ? Number(bookmark) : 0;
+        const itens = paginas[indice] ?? [];
+        const temMais = indice < paginas.length - 1;
+
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              Items: itens,
+              PagingInfo: {
+                Bookmark: temMais ? String(indice + 1) : null,
+                HasMoreItems: temMais,
+              },
+            }),
+          text: () => Promise.resolve(''),
+        });
+      });
+    };
+
+    /**
+     * A PRIMEIRA pagina do ava.catolica, verbatim: a API devolve em ordem de
+     * CRIACAO, e os semestres recentes ficam nas paginas seguintes.
+     */
+    const PAGINA_REAL = [
+      periodo('6828', '2021/1'),
+      periodo('8114', '2020/3'),
+      periodo('8115', '2020/2'),
+      periodo('10668', '2021/2'),
+      periodo('10669', '2021/3'),
+      periodo('19905', '2021/4'),
+      periodo('20958', '2022/1'),
+      periodo('29078', 'Esperancar'),
+      periodo('29083', '2023/1'),
+      periodo('29715', '2023/2'),
+    ];
+
+    it('SEGUE A PAGINACAO — o semestre atual nao esta na primeira pagina', async () => {
+      // O bug que este teste tranca: ler so a primeira pagina deixaria 2026/1
+      // de fora, que e justamente o unico item que o admin quase sempre quer.
+      responderPaginado([PAGINA_REAL, [periodo('40000', '2026/1')]]);
+
+      const r = await servico().periodosLetivos({ anosRecentes: 0 });
+
+      expect(r.map((p) => p.id)).toContain('40000');
+      expect(r[0].nome).toBe('2026/1');
+    });
+
+    it('ordena por (ano, semestre), nao por texto', async () => {
+      responderPaginado([
+        [
+          periodo('1', '2025/4'),
+          periodo('2', '2026/1'),
+          periodo('3', '2025/3'),
+        ],
+      ]);
+
+      const r = await servico().periodosLetivos({ anosRecentes: 0 });
+
+      expect(r.map((p) => p.nome)).toEqual(['2026/1', '2025/4', '2025/3']);
+    });
+
+    it('"Esperancar" nunca encabeca a lista, e some do recorte por ano', async () => {
+      // Ordenando por string ele viria ANTES de "2026/2", e o admin escolheria o
+      // primeiro item achando que e o semestre atual.
+      responderPaginado([
+        [periodo('29078', 'Esperancar'), periodo('2', '2026/1')],
+      ]);
+
+      const completa = await servico().periodosLetivos({ anosRecentes: 0 });
+      expect(completa.map((p) => p.nome)).toEqual(['2026/1', 'Esperancar']);
+
+      const recorte = await servico().periodosLetivos({ anosRecentes: 4 });
+      expect(recorte.map((p) => p.nome)).toEqual(['2026/1']);
+    });
+
+    it('recorta no ano mais recente QUE EXISTE, nao no relogio', async () => {
+      // Se o tenant ainda nao criou o ano corrente, pedir "atual + 3" nao pode
+      // devolver lista vazia.
+      responderPaginado([
+        [
+          periodo('1', '2023/2'),
+          periodo('2', '2022/1'),
+          periodo('3', '2021/1'),
+          periodo('4', '2020/2'),
+        ],
+      ]);
+
+      const r = await servico().periodosLetivos({ anosRecentes: 3 });
+
+      expect(r.map((p) => p.nome)).toEqual(['2023/2', '2022/1', '2021/1']);
+    });
+
+    it('devolve ano e semestre lidos do nome', async () => {
+      responderPaginado([[periodo('29715', '2023/2')]]);
+
+      const [p] = await servico().periodosLetivos({ anosRecentes: 0 });
+
+      expect(p).toEqual({
+        id: '29715',
+        nome: '2023/2',
+        codigo: '2023_2',
+        ano: 2023,
+        semestre: 2,
+      });
+    });
+
+    it('pede orgstructure/ com o tipo configurado', async () => {
+      responderPaginado([[periodo('1', '2026/1')]]);
+
+      await servico().periodosLetivos();
+
+      const url = (globalThis.fetch as jest.Mock).mock.calls[0][0] as string;
+
+      expect(url).toContain('orgstructure/');
+      expect(url).toContain('orgUnitType=103');
+    });
+
+    it('descarta o que NAO e periodo letivo, mesmo se a API ignorar o filtro', async () => {
+      responderPaginado([
+        [periodo('2', '2026/1'), periodo('500', '2026/1', 3)],
+      ]);
+
+      const r = await servico().periodosLetivos({ anosRecentes: 0 });
+
+      expect(r.map((p) => p.id)).toEqual(['2']);
+    });
+
+    it('respeita D2L_TIPO_PERIODO_LETIVO de outro tenant', async () => {
+      responderPaginado([[periodo('7', '2026/1', 5)]]);
+
+      const r = await servico({
+        ...ENV,
+        D2L_TIPO_PERIODO_LETIVO: '5',
+      }).periodosLetivos({ anosRecentes: 0 });
+
+      expect(r.map((p) => p.id)).toEqual(['7']);
+    });
+
+    it('recusa com a integracao desligada', async () => {
+      await expect(
+        servico({ D2L_HABILITADO: 'false' }).periodosLetivos(),
+      ).rejects.toBeInstanceOf(BadGatewayException);
+    });
   });
 
   it('nao se considera habilitado sem a URL do tenant', () => {

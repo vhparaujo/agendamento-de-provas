@@ -60,10 +60,6 @@ export class EnvironmentVariables {
   @IsString()
   JWT_ALUNO_EXPIRES_IN?: string;
 
-  @IsOptional()
-  @IsString()
-  PERIODO_LETIVO_ID?: string;
-
   // Default seguro = 'true': sem turmas importadas, nada e agendavel.
   @IsOptional()
   @IsBooleanString()
@@ -88,9 +84,18 @@ export class EnvironmentVariables {
   @IsString()
   D2L_BASE_URL?: string;
 
+  /**
+   * Uma por PRODUTO da Valence: `lp` (matriculas, orgstructure) e `le` (quizzes)
+   * numeram separado, e um numero valido num deles pode nao existir no outro —
+   * o erro sai como 404 de corpo vazio. Ver src/d2l/config/d2l.config.ts.
+   */
   @IsOptional()
   @IsString()
-  D2L_API_VERSION?: string;
+  D2L_API_VERSION_LP?: string;
+
+  @IsOptional()
+  @IsString()
+  D2L_API_VERSION_LE?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {

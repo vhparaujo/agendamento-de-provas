@@ -94,6 +94,18 @@ D2L_CLIENT_ID=...
 D2L_CLIENT_ASSERTION_KEY=...     # chave privada (ou caminho); NUNCA no git
 D2L_SCOPES=...                    # ver §3
 D2L_BASE_URL=https://catolicatest.brightspace.com
+D2L_API_VERSION_LP=1.62           # orgstructure, enrollments — ver aviso abaixo
+D2L_API_VERSION_LE=1.82           # quizzes (1.82+ obrigatório)
+```
+
+> **A versão é POR PRODUTO, e o teto é do TENANT.** `lp` e `le` numeram em ritmos
+> diferentes: em `ava.catolica.edu.br` (11/08/2026) o `lp` ia até **1.62** e o `le`
+> até **1.96**. Usar 1.82 no `lp` devolve **404 com corpo vazio** — sem `error`,
+> sem mensagem —, e o sintoma chega ao portal como "o aluno não tem disciplina".
+> Confira os limites em `GET {D2L_BASE_URL}/d2l/api/versions/` (rota pública, não
+> exige token) antes de subir qualquer uma das duas.
+
+```
 
 # OAuth D2L (Authorization Code — alternativa)
 D2L_REFRESH_TOKEN=...             # persistir rotacionado

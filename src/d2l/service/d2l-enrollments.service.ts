@@ -41,7 +41,27 @@ interface PaginaDeMatriculas {
 /** Item do retorno de `orgstructure/{id}/descendants/`. */
 interface Descendente {
   Identifier?: number | string;
+  Name?: string | null;
+  Code?: string | null;
   Type?: { Id?: number | string };
+}
+
+/** Retorno de `orgstructure/?orgUnitType=N`: paginado por bookmark. */
+interface PaginaDeOrgUnits {
+  Items?: Descendente[];
+  PagingInfo?: { Bookmark?: string | null; HasMoreItems?: boolean };
+}
+
+/** Um Periodo Letivo do Brightspace, para o dropdown do admin. */
+export interface PeriodoLetivoD2L {
+  /** OrgUnitId — e o que vai gravado em `PeriodoAgendamento.periodoLetivoId`. */
+  id: string;
+  nome: string | null;
+  codigo: string | null;
+  /** Ano extraido do nome ("2026/1" -> 2026). `null` quando nao da para ler. */
+  ano: number | null;
+  /** Semestre extraido do nome ("2026/1" -> 1). */
+  semestre: number | null;
 }
 
 /** A Valence e externa: sem limite, um travamento dela trava o portal. */
@@ -88,6 +108,11 @@ const CACHE_DESCENDENTES_MS = 10 * 60_000;
  * O passo 2 e o que responde a pergunta "do semestre que o administrador
  * escolher": o `periodoLetivoId` vem de `PeriodoAgendamento`, cadastrado pelo
  * admin. Sem ele, as matriculas trariam tambem os semestres passados.
+ *
+ * E daqui tambem sai a LISTA de periodos letivos (`periodosLetivos`), que
+ * alimenta o dropdown onde o admin escolhe qual cadastrar — digitar o OrgUnitId
+ * na mao e a receita para o erro que nao aparece: um id errado nao da erro
+ * nenhum, so devolve interseção vazia e todo aluno fica sem disciplina.
  */
 @Injectable()
 export class D2lEnrollmentsService {
@@ -139,6 +164,147 @@ export class D2lEnrollmentsService {
     );
 
     return dentro;
+  }
+
+  /**
+   * ==========================================================================
+   * OS PERIODOS LETIVOS DO TENANT — a lista do dropdown do admin
+   * ==========================================================================
+   * Devolve os org units do tipo Periodo Letivo (103 neste tenant, configuravel
+   * por `D2L_TIPO_PERIODO_LETIVO`), para o admin ESCOLHER em vez de digitar.
+   *
+   * Existe por causa de um modo de falha silencioso: `periodoLetivoId` errado
+   * nao produz erro nenhum. A chamada de descendentes responde 200 com lista
+   * vazia, a intersecao com as matriculas da vazia, e TODO aluno recebe "nenhuma
+   * disciplina sua aparece no periodo letivo vigente" — sem nada no log ligando
+   * uma coisa a outra. Escolher de uma lista fechada elimina a classe inteira.
+   *
+   * **A rota e `orgstructure/` com `orgUnitType`, e ela E PAGINADA.** A resposta
+   * real do tenant traz 10 itens por pagina, `HasMoreItems: true` e um
+   * `Bookmark` — e vem em ordem de CRIACAO, nao cronologica: a primeira pagina
+   * do ava.catolica e 2021/1, 2020/3, 2020/2, ... Ler so a primeira pagina
+   * deixaria o semestre atual DE FORA do dropdown, que e exatamente o unico item
+   * que o admin quase sempre quer.
+   *
+   * `anosRecentes` corta a lista pelo ano lido do nome ("2026/1" -> 2026);
+   * `undefined` devolve tudo. Itens sem ano legivel no nome — o tenant tem um
+   * "Esperancar" cadastrado como Periodo Letivo — ficam de fora do recorte,
+   * porque nao ha como situa-los numa janela de anos, e aparecem so na lista
+   * completa.
+   */
+  async periodosLetivos(
+    opcoes: { anosRecentes?: number } = {},
+  ): Promise<PeriodoLetivoD2L[]> {
+    const cfg = this.exigirConfigurado();
+    const brutos = await this.todosOsPeriodos(cfg);
+
+    const periodos = brutos
+      // O `orgUnitType` na query ja filtra, mas conferimos de novo: se o
+      // parametro for ignorado por outra versao da API, o dropdown mostraria a
+      // organizacao inteira e o admin escolheria algo que nao e semestre.
+      .filter(
+        (d) => Number(d.Type?.Id) === cfg.tipoPeriodoLetivo && d.Identifier,
+      )
+      .map((d) => {
+        const { ano, semestre } = lerAnoSemestre(d.Name, d.Code);
+
+        return {
+          id: String(d.Identifier),
+          nome: d.Name ?? null,
+          codigo: d.Code ?? null,
+          ano,
+          semestre,
+        };
+      });
+
+    const recorte = this.recortarPorAno(periodos, opcoes.anosRecentes);
+
+    this.logger.debug(
+      `${brutos.length} org unit(s) do tipo ${cfg.tipoPeriodoLetivo}; ` +
+        `${recorte.length} no dropdown.`,
+    );
+
+    return recorte;
+  }
+
+  /**
+   * Do mais recente para o mais antigo, cortando pela janela de anos.
+   *
+   * A ordenacao e por (ano, semestre) lidos do nome, NAO por string: comparar
+   * texto poria "Esperancar" antes de "2026/2", e o admin escolheria o primeiro
+   * item da lista achando que e o semestre atual.
+   */
+  private recortarPorAno(
+    periodos: PeriodoLetivoD2L[],
+    anosRecentes?: number,
+  ): PeriodoLetivoD2L[] {
+    const comAno = periodos.filter((p) => p.ano !== null);
+
+    const ordenados = [...comAno].sort(
+      (a, b) => b.ano! - a.ano! || (b.semestre ?? 0) - (a.semestre ?? 0),
+    );
+
+    if (!anosRecentes || anosRecentes <= 0) {
+      // Lista completa: os sem ano legivel vao para o fim, nunca para o topo.
+      const semAno = periodos.filter((p) => p.ano === null);
+      return [...ordenados, ...semAno];
+    }
+
+    // A janela conta do ano MAIS RECENTE QUE EXISTE, nao do relogio: se o
+    // tenant ainda nao criou 2026, pedir "atual + 3" nao pode devolver vazio.
+    const maisRecente = ordenados[0]?.ano;
+    if (maisRecente === undefined || maisRecente === null) return [];
+
+    const corte = maisRecente - (anosRecentes - 1);
+
+    return ordenados.filter((p) => p.ano! >= corte);
+  }
+
+  /**
+   * Todas as paginas de `orgstructure/?orgUnitType=N`.
+   *
+   * Mesmo freio da paginacao de matriculas: o loop so termina quando o SERVIDOR
+   * diz que terminou, e um bookmark repetido giraria para sempre.
+   */
+  private async todosOsPeriodos(cfg: D2lApiConfig): Promise<Descendente[]> {
+    const itens: Descendente[] = [];
+    let bookmark: string | undefined;
+
+    for (let pagina = 0; pagina < MAX_PAGINAS; pagina++) {
+      const url = this.url(cfg, 'lp', 'orgstructure/', {
+        orgUnitType: String(cfg.tipoPeriodoLetivo),
+        ...(bookmark ? { bookmark } : {}),
+      });
+
+      const dados = await this.pedir<Descendente[] | PaginaDeOrgUnits>(
+        url,
+        'periodos letivos',
+      );
+
+      // Versoes antigas da API devolvem array puro, sem envelope de paginacao.
+      if (Array.isArray(dados)) return [...itens, ...dados];
+
+      itens.push(...(dados?.Items ?? []));
+
+      const proximo = dados?.PagingInfo?.Bookmark ?? undefined;
+
+      if (
+        !dados?.PagingInfo?.HasMoreItems ||
+        !proximo ||
+        proximo === bookmark
+      ) {
+        return itens;
+      }
+
+      bookmark = proximo;
+    }
+
+    this.logger.warn(
+      `Paginacao de periodos letivos passou de ${MAX_PAGINAS} paginas; ` +
+        'lista pode estar incompleta.',
+    );
+
+    return itens;
   }
 
   /**
@@ -265,8 +431,12 @@ export class D2lEnrollmentsService {
   ): string {
     const parametros = new URLSearchParams(query).toString();
 
+    // A versao acompanha o PRODUTO: `lp` e `le` numeram separado e um numero
+    // valido num deles pode nao existir no outro — ver D2L_API_VERSION_LP_PADRAO.
+    const versao = produto === 'lp' ? cfg.apiVersaoLp : cfg.apiVersaoLe;
+
     return (
-      `${cfg.baseUrl}/d2l/api/${produto}/${cfg.apiVersion}/${caminho}` +
+      `${cfg.baseUrl}/d2l/api/${produto}/${versao}/${caminho}` +
       (parametros ? `?${parametros}` : '')
     );
   }
@@ -327,4 +497,26 @@ export class D2lEnrollmentsService {
 
     return cfg;
   }
+}
+
+/**
+ * Le ano e semestre do nome do periodo letivo: "2026/1", "2026_1", "2026.1".
+ *
+ * O `Code` serve de segunda tentativa porque o tenant tem os dois formatos
+ * ("2021/1" com Code "2021_1"). Sem numero reconhecivel devolve nulos — e o
+ * item fica fora do recorte por ano, em vez de virar um ano inventado.
+ */
+function lerAnoSemestre(...candidatos: (string | null | undefined)[]): {
+  ano: number | null;
+  semestre: number | null;
+} {
+  for (const bruto of candidatos) {
+    const casado = /(\d{4})\s*[/._-]\s*(\d{1,2})/.exec(String(bruto ?? ''));
+
+    if (casado) {
+      return { ano: Number(casado[1]), semestre: Number(casado[2]) };
+    }
+  }
+
+  return { ano: null, semestre: null };
 }

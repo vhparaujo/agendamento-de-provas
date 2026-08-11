@@ -61,7 +61,7 @@ async function main(): Promise<void> {
     console.log(
       `  curl -H "Authorization: Bearer ${token.valor.slice(0, 12)}..." \\\n` +
         `    "${process.env.D2L_BASE_URL ?? 'https://catolicatest.brightspace.com'}` +
-        `/d2l/api/lp/${process.env.D2L_API_VERSION ?? '1.82'}/orgstructure/?orgUnitType=103"\n`,
+        `/d2l/api/lp/${process.env.D2L_API_VERSION_LP ?? '1.62'}/orgstructure/?orgUnitType=103"\n`,
     );
   } finally {
     await prisma.$disconnect();
