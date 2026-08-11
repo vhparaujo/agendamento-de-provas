@@ -239,32 +239,47 @@ model AlunoImportado {
 // ----------------------------------------------------------------------------
 // Filtro final: disciplina do aluno so e agendavel se o orgUnitId estiver aqui.
 
-// Colunas reais do CSV (Tabela_Disciplinas_Turmas):
-//   Curso                 -> curso            (exibicao)
-//   Codigo da Turma       -> codigoTurma      CHAVE de busca
+// Colunas reais do CSV (Tabela_Disciplinas_Turmas), separado por ";" (Excel pt-BR):
+//   Curso                   -> curso            separa as disciplinas por vinculo
+//   Codigo da Turma         -> codigoTurma      CHAVE de busca
 //   Disciplina / Codigo EAD -> nomeDisciplina + codigoEad
-//     A celula vem como "SAUDE COLETIVA (1-GSPS01EAD048)": nome e codigo EAD
-//     juntos, separados na importacao.
+//     A celula vem como "SAUDE COLETIVA (1-GSPS01EAD048)": nome e codigo da
+//     DISCIPLINA juntos, separados na importacao. O prefixo numerico ("1-") e do
+//     sistema de origem e NAO aparece no Brightspace, entao sai na leitura.
 //
-// POR QUE codigoTurma + nomeDisciplina, e nao orgUnitId:
-// o CSV NAO traz o orgUnitId. Descobri-lo exige consultar o Brightspace, que e a
-// integracao adiada. Mas o launch LTI ja entrega `context.label` (o codigo) e
-// `context.title` (o nome) — os mesmos dois campos —, entao o cruzamento e feito
-// por codigo + nome, sem depender da API.
+// POR QUE codigoTurma + codigoEad, e nao orgUnitId:
+// o CSV nao traz o orgUnitId, e descobri-lo exige consultar a API. Mas o `Code`
+// do Brightspace nesta instancia e COMPOSTO e carrega os dois codigos:
 //
-// E POR QUE OS DOIS, e nao so o codigo: o mesmo codigo aparece em mais de uma
-// oferta (semestres/turmas diferentes). O codigo e o primeiro filtro; quem decide
-// e o NOME. Regra e desempate em src/turma/service/turma-match.ts.
+//   GSPS02_GSPS02EAD003_GSPS0I10227_2026/1
+//          \_ disciplina  \_ turma
 //
-// orgUnitId fica OPCIONAL: sera preenchido quando a integracao com o D2L existir.
+// e o launch/enrollments entrega esse Code. Com o par a oferta e identificada
+// SEM depender do nome — que e o que resolve o caso real de tres disciplinas
+// diferentes (HISTORIA, DANCA, LUTAS) rodando sob o MESMO codigo de turma.
+// Regra completa em src/turma/service/turma-match.ts, portada do projeto
+// ../brightspace-orgunits (src/matching.js), que ja resolve isto contra a
+// instancia real da UCB.
+//
+// orgUnitId fica OPCIONAL: e APRENDIDO nos launches (todo aluno entrega o
+// context.id da turma dele) e nunca sobrescrito.
+//
+// NAO HA `curso` AQUI (decisao de 10/08/2026). Uma turma tem alunos de VARIOS
+// cursos — disciplina compartilhada, eletiva, equivalencia —, entao dizer que
+// ela "e do curso X" e falso. Pior: o filtro por curso chegava a DESCARTAR
+// disciplina valida de quem cursava uma oferta de outro curso.
+//
+// O preco, aceito conscientemente: quem tem dois vinculos NA MESMA MATRICULA
+// recebe as disciplinas dos dois cursos juntas pelos enrollments, e as duracoes
+// de prova sao diferentes. Sao 2 alunos em 7519 na base real (0,03%), e a
+// informacao que resolveria isso e do par (aluno, turma) — nao da turma.
 
 model TurmaImportada {
   id             Int     @id @default(autoincrement())
   codigoTurma    String // "GSPS0I10227"
-  nomeDisciplina String // desempata quando o codigo se repete
-  codigoEad      String? // "1-GSPS02EAD003"
-  curso          String?
-  orgUnitId      String? @unique // id no D2L — resolvido depois
+  nomeDisciplina String // desempata quando o codigo de turma se repete
+  codigoEad      String? // "GSPS02EAD003" — o outro token do Code composto
+  orgUnitId      String? @unique // id no D2L, aprendido nos launches
   importacaoId   Int?
 
   importacao ImportacaoCsv? @relation(fields: [importacaoId], references: [id])

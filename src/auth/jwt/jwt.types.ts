@@ -35,10 +35,10 @@ export interface VinculoToken {
  * - `codigo`  (`context.label`) — chave de busca no CSV de turmas. **Vem vazio
  *   neste tenant**; nesse caso sai do fim do `title` ("NOME - CODIGO"), ver
  *   `extrairCodigoDoTitulo`;
- * - `titulo`  (`context.title`) — desempata quando o codigo se repete;
+ * - `titulo`  (`context.title`) — desempata quando o codigo de turma se repete;
  * - `orgUnitId` (`context.id`)  — identificador no D2L, gravado no agendamento.
  *
- * O CSV de turmas NAO traz orgUnitId, entao o cruzamento e por codigo + titulo.
+ * O CSV de turmas NAO traz orgUnitId: o cruzamento e por codigo + disciplina.
  */
 export interface ContextoLaunch {
   orgUnitId: string;

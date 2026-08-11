@@ -9,8 +9,8 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { createRemoteJWKSet, jwtVerify, JWTPayload } from 'jose';
 import { AlunoService } from '../../aluno/service/aluno.service';
-import { extrairCodigoDoTitulo } from '../../turma/service/turma-match';
 import { AuditoriaService } from '../../seguranca/service/auditoria.service';
+import { extrairCodigoDoTitulo } from '../../turma/service/turma-match';
 import type { ContextoLaunch } from '../jwt/jwt.types';
 import { AuthService } from '../service/auth.service';
 import {
@@ -327,11 +327,10 @@ export class LtiService {
 
     /**
      * `context.label` e a chave de busca no CSV de turmas. Quando o Brightspace
-     * nao o envia — e neste tenant ele vem vazio —, o codigo ainda chega grudado
-     * no fim do titulo ("NOME - CODIGO"), que e o formato que `normalizarNome`
-     * ja conhece. Sem esta segunda tentativa o `codigo` fica vazio, a busca por
-     * turma nao tem por onde comecar e TODO launch real termina em
-     * "o launch nao trouxe codigo de turma para procurar".
+     * nao o envia — e neste tenant ele vem VAZIO —, o codigo ainda chega grudado
+     * no fim do titulo ("NOME - CODIGO"). Sem esta segunda tentativa o `codigo`
+     * fica vazio e TODO launch real termina em "o launch nao trouxe codigo de
+     * turma para procurar".
      */
     const codigo = rotulo || extrairCodigoDoTitulo(titulo) || undefined;
 

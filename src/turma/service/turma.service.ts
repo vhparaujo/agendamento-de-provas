@@ -4,8 +4,8 @@ import { PrismaService } from '../../database/prisma.service';
 import { Prisma } from '../../generated/prisma/client';
 import {
   candidatasDe,
+  codigosParaBuscar,
   escolherTurma,
-  normalizarCodigo,
   TurmaCandidata,
   TurmaDoLaunch,
 } from './turma-match';
@@ -14,12 +14,6 @@ export interface DisciplinaAgendavel {
   /** Identificador no D2L, vindo do launch ou dos enrollments. Gravado no agendamento. */
   orgUnitId: string;
   nomeDisciplina: string | null;
-  /**
-   * Curso dono da disciplina, como esta no CSV de turmas. E o que permite dizer
-   * de qual VINCULO e cada disciplina quando o aluno tem mais de um curso — ver
-   * `DisciplinasDoAlunoService`. `null` quando o CSV nao trouxe a coluna.
-   */
-  curso: string | null;
 }
 
 export interface ResultadoDoCruzamento {
@@ -49,9 +43,10 @@ export class TurmaService {
    * um) ou todas as ofertas dele no periodo letivo (enrollments da Valence).
    * Quem escolhe a fonte e o `DisciplinasDoAlunoService`.
    *
-   * A busca e por **codigo + nome**, nao por orgUnitId, porque o CSV nao traz
-   * orgUnitId — e porque o codigo sozinho nao identifica a turma: ele se repete
-   * entre ofertas. O codigo filtra; o nome decide. Regra em `turma-match.ts`.
+   * A busca e por **codigo da turma + codigo da disciplina**, porque o `Code` do
+   * Brightspace e composto e carrega os dois — e porque o codigo da turma
+   * sozinho NAO identifica a oferta: ele se repete entre disciplinas. Regra
+   * completa em `turma-match.ts`.
    *
    * Cada turma e decidida SOZINHA: uma inconclusiva nao derruba as outras. Mas
    * quando o resultado nao e conclusivo (nome divergente, empate), aquela turma
@@ -81,7 +76,6 @@ export class TurmaService {
         agendaveis: turmas.map((turma) => ({
           orgUnitId: turma.orgUnitId!,
           nomeDisciplina: turma.titulo ?? null,
-          curso: null,
         })),
       };
     }
@@ -107,13 +101,16 @@ export class TurmaService {
         continue;
       }
 
+      this.logger.debug(
+        `Turma ${turma.orgUnitId} liberada por ${escolha.estrategia}: ${escolha.motivo}`,
+      );
+
       await this.aprenderOrgUnitId(escolha.turma, turma.orgUnitId!);
 
       agendaveis.push({
         orgUnitId: turma.orgUnitId!,
         // O nome do CSV manda: e o que a secretaria reconhece no relatorio.
         nomeDisciplina: escolha.turma.nomeDisciplina,
-        curso: escolha.turma.curso,
       });
     }
 
@@ -127,29 +124,22 @@ export class TurmaService {
   /**
    * Todas as candidatas das turmas pedidas, numa consulta so.
    *
-   * Busca pelos codigos; para as turmas que vieram sem codigo, tenta pelo
-   * orgUnitId — que so acha algo depois de a turma ter sido aprendida ou
-   * resolvida pela API.
+   * Busca pelos codigos e pelos orgUnitIds. O detalhe que importa: os codigos
+   * sao os TOKENS do `Code`, nao o `Code` inteiro. Pelos enrollments ele chega
+   * composto (`GSPS02_GSPS02EAD003_GSPS0I10227_2026/1`), e um
+   * `WHERE codigoTurma = <Code>` nao acharia nada — a consulta voltaria vazia
+   * sem erro nenhum, e TODA disciplina viraria "nao tem prova".
    */
   private async candidatas(turmas: TurmaDoLaunch[]): Promise<TurmaCandidata[]> {
-    const codigos = [
-      ...new Set(
-        turmas.map((t) => normalizarCodigo(t.codigo)).filter((c) => c !== ''),
-      ),
-    ];
-
-    const semCodigo = [
-      ...new Set(
-        turmas
-          .filter((t) => !normalizarCodigo(t.codigo))
-          .map((t) => t.orgUnitId!),
-      ),
-    ];
+    const codigos = [...new Set(turmas.flatMap((t) => codigosParaBuscar(t)))];
+    const orgUnitIds = [...new Set(turmas.map((t) => t.orgUnitId!))];
 
     const filtros: Prisma.TurmaImportadaWhereInput[] = [];
 
     if (codigos.length > 0) filtros.push({ codigoTurma: { in: codigos } });
-    if (semCodigo.length > 0) filtros.push({ orgUnitId: { in: semCodigo } });
+    if (orgUnitIds.length > 0) filtros.push({ orgUnitId: { in: orgUnitIds } });
+
+    if (filtros.length === 0) return [];
 
     return this.prisma.turmaImportada.findMany({
       where: filtros.length === 1 ? filtros[0] : { OR: filtros },
@@ -159,7 +149,6 @@ export class TurmaService {
         nomeDisciplina: true,
         codigoEad: true,
         orgUnitId: true,
-        curso: true,
       },
     });
   }
@@ -169,8 +158,7 @@ export class TurmaService {
    *
    * O CSV nunca traz esse id, e descobri-lo pela API e trabalho da integracao
    * adiada. Mas todo aluno que entra por uma turma nos ENTREGA o id dela de
-   * graca. Ao longo do periodo de agendamento a tabela se completa sozinha, e a
-   * integracao chega com o trabalho quase pronto.
+   * graca. Ao longo do periodo de agendamento a tabela se completa sozinha.
    *
    * Nunca sobrescreve: um id ja gravado foi confirmado antes.
    */

@@ -1,3 +1,4 @@
+import { normalizar, TOKEN_CODIGO } from '../../turma/service/turma-match';
 import { coluna, LinhaCsv } from './csv.util';
 
 /**
@@ -9,21 +10,27 @@ import { coluna, LinhaCsv } from './csv.util';
  *   Curso;Código da Turma;Disciplina / Código EAD
  *   NUTRIÇÃO;GSPS0N10259;PRÁTICA PROFISSIONAL E ÉTICA EM NUTRIÇÃO (1-GSPS06EAD003)
  *
- * Duas coisas que a planilha NAO tem, e que moldam o resto do sistema:
+ * Tres coisas que moldam o resto do sistema:
  *
- * 1. **Nao ha orgUnitId.** Descobri-lo exigiria consultar o Brightspace. Como o
- *    launch LTI ja entrega codigo e nome da turma, o cruzamento e feito por
- *    codigo + nome e o orgUnitId fica para a fase de integracao.
- *
- * 2. **A terceira coluna traz duas informacoes na mesma celula**: o nome da
- *    disciplina e, entre parenteses, o codigo EAD dela. Separamos na leitura —
+ * 1. **A terceira coluna traz DUAS informacoes na mesma celula**: o nome da
+ *    disciplina e, entre parenteses, o codigo dela. Separamos na leitura —
  *    guardar a celula inteira faria o nome nunca casar com o do Brightspace.
+ *
+ * 2. **Esse codigo entre parenteses nao e decoracao.** Ele e o outro token do
+ *    `Code` composto do Brightspace (`GSPS02_GSPS02EAD003_GSPS0I10227_2026/1`):
+ *    com ele e o codigo da turma, a oferta e identificada sem depender do nome.
+ *    E o que separa tres disciplinas diferentes rodando sob o MESMO codigo de
+ *    turma. Ver `turma-match.ts`.
+ *
+ * 3. **A coluna `Curso`, se existir no arquivo, e IGNORADA.** Uma turma tem
+ *    alunos de varios cursos (compartilhada, eletiva, equivalencia), entao
+ *    rotula-la com um curso so seria falso — ver o comentario em
+ *    `TurmaImportada` (schema.prisma).
  *
  * `coluna()` tolera diferenca de caixa e espacos no cabecalho; a lista de
  * sinonimos cobre variacoes de exportacao (com e sem acento).
  */
 export const TURMA_CSV_COLUNAS = {
-  curso: ['Curso'],
   codigoTurma: [
     'Código da Turma',
     'Codigo da Turma',
@@ -45,9 +52,13 @@ export const COLUNA_OBRIGATORIA = TURMA_CSV_COLUNAS.codigoTurma[0];
 export interface TurmaMapeada {
   codigoTurma: string;
   nomeDisciplina: string;
+  /** Codigo da DISCIPLINA, sem o prefixo do sistema de origem. */
   codigoEad: string | null;
-  curso: string | null;
 }
+
+/** Ou a turma, ou o motivo — a linha rejeitada precisa explicar o que houve. */
+export type LinhaMapeada =
+  { ok: true; turma: TurmaMapeada } | { ok: false; motivo: string };
 
 /** Primeiro sinonimo preenchido. */
 function primeira(linha: LinhaCsv, nomes: readonly string[]): string {
@@ -62,44 +73,78 @@ function primeira(linha: LinhaCsv, nomes: readonly string[]): string {
 /**
  * "PRÁTICA PROFISSIONAL E ÉTICA EM NUTRIÇÃO (1-GSPS06EAD003)"
  *   -> nome:      "PRÁTICA PROFISSIONAL E ÉTICA EM NUTRIÇÃO"
- *      codigoEad: "1-GSPS06EAD003"
+ *      codigoEad: "GSPS06EAD003"
  *
- * So o ULTIMO parentese conta, e so se parecer codigo (tem letra e numero):
- * disciplinas com parenteses no proprio nome — "QUIMICA (GERAL)" — nao podem
- * perder metade do titulo.
+ * Portado de `extrairCodigoDisciplina` (../brightspace-orgunits, src/csv.js).
+ * Quatro recusas, todas com motivo:
+ *
+ *  - so o ULTIMO parentese conta: "QUÍMICA (GSPS01EAD048) NOTURNO" fica intacto;
+ *  - o miolo precisa PARECER codigo (`TOKEN_CODIGO`): "(TURMA A)", "(2026)" e
+ *    "(EAD)" nao sao, e o nome fica inteiro;
+ *  - **o prefixo numerico sai** ("1-GSPS06EAD003" -> "GSPS06EAD003"): ele e do
+ *    sistema de origem e NAO aparece no `Code` do Brightspace, entao mante-lo
+ *    faria o token nunca casar;
+ *  - se o nome ficaria vazio ("(GSPS01EAD048)" sozinho), nao extrai — perder o
+ *    nome inteiro e pior que nao separar.
  */
 export function separarDisciplina(celula: string): {
   nome: string;
   codigoEad: string | null;
 } {
-  const casado = /^(.*)\(([^()]+)\)\s*$/.exec(celula.trim());
+  const bruto = celula.trim();
+  const casado = /^(.*?)\s*\(([^()]+)\)\s*$/.exec(bruto);
 
-  if (!casado) return { nome: celula.trim(), codigoEad: null };
+  if (!casado) return { nome: bruto, codigoEad: null };
 
-  const dentro = casado[2].trim();
-  const pareceCodigo = /[A-Za-z]/.test(dentro) && /\d/.test(dentro);
+  const miolo = casado[2].trim().toUpperCase().replace(/^\d+-/, '');
+  const nome = casado[1].trim();
 
-  if (!pareceCodigo) return { nome: celula.trim(), codigoEad: null };
+  if (!TOKEN_CODIGO.test(miolo) || !nome) {
+    return { nome: bruto, codigoEad: null };
+  }
 
-  return { nome: casado[1].trim(), codigoEad: dentro.toUpperCase() };
+  return { nome, codigoEad: miolo };
 }
 
 /** Traduz uma linha do CSV para o formato de TurmaImportada. */
-export function mapRowToTurma(linha: LinhaCsv): TurmaMapeada | null {
+export function mapRowToTurma(linha: LinhaCsv): LinhaMapeada {
   const codigoTurma = primeira(linha, TURMA_CSV_COLUNAS.codigoTurma);
   const celula = primeira(linha, TURMA_CSV_COLUNAS.disciplina);
 
   // Sem codigo nao ha o que procurar; sem nome nao ha como desempatar.
-  if (!codigoTurma || !celula) return null;
+  if (!codigoTurma || !celula) {
+    return {
+      ok: false,
+      motivo:
+        'codigo da turma ou nome da disciplina vazio — os dois sao necessarios ' +
+        'para identificar a turma',
+    };
+  }
 
   const { nome, codigoEad } = separarDisciplina(celula);
 
-  if (!nome) return null;
+  if (!nome) {
+    return {
+      ok: false,
+      motivo:
+        'nome da disciplina vazio depois de separar o codigo da disciplina',
+    };
+  }
+
+  // Codigo da disciplina IGUAL ao da turma nao acrescenta nada: e o caso antigo
+  // de "Nome (CODIGO)", que o `removerCodigo` do match ja resolve. Guardar os
+  // dois iguais faria o tier composto casar consigo mesmo, sem separar nada.
+  const disciplina =
+    codigoEad && normalizar(codigoEad) !== normalizar(codigoTurma)
+      ? codigoEad
+      : null;
 
   return {
-    codigoTurma: codigoTurma.toUpperCase(),
-    nomeDisciplina: nome,
-    codigoEad,
-    curso: primeira(linha, TURMA_CSV_COLUNAS.curso) || null,
+    ok: true,
+    turma: {
+      codigoTurma: codigoTurma.toUpperCase(),
+      nomeDisciplina: nome,
+      codigoEad: disciplina,
+    },
   };
 }

@@ -115,8 +115,8 @@ export class ImportacaoController {
 
   /**
    * Upload do CSV de turmas reais (as que terao prova).
-   * O arquivo real ainda nao existe: o mapeamento de colunas esta isolado em
-   * src/importacao/service/turma-csv.columns.ts e e o unico ponto a ajustar.
+   * O mapeamento de colunas esta isolado em
+   * src/importacao/service/turma-csv.columns.ts.
    */
   @Post('turmas')
   @Throttle(LIMITE_UPLOAD)
@@ -127,10 +127,20 @@ export class ImportacaoController {
     summary: 'Importa o CSV de turmas reais',
     description:
       'As turmas que efetivamente terao prova — o filtro final do que o aluno pode agendar. ' +
-      'Idempotente por `orgUnitId`, o unico campo obrigatorio.\n\n' +
-      '⚠️ **O arquivo real ainda nao chegou.** Os cabecalhos (`orgUnitId`, `nomeDisciplina`, ' +
-      '`codigoTurma`) sao provisorios; quando o arquivo aparecer, o unico ponto a mudar e ' +
-      '`src/importacao/service/turma-csv.columns.ts`. Nenhuma regra de negocio muda.\n\n' +
+      'Idempotente pelo par `[codigoTurma, nomeDisciplina]`: reenviar o mesmo arquivo atualiza, ' +
+      'nunca duplica.\n\n' +
+      'Formato real (`;` do Excel pt-BR, UTF-8 ou latin1 — detectados):\n\n' +
+      '```\nCurso;Código da Turma;Disciplina / Código EAD\n' +
+      'NUTRIÇÃO;GSPS0N10259;PRÁTICA PROFISSIONAL E ÉTICA EM NUTRIÇÃO (1-GSPS06EAD003)\n```\n\n' +
+      '`Código da Turma` e a unica coluna exigida no cabecalho.\n\n' +
+      'A 3ª coluna traz **nome e codigo da DISCIPLINA na mesma celula**, separados na leitura. ' +
+      'Esse codigo nao e decoracao: ele e o outro token do `Code` composto do Brightspace ' +
+      '(`GSPS02_GSPS02EAD003_GSPS0I10227_2026/1`) e e o que separa disciplinas diferentes ' +
+      'rodando sob o MESMO codigo de turma. O prefixo do sistema de origem (`1-`) sai na ' +
+      'leitura, porque nao aparece no Brightspace.\n\n' +
+      'Uma coluna `Curso`, se existir no arquivo, e **ignorada**: uma turma tem alunos de ' +
+      'varios cursos (compartilhada, eletiva, equivalencia), entao rotula-la com um curso ' +
+      'so seria falso.\n\n' +
       'Enquanto a tabela estiver vazia com `TURMAS_FILTER_ENABLED=true` (default), **nada e ' +
       'agendavel** — de proposito.',
   })
@@ -145,7 +155,7 @@ export class ImportacaoController {
   @ApiCreatedResponse({ type: ResultadoImportacaoTurmasDto })
   @ApiBadRequestResponse({
     description:
-      'Arquivo ausente, sem extensao .csv, acima de 15 MB, ou sem a coluna orgUnitId',
+      'Arquivo ausente, sem extensao .csv, acima de 15 MB, ou sem a coluna "Código da Turma"',
   })
   importarTurmas(
     @UploadedFile(validarCsv) arquivo: Express.Multer.File,

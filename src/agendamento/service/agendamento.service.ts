@@ -147,20 +147,12 @@ export class AgendamentoService {
   ): Promise<DisciplinasDoVinculo> {
     const vinculo = await this.exigirVinculo(aluno, alunoId);
 
-    const { agendaveis, motivo } = await this.disciplinasDoAluno.cruzar(
-      aluno,
-      vinculo,
-    );
+    const { agendaveis, motivo } = await this.disciplinasDoAluno.cruzar(aluno);
 
     return {
       alunoId: vinculo.id,
       curso: vinculo.curso,
-      // So o que o aluno precisa ver: `curso` e interno, usado para separar as
-      // disciplinas por vinculo, e repeti-lo em cada linha seria ruido.
-      disciplinas: agendaveis.map((d) => ({
-        orgUnitId: d.orgUnitId,
-        nomeDisciplina: d.nomeDisciplina,
-      })),
+      disciplinas: agendaveis,
       podeAgendar: vinculo.ativo && agendaveis.length > 0,
       motivo: !vinculo.ativo
         ? motivoStatus(vinculo.curso, vinculo.statusCurso)
@@ -204,7 +196,7 @@ export class AgendamentoService {
 
     const periodo = await this.periodo.exigirAberto();
 
-    const cruzamento = await this.disciplinasDoAluno.cruzar(aluno, vinculo);
+    const cruzamento = await this.disciplinasDoAluno.cruzar(aluno);
     const disciplinas = cruzamento.agendaveis;
 
     if (disciplinas.length === 0) {

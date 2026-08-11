@@ -8,7 +8,6 @@ type LinhaDeTurma = {
   nomeDisciplina: string;
   codigoEad: string | null;
   orgUnitId: string | null;
-  curso: string | null;
 };
 
 /** O `where` que o service monta: por codigos, por orgUnitIds, ou os dois. */
@@ -77,32 +76,38 @@ function montar(turmas: LinhaDeTurma[], filtroLigado = true) {
 const HISTORIA: LinhaDeTurma = {
   id: 1,
   codigoTurma: 'GSPS0I10227',
-  nomeDisciplina: 'HISTÓRIA E CULTURA DO CORPO E DO MOVIMENTO',
-  codigoEad: '1-GSPS02EAD003',
+  nomeDisciplina: 'HISTÓRIA E CULTURA DO CORPO',
+  codigoEad: 'GSPS02EAD003',
   orgUnitId: null,
-  curso: 'EDUCAÇÃO FÍSICA',
+};
+
+const DANCA: LinhaDeTurma = {
+  ...HISTORIA,
+  id: 2,
+  nomeDisciplina: 'DANÇA',
+  codigoEad: 'GSPS02TP001',
 };
 
 const NUTRICAO: LinhaDeTurma = {
-  id: 2,
+  id: 3,
   codigoTurma: 'GSPS0I10259',
   nomeDisciplina: 'PRÁTICA PROFISSIONAL E ÉTICA EM NUTRIÇÃO',
-  codigoEad: '1-GSPS06EAD003',
+  codigoEad: 'GSPS06EAD003',
   orgUnitId: null,
-  curso: 'NUTRIÇÃO',
 };
 
+/** Como o launch entrega: label vazio, codigo grudado no fim do titulo. */
 const LAUNCH = {
   orgUnitId: '6606',
   codigo: 'GSPS0I10227',
-  titulo: 'HISTÓRIA E CULTURA DO CORPO E DO MOVIMENTO',
+  titulo: 'HISTÓRIA E CULTURA DO CORPO',
 };
 
-/** Como a mesma turma chega pelos enrollments da Valence. */
+/** Como os enrollments entregam: `Code` COMPOSTO. */
 const OFERTA_NUTRICAO = {
   orgUnitId: '6610',
-  codigo: 'GSPS0I10259',
-  titulo: 'PRÁTICA PROFISSIONAL E ÉTICA EM NUTRIÇÃO',
+  codigo: 'GSPS06_GSPS06EAD003_GSPS0I10259_2026/1',
+  titulo: 'PRÁTICA PROFISSIONAL E ÉTICA EM NUTRIÇÃO - GSPS0I10259',
 };
 
 describe('filtrarAgendaveis', () => {
@@ -114,11 +119,38 @@ describe('filtrarAgendaveis', () => {
     expect(r.agendaveis).toEqual([
       {
         orgUnitId: '6606',
-        nomeDisciplina: 'HISTÓRIA E CULTURA DO CORPO E DO MOVIMENTO',
-        curso: 'EDUCAÇÃO FÍSICA',
+        nomeDisciplina: 'HISTÓRIA E CULTURA DO CORPO',
       },
     ]);
     expect(r.motivo).toBeUndefined();
+  });
+
+  /**
+   * O caminho de producao. Sem tokenizar o `Code`, a consulta ao banco voltaria
+   * vazia e TODA disciplina viraria "nao tem prova" — sem erro nenhum.
+   */
+  describe('Code composto (enrollments)', () => {
+    it('acha a turma pelo Code composto da Valence', async () => {
+      const { service } = montar([{ ...NUTRICAO }]);
+
+      const r = await service.filtrarAgendaveis([OFERTA_NUTRICAO]);
+
+      expect(r.agendaveis.map((d) => d.orgUnitId)).toEqual(['6610']);
+    });
+
+    it('separa duas disciplinas sob o MESMO codigo de turma', async () => {
+      const { service } = montar([{ ...HISTORIA }, { ...DANCA }]);
+
+      const r = await service.filtrarAgendaveis([
+        {
+          orgUnitId: '137952',
+          codigo: 'GSPS02_GSPS02TP001_GSPS0I10227_2026/1',
+          titulo: 'DANÇA - GSPS0I10227',
+        },
+      ]);
+
+      expect(r.agendaveis.map((d) => d.nomeDisciplina)).toEqual(['DANÇA']);
+    });
   });
 
   describe('varias turmas de uma vez (enrollments)', () => {
@@ -128,10 +160,6 @@ describe('filtrarAgendaveis', () => {
       const r = await service.filtrarAgendaveis([LAUNCH, OFERTA_NUTRICAO]);
 
       expect(r.agendaveis.map((d) => d.orgUnitId)).toEqual(['6606', '6610']);
-      expect(r.agendaveis.map((d) => d.curso)).toEqual([
-        'EDUCAÇÃO FÍSICA',
-        'NUTRIÇÃO',
-      ]);
     });
 
     it('uma turma inconclusiva NAO derruba as outras', async () => {
@@ -141,7 +169,7 @@ describe('filtrarAgendaveis', () => {
 
       const r = await service.filtrarAgendaveis([
         LAUNCH,
-        { orgUnitId: '9', codigo: 'NAO-EXISTE', titulo: 'FANTASMA' },
+        { orgUnitId: '9', codigo: 'NAOEXISTE1', titulo: 'FANTASMA' },
         OFERTA_NUTRICAO,
       ]);
 
@@ -154,8 +182,8 @@ describe('filtrarAgendaveis', () => {
       const { service } = montar([{ ...HISTORIA }]);
 
       const r = await service.filtrarAgendaveis([
-        { orgUnitId: '9', codigo: 'NAO-EXISTE', titulo: 'FANTASMA' },
-        { orgUnitId: '10', codigo: 'TAMBEM-NAO', titulo: 'OUTRO' },
+        { orgUnitId: '9', codigo: 'NAOEXISTE1', titulo: 'FANTASMA' },
+        { orgUnitId: '10', codigo: 'NAOEXISTE2', titulo: 'OUTRO' },
       ]);
 
       expect(r.agendaveis).toEqual([]);
@@ -167,7 +195,7 @@ describe('filtrarAgendaveis', () => {
     const { service } = montar([{ ...HISTORIA }]);
 
     const r = await service.filtrarAgendaveis([
-      { ...LAUNCH, codigo: 'NAO-EXISTE' },
+      { ...LAUNCH, codigo: 'NAOEXISTE1', titulo: 'FANTASMA' },
     ]);
 
     expect(r.agendaveis).toEqual([]);
@@ -184,19 +212,6 @@ describe('filtrarAgendaveis', () => {
 
     expect(r.agendaveis).toEqual([]);
     expect(r.motivo).toMatch(/nome nao confere/);
-  });
-
-  it('desempata pelo nome quando o codigo se repete', async () => {
-    const { service } = montar([
-      { ...HISTORIA, id: 1, nomeDisciplina: 'SAÚDE COLETIVA', codigoEad: null },
-      { ...HISTORIA, id: 2 },
-    ]);
-
-    const r = await service.filtrarAgendaveis([LAUNCH]);
-
-    expect(r.agendaveis[0].nomeDisciplina).toBe(
-      'HISTÓRIA E CULTURA DO CORPO E DO MOVIMENTO',
-    );
   });
 
   it('nao libera nada sem contexto de turma no launch', async () => {
@@ -223,9 +238,7 @@ describe('filtrarAgendaveis', () => {
       expect((await service.filtrarAgendaveis([LAUNCH])).agendaveis).toEqual([
         {
           orgUnitId: '6606',
-          nomeDisciplina: 'HISTÓRIA E CULTURA DO CORPO E DO MOVIMENTO',
-          // Sem CSV nao ha coluna Curso: a disciplina fica sem dono conhecido.
-          curso: null,
+          nomeDisciplina: 'HISTÓRIA E CULTURA DO CORPO',
         },
       ]);
     });

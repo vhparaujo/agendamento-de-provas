@@ -14,13 +14,13 @@ import { PrismaClient } from '../src/generated/prisma/client';
  * Este script monta o MESMO payload que o launch montaria, lendo os vinculos do
  * banco — nao inventa dados, so pula a etapa da assinatura do Brightspace.
  *
- *   npm run token:aluno -- <matricula> [codigoDaTurma]
+ *   npm run token:aluno -- <matricula> [orgUnitId]
  *
- * O codigo simula a turma de onde o aluno clicaria (claim `context.label` do
- * launch). O script procura esse codigo em TurmaImportada e preenche o nome e o
- * orgUnitId sozinho — assim o token sai igual ao de um launch real.
+ * O orgUnitId simula a turma de onde o aluno clicaria (claim `context.id` do
+ * launch) — a mesma chave do CSV de turmas. O script procura em TurmaImportada e
+ * preenche o nome sozinho, para o token sair igual ao de um launch real.
  *
- * Sem o codigo, o token sai sem contexto e o agendamento recusa por falta de
+ * Sem ele, o token sai sem contexto e o agendamento recusa por falta de
  * disciplina: comportamento correto, mas nao e o que se quer testar.
  *
  * RECUSA rodar com NODE_ENV=production: emitir credencial de aluno por linha de
@@ -33,12 +33,12 @@ async function main(): Promise<void> {
     );
   }
 
-  const [matricula, codigoTurma] = process.argv.slice(2);
+  const [matricula, orgUnitId] = process.argv.slice(2);
 
   if (!matricula) {
     throw new Error(
       'Informe a matricula (RA):\n' +
-        '  npm run token:aluno -- UC25426847 6606 "Psicologia Geral"',
+        '  npm run token:aluno -- UC25426847 156979',
     );
   }
 
@@ -62,26 +62,21 @@ async function main(): Promise<void> {
     }
 
     // O contexto sai da turma importada: mesmo formato que o launch entrega.
-    const turma = codigoTurma
-      ? await prisma.turmaImportada.findFirst({
-          where: { codigoTurma: codigoTurma.trim().toUpperCase() },
+    const turma = orgUnitId
+      ? await prisma.turmaImportada.findUnique({
+          where: { orgUnitId: orgUnitId.trim() },
         })
       : null;
 
-    if (codigoTurma && !turma) {
+    if (orgUnitId && !turma) {
       throw new Error(
-        `Turma "${codigoTurma}" nao encontrada. Importe o CSV de turmas ` +
-          '(POST /api/importacao/turmas) ou confira o codigo.',
+        `Turma com orgUnitId "${orgUnitId}" nao encontrada. Importe o CSV de ` +
+          'turmas (POST /api/importacao/turmas) ou confira o id.',
       );
     }
 
     const contexto = turma
-      ? {
-          // Em dev nao ha orgUnitId real ate um launch de verdade acontecer.
-          orgUnitId: turma.orgUnitId ?? `dev-${turma.codigoTurma}`,
-          codigo: turma.codigoTurma,
-          titulo: turma.nomeDisciplina,
-        }
+      ? { orgUnitId: turma.orgUnitId, titulo: turma.nomeDisciplina }
       : undefined;
 
     const token = await new SignJWT({
@@ -116,12 +111,11 @@ async function main(): Promise<void> {
 
     if (turma) {
       console.log(
-        `Turma:   ${turma.codigoTurma} — ${turma.nomeDisciplina}` +
-          (turma.orgUnitId ? ` (orgUnitId ${turma.orgUnitId})` : ''),
+        `Turma:   orgUnitId ${turma.orgUnitId} — ${turma.nomeDisciplina ?? '(sem nome)'}`,
       );
     } else {
       console.log(
-        '\nAVISO: sem codigo de turma o token sai sem contexto, e o ' +
+        '\nAVISO: sem orgUnitId o token sai sem contexto, e o ' +
           'agendamento sera recusado por falta de disciplina com prova.',
       );
     }

@@ -129,5 +129,25 @@ describe('Controles de seguranca (e2e)', () => {
       // as primeiras precisam ter passado pela regra de negocio (401), nao 429
       expect(status[0]).toBe(401);
     });
+
+    /**
+     * O 5/min vale SO nas rotas de credencial. Ja houve um limitador `sensivel`
+     * de 5/min declarado globalmente na crenca de que o @Throttle o ativaria
+     * rota a rota — e o portal inteiro travou em 5 requisicoes por minuto.
+     *
+     * Este teste e o que trava a volta desse bug: uma rota comum, sem @Throttle,
+     * tem que aguentar bem mais de 5 chamadas por minuto.
+     */
+    it('NAO aplica o 5/min em rota comum — so nas de credencial', async () => {
+      const status: number[] = [];
+
+      for (let i = 0; i < 12; i++) {
+        status.push(
+          (await request(app.getHttpServer()).get('/api/health')).status,
+        );
+      }
+
+      expect(status.filter((s) => s === 429)).toHaveLength(0);
+    });
   });
 });

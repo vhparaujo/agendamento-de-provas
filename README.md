@@ -194,7 +194,7 @@ npm run seed                 # seeds idempotentes
 npm run lti:keygen           # gera a chave RSA da ferramenta (LTI_TOOL_PRIVATE_KEY)
 
 # token de aluno para testar o portal sem o Brightspace (SÓ DESENVOLVIMENTO)
-npm run token:aluno -- <RA> [orgUnitId] [título da turma]
+npm run token:aluno -- <RA> [orgUnitId]
 
 # access token da Valence a partir do refresh gravado (SÓ DESENVOLVIMENTO)
 npm run d2l:token
@@ -442,11 +442,9 @@ O semestre é **o que o admin cadastrou** em `PeriodoAgendamento.periodoLetivoId
 (org unit tipo `103` neste tenant), não "o atual" segundo o relógio. Sem esse
 recorte viriam também as disciplinas de semestres passados.
 
-Quem tem **dois cursos** não leva disciplina do outro curso para a prova errada:
-os enrollments vêm pelo RA, e quem separa é a coluna **Curso** do CSV de turmas,
-comparada com o curso do vínculo (ignorando acento e caixa). Aluno de um curso só
-não passa por esse filtro — não há o que decidir, e filtrar transformaria uma
-divergência de grafia em "você não tem prova".
+⚠️ **A lista não é separada por vínculo.** Turma não pertence a um curso, então
+quem tem dois vínculos na mesma matrícula recebe as disciplinas dos dois juntas.
+São 2 alunos em 7519 — ver "Turma não pertence a um curso".
 
 ---
 
@@ -543,7 +541,7 @@ TurmaImportada ── ImportacaoCsv      Admin      PeriodoAgendamento
 | `Faixa` | Polo + data + horaInício + horaFim. Neutra |
 | `SalaFaixa` | Sala + Faixa + Modalidade + `vagas` + `ordem`. **O núcleo** |
 | `AlunoImportado` | Um registro **por vínculo** (matrícula + curso) |
-| `TurmaImportada` | Turmas reais com prova, chaveadas por `orgUnitId` do D2L |
+| `TurmaImportada` | Turmas reais com prova, chaveadas por `codigoTurma + nomeDisciplina` |
 | `ImportacaoCsv` | Auditoria: tipo, arquivo, linhas, quem, quando |
 | `Agendamento` | A reserva, apontando para a `SalaFaixa` alocada |
 | `AgendamentoDisciplina` | As N disciplinas cobertas pela reserva |
@@ -618,33 +616,86 @@ valores de `CAMPUS` que não casaram com nenhum polo do seed.
 Formato real (`Tabela_Disciplinas_Turmas`), separado por **`;`**:
 
 ```
-Curso;Código da Turma;Disciplina / Código EAD
-NUTRIÇÃO;GSPS0N10257;PRÁTICA PROFISSIONAL E ÉTICA EM NUTRIÇÃO (1-GSPS06EAD003)
+Código da Turma;Disciplina / Código EAD
+GSPS0N10257;PRÁTICA PROFISSIONAL E ÉTICA EM NUTRIÇÃO (1-GSPS06EAD003)
 ```
 
-A terceira coluna traz **duas informações na mesma célula** — nome e código EAD —
-separadas na importação. Idempotência pelo par `[codigoTurma, nomeDisciplina]`.
+`,` ou `;` e UTF-8/latin1 são detectados, não presumidos. `Código da Turma` é a
+única coluna exigida no cabeçalho.
 
 **Este arquivo é quem diz quais turmas têm prova.** Nada fora dele é agendável
-(`TURMAS_FILTER_ENABLED`, default `true`), e a coluna **Curso** é o que permite
-dizer de qual vínculo é cada disciplina quando o aluno tem dois cursos.
+(`TURMAS_FILTER_ENABLED`, default `true`).
 
-**O cruzamento é por código + nome.** O CSV não traz `orgUnitId`; o código e o
-nome chegam prontos das duas fontes possíveis — `context.label`/`context.title`
-no launch LTI e `OrgUnit.Code`/`OrgUnit.Name` nos enrollments da Valence. Precisa
-dos dois porque o mesmo código aparece em mais de uma oferta: o código filtra, o
-nome decide. Quando não é conclusivo — nome divergente ou empate — **aquela turma
-não é liberada** e o motivo vai para o log; chutar significaria marcar prova para
-a disciplina errada. Uma turma inconclusiva não derruba as outras.
+#### A 3ª coluna traz duas informações
+
+Nome e código da **disciplina**, na mesma célula, separados na importação. E esse
+código não é decoração: o `Code` da oferta no Brightspace é **composto** e
+carrega os dois códigos que a planilha tem —
+
+```
+GSPS02_GSPS02EAD003_GSPS0I10227_2026/1
+       └─ disciplina  └─ turma
+```
+
+— e o código da turma **se repete**: HISTÓRIA, DANÇA e LUTAS rodam todas sob
+`GSPS0I10227`. O que as separa é o código da disciplina. Por isso o par
+identifica a oferta **sem depender do nome**.
+
+A leitura é conservadora (portada de `../brightspace-orgunits`):
+
+| Célula | Resultado |
+|---|---|
+| `SAÚDE COLETIVA (1-GSPS01EAD048)` | nome `SAÚDE COLETIVA`, código `GSPS01EAD048` — o prefixo `1-` é do sistema de origem e **não** aparece no Brightspace |
+| `EDUCAÇÃO FÍSICA (TURMA A)` · `(2026)` · `(EAD)` | nome **intacto** — o miolo não parece código (precisa de letra e número, sem espaço) |
+| `QUÍMICA (GSPS01EAD048) NOTURNO` | nome **intacto** — o parêntese não está no fim |
+| `NUTRIÇÃO CLÍNICA (GSPS0I10259)` com esse mesmo código de turma | código descartado — igual ao da turma, não separa nada |
+
+#### Como o cruzamento decide
+
+| # | Estratégia | Quando decide |
+|--:|---|---|
+| 0 | `codigo-composto` | o `Code` contém o código da turma **e** o da disciplina |
+| 1 | `codigo` | uma turma só com aquele código |
+| 2 | `codigo-e-nome` | desempate por nome dentro do mesmo código |
+| 3 | `nome-exato` | sem código, ou código sem match |
+| 4 | `nome-parcial` | um nome contém o outro; só a partir de 6 caracteres |
+
+⚠️ **O `Code` chega composto pelos enrollments** (`OrgUnit.Code`) e simples pelo
+launch. Comparar por igualdade quebraria o primeiro caso sem erro nenhum — a
+consulta voltaria vazia e toda disciplina viraria "não tem prova". Por isso a
+busca usa o código **inteiro E cada token** dele: o inteiro casa com códigos que
+tenham hífen (`ADM-0142`), os tokens casam com o composto.
+
+Quando não é conclusivo — nome divergente (`DIVERGENTE`) ou empate (`AMBIGUA`) —
+**aquela turma não é liberada** e o motivo vai para o log; chutar significaria
+marcar prova para a disciplina errada. Uma turma inconclusiva não derruba as
+outras.
 
 O `orgUnitId` é aprendido dos acessos: cada aluno que entra entrega o id das suas
-turmas, gravado (nunca sobrescrito) para a integração.
+turmas, gravado (nunca sobrescrito) e usado como mais um caminho de busca.
+
+#### Turma não pertence a um curso
+
+Uma turma tem alunos de **vários** cursos — compartilhada, eletiva, equivalência.
+Por isso não há coluna de curso: rotulá-la com um seria falso, e o filtro que
+existia chegava a descartar disciplina válida. Uma coluna `Curso` no arquivo é
+lida e ignorada.
+
+**Consequência aceita:** quem tem dois vínculos **na mesma matrícula** recebe, com
+`D2L_HABILITADO=true`, as disciplinas dos dois cursos juntas — e as durações de
+prova diferem. São **2 alunos em 7519** na base real. Com a flag desligada não
+acontece: a disciplina é a que ele clicou.
+
+A informação que resolveria isso é do par *(aluno, turma)*, que nenhum dos dois
+CSVs tem. E duas matrículas não bastam para escapar: os enrollments são buscados
+por `userIdD2L`, então uma pessoa com duas matrículas e uma conta só no
+Brightspace continua recebendo tudo junto.
 
 ### Idempotência
 
-Ambos os uploads fazem upsert (por `matricula + curso` e por `orgUnitId`).
-Re-subir o mesmo arquivo atualiza, nunca duplica. Toda importação registra
-auditoria em `ImportacaoCsv`.
+Ambos os uploads fazem upsert (por `matricula + curso` e por
+`codigoTurma + nomeDisciplina`). Re-subir o mesmo arquivo atualiza, nunca
+duplica. Toda importação registra auditoria em `ImportacaoCsv`.
 
 ---
 

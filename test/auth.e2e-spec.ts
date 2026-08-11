@@ -1,4 +1,5 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import * as bcrypt from 'bcrypt';
 import request from 'supertest';
@@ -137,11 +138,88 @@ describe('Auth admin (e2e)', () => {
     expect(JSON.stringify(lista.body)).not.toContain('$2b$');
   });
 
-  it('LTI ainda nao configurado responde 503, nao 500', async () => {
-    await request(app.getHttpServer())
-      .post('/api/lti/login')
-      .send({ iss: 'https://ucb.brightspace.com', login_hint: 'x' })
-      .expect(503);
+  /**
+   * ==========================================================================
+   * INICIACAO OIDC DO LTI — os dois casos NAO dependem do .env da maquina
+   * ==========================================================================
+   * Estes testes ja falharam por confiar no ambiente: enquanto o `.env` nao
+   * tinha credenciais de LTI, "sem configuracao" era o estado natural e o 503
+   * vinha de graca. No dia em que as credenciais reais entraram, a rota passou
+   * a responder 401 (issuer nao confere) e o teste quebrou sem que uma linha de
+   * codigo de producao tivesse mudado.
+   *
+   * Por isso cada caso IMPOE a configuracao que quer testar. `carregarLtiConfig`
+   * le o ConfigService a cada request, entao trocar o `get` durante a chamada
+   * basta — e o `finally` devolve o original para nao vazar para os vizinhos.
+   */
+  const comLtiConfigurado = (valores: Record<string, string | undefined>) => {
+    const config = app.get(ConfigService);
+    const original = config.get.bind(config) as (chave: string) => unknown;
+
+    return jest
+      .spyOn(config, 'get')
+      .mockImplementation((chave: string) =>
+        chave.startsWith('LTI_') ? valores[chave] : original(chave),
+      );
+  };
+
+  const LTI_COMPLETO = {
+    LTI_ISSUER: 'https://ava.exemplo.test',
+    LTI_CLIENT_ID: 'client-de-teste',
+    LTI_AUTH_LOGIN_URL: 'https://ava.exemplo.test/d2l/lti/authenticate',
+    LTI_JWKS_URL: 'https://ava.exemplo.test/d2l/.well-known/jwks',
+    LTI_REDIRECT_URI: 'https://ferramenta.exemplo.test/api/lti/launch',
+  };
+
+  it('LTI sem configuracao responde 503 dizendo o que falta, nao 500', async () => {
+    // Nenhuma LTI_* definida: e o estado de quem subiu a API sem preencher o .env.
+    const spy = comLtiConfigurado({});
+
+    try {
+      const res = await request(app.getHttpServer())
+        .post('/api/lti/login')
+        .send({ iss: 'https://ucb.brightspace.com', login_hint: 'x' })
+        .expect(503);
+
+      // O 503 so serve se disser QUAL variavel falta — senao vira "tente de novo".
+      expect(res.body.message).toContain('LTI_ISSUER');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  /**
+   * O outro lado da moeda, e o que faltava: com o LTI configurado, uma iniciacao
+   * vinda de outro issuer e recusada. Sem este caso, apagar a checagem de issuer
+   * do `iniciarLogin` nao quebraria teste nenhum.
+   */
+  it('recusa iniciacao OIDC de issuer diferente do configurado', async () => {
+    const spy = comLtiConfigurado(LTI_COMPLETO);
+
+    try {
+      await request(app.getHttpServer())
+        .post('/api/lti/login')
+        .send({ iss: 'https://impostor.example.com', login_hint: 'x' })
+        .expect(401);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  /** E o caminho feliz: issuer certo redireciona para a autorizacao do Brightspace. */
+  it('aceita a iniciacao do issuer configurado e redireciona para a autorizacao', async () => {
+    const spy = comLtiConfigurado(LTI_COMPLETO);
+
+    try {
+      const res = await request(app.getHttpServer())
+        .post('/api/lti/login')
+        .send({ iss: LTI_COMPLETO.LTI_ISSUER, login_hint: 'x' })
+        .expect(302);
+
+      expect(res.headers.location).toContain(LTI_COMPLETO.LTI_AUTH_LOGIN_URL);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('publica o JWKS da ferramenta', async () => {

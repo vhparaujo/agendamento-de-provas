@@ -110,15 +110,20 @@ export class ResultadoImportacaoAlunosDto implements ResultadoImportacaoAlunos {
 }
 
 export class TurmaRejeitadaDto {
-  @ApiProperty({ example: 12 })
+  @ApiProperty({
+    example: 12,
+    description: 'Numero da linha no arquivo (1 = primeira apos o cabecalho).',
+  })
   linha!: number;
 
-  @ApiProperty({ example: 'orgUnitId vazio' })
+  @ApiProperty({
+    example: 'OrgUnitId vazio — sem ele a linha nao identifica turma nenhuma',
+  })
   motivo!: string;
 }
 
 export class ResultadoImportacaoTurmasDto implements ResultadoImportacaoTurmas {
-  @ApiProperty({ example: 8 })
+  @ApiProperty({ example: 8, description: 'Id do registro de auditoria.' })
   importacaoId!: number;
 
   @ApiProperty({ example: 'turmas-2026-1.csv' })
@@ -130,7 +135,10 @@ export class ResultadoImportacaoTurmasDto implements ResultadoImportacaoTurmas {
   @ApiProperty({ example: 318 })
   criadas!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({
+    example: 0,
+    description: 'Reenviar o mesmo arquivo atualiza; nunca duplica.',
+  })
   atualizadas!: number;
 
   @ApiProperty({ type: [TurmaRejeitadaDto] })

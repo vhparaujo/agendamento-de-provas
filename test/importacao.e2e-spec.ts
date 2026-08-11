@@ -117,44 +117,86 @@ describe('Importacao de CSVs (e2e)', () => {
   });
 
   describe('turmas (formato real: Curso;Codigo da Turma;Disciplina)', () => {
-    const fixture = join(__dirname, 'fixtures', 'turmas-exemplo.csv');
-
-    it('importa a fixture de exemplo e e idempotente', async () => {
-      const primeira = await request(app.getHttpServer())
+    const subir = (nome: string) =>
+      request(app.getHttpServer())
         .post('/api/importacao/turmas')
         .set('Authorization', `Bearer ${token}`)
-        .attach('arquivo', readFileSync(fixture), 'turmas-exemplo.csv')
-        .expect(201);
+        .attach(
+          'arquivo',
+          readFileSync(join(__dirname, 'fixtures', nome)),
+          nome,
+        );
 
-      expect(primeira.body.totalLinhas).toBe(3);
-      expect(primeira.body.rejeitadas).toEqual([]);
-
-      // A terceira coluna traz nome e codigo EAD na mesma celula; a importacao
-      // separa os dois. E o arquivo e separado por ";" (Excel pt-BR).
-      const turma = await prisma.turmaImportada.findFirstOrThrow({
-        where: { codigoTurma: 'E2EFIX0001' },
+    afterEach(async () => {
+      await prisma.turmaImportada.deleteMany({
+        where: { codigoTurma: { startsWith: 'E2E' } },
       });
-      expect(turma.nomeDisciplina).toBe(
-        'HISTÓRIA E CULTURA DO CORPO E DO MOVIMENTO',
-      );
-      expect(turma.codigoEad).toBe('1-E2EFIX02EAD003');
-      expect(turma.curso).toBe('EDUCAÇÃO FÍSICA');
+    });
+
+    it('importa a fixture de exemplo e e idempotente', async () => {
+      const primeira = await subir('turmas-exemplo.csv').expect(201);
+
+      expect(primeira.body.totalLinhas).toBe(4);
+      expect(primeira.body.rejeitadas).toEqual([]);
+      expect(primeira.body.criadas).toBe(4);
+
+      // A 3a coluna traz nome e codigo da disciplina na MESMA celula; a
+      // importacao separa os dois e TIRA o prefixo do sistema de origem ("1-"),
+      // que nao aparece no `Code` do Brightspace. Arquivo separado por ";".
+      const turma = await prisma.turmaImportada.findFirstOrThrow({
+        where: {
+          codigoTurma: 'E2EFIX0001',
+          nomeDisciplina: { contains: 'HIST' },
+        },
+      });
+      expect(turma.nomeDisciplina).toBe('HISTÓRIA E CULTURA DO CORPO');
+      expect(turma.codigoEad).toBe('E2EFIX02EAD003');
       // o CSV nao traz orgUnitId — ele so aparece quando um aluno faz launch
       expect(turma.orgUnitId).toBeNull();
 
-      const segunda = await request(app.getHttpServer())
-        .post('/api/importacao/turmas')
-        .set('Authorization', `Bearer ${token}`)
-        .attach('arquivo', readFileSync(fixture), 'turmas-exemplo.csv')
-        .expect(201);
+      // Duas disciplinas sob o MESMO codigo de turma convivem: a chave e o PAR.
+      const mesmoCodigo = await prisma.turmaImportada.findMany({
+        where: { codigoTurma: 'E2EFIX0001' },
+      });
+      expect(mesmoCodigo).toHaveLength(2);
+      expect(mesmoCodigo.map((t) => t.codigoEad).sort()).toEqual([
+        'E2EFIX02EAD003',
+        'E2EFIX02TP001',
+      ]);
+
+      // Celula sem parenteses: nome inteiro, sem codigo de disciplina.
+      const semParentese = await prisma.turmaImportada.findFirstOrThrow({
+        where: { codigoTurma: 'E2EFIX0003' },
+      });
+      expect(semParentese.nomeDisciplina).toBe('SAÚDE COLETIVA');
+      expect(semParentese.codigoEad).toBeNull();
 
       // reenviar nao duplica: tudo vira atualizacao
+      const segunda = await subir('turmas-exemplo.csv').expect(201);
       expect(segunda.body.criadas).toBe(0);
-      expect(segunda.body.atualizadas).toBe(3);
+      expect(segunda.body.atualizadas).toBe(4);
+    });
 
-      await prisma.turmaImportada.deleteMany({
-        where: { codigoTurma: { startsWith: 'E2EFIX' } },
+    it('rejeita as linhas ruins sem derrubar a boa', async () => {
+      const res = await subir('turmas-invalidas.csv').expect(201);
+
+      // linha 1: sem codigo · 2: sem disciplina · 4: repete o par da linha 3
+      expect(res.body.rejeitadas.map((r: any) => r.linha)).toEqual([1, 2, 4]);
+      expect(res.body.rejeitadas[0].motivo).toMatch(/codigo da turma/);
+      expect(res.body.rejeitadas[2].motivo).toMatch(/repetida/);
+
+      // uma planilha com erro nao trava a importacao inteira
+      expect(res.body.criadas).toBe(1);
+      const gravadas = await prisma.turmaImportada.findMany({
+        where: { codigoTurma: { startsWith: 'E2EBAD' } },
       });
+      expect(gravadas.map((t) => t.codigoTurma)).toEqual(['E2EBAD0002']);
+    });
+
+    it('recusa arquivo sem a coluna "Codigo da Turma"', async () => {
+      const res = await subir('turmas-sem-coluna.csv').expect(400);
+
+      expect(res.body.message).toMatch(/Código da Turma/);
     });
   });
 

@@ -12,9 +12,9 @@ import { DisciplinasDoAlunoService } from './disciplinas-do-aluno.service';
  * 1. Com a Valence ligada, o aluno ve TODAS as disciplinas do semestre que o
  *    admin cadastrou — nao so a turma de onde clicou.
  * 2. Com ela desligada, nada muda: continua valendo o claim `context` do launch.
- * 3. Quem tem dois cursos nao leva disciplina do outro curso para a prova
- *    errada. As duracoes sao diferentes; misturar poria o aluno numa faixa que
- *    nao cabe a prova dele.
+ * 3. A lista NAO e separada por vinculo: turma nao pertence a um curso, entao
+ *    nao ha como atribuir a disciplina a um dos dois cursos de quem tem duas
+ *    matriculas iguais. Ver o teste "aluno com dois vinculos".
  */
 describe('DisciplinasDoAlunoService', () => {
   const HISTORIA = {
@@ -30,13 +30,12 @@ describe('DisciplinasDoAlunoService', () => {
   };
 
   /** O que o cruzamento com o CSV devolveria para cada uma delas. */
-  const cruzada = (
-    turma: { orgUnitId: string; titulo: string },
-    curso: string | null,
-  ): DisciplinaAgendavel => ({
+  const cruzada = (turma: {
+    orgUnitId: string;
+    titulo: string;
+  }): DisciplinaAgendavel => ({
     orgUnitId: turma.orgUnitId,
     nomeDisciplina: turma.titulo,
-    curso,
   });
 
   const aluno = (
@@ -98,15 +97,10 @@ describe('DisciplinasDoAlunoService', () => {
       const { service, filtrarAgendaveis, ofertasDoPeriodo } = montar({
         habilitado: true,
         ofertas: [HISTORIA, NUTRICAO],
-        cruzamento: [
-          cruzada(HISTORIA, 'EDUCACAO FISICA'),
-          cruzada(NUTRICAO, 'NUTRICAO'),
-        ],
+        cruzamento: [cruzada(HISTORIA), cruzada(NUTRICAO)],
       });
 
-      const disciplinas = await service.agendaveis(aluno(['EDUCACAO FISICA']), {
-        curso: 'EDUCACAO FISICA',
-      });
+      const disciplinas = await service.agendaveis(aluno(['EDUCACAO FISICA']));
 
       expect(ofertasDoPeriodo).toHaveBeenCalledWith('76629', '103');
       expect(filtrarAgendaveis).toHaveBeenCalledWith([HISTORIA, NUTRICAO]);
@@ -120,9 +114,7 @@ describe('DisciplinasDoAlunoService', () => {
         periodoLetivoId: undefined,
       });
 
-      const r = await service.cruzar(aluno(['EDUCACAO FISICA']), {
-        curso: 'EDUCACAO FISICA',
-      });
+      const r = await service.cruzar(aluno(['EDUCACAO FISICA']));
 
       expect(ofertasDoPeriodo).not.toHaveBeenCalled();
       expect(r.motivo).toMatch(/periodo letivo ainda nao foi configurado/);
@@ -135,9 +127,7 @@ describe('DisciplinasDoAlunoService', () => {
         cruzamento: [],
       });
 
-      const r = await service.cruzar(aluno(['EDUCACAO FISICA']), {
-        curso: 'EDUCACAO FISICA',
-      });
+      const r = await service.cruzar(aluno(['EDUCACAO FISICA']));
 
       expect(r.motivo).toMatch(/Nenhuma disciplina sua aparece/);
     });
@@ -147,12 +137,10 @@ describe('DisciplinasDoAlunoService', () => {
     it('continua valendo a turma de onde o aluno clicou', async () => {
       const { service, filtrarAgendaveis } = montar({
         habilitado: false,
-        cruzamento: [cruzada(HISTORIA, 'EDUCACAO FISICA')],
+        cruzamento: [cruzada(HISTORIA)],
       });
 
-      await service.agendaveis(aluno(['EDUCACAO FISICA']), {
-        curso: 'EDUCACAO FISICA',
-      });
+      await service.agendaveis(aluno(['EDUCACAO FISICA']));
 
       expect(filtrarAgendaveis).toHaveBeenCalledWith([HISTORIA]);
     });
@@ -163,108 +151,48 @@ describe('DisciplinasDoAlunoService', () => {
         cruzamento: [],
       });
 
-      await service.agendaveis(
-        { ...aluno(['EDUCACAO FISICA']), contexto: undefined },
-        { curso: 'EDUCACAO FISICA' },
-      );
+      await service.agendaveis({
+        ...aluno(['EDUCACAO FISICA']),
+        contexto: undefined,
+      });
 
       expect(filtrarAgendaveis).toHaveBeenCalledWith([]);
     });
   });
 
-  describe('aluno com dois cursos', () => {
+  /**
+   * A separacao por curso nao existe: turma tem alunos de varios cursos, entao o
+   * CSV nao pode dizer de qual curso cada oferta e.
+   *
+   * Consequencia aceita conscientemente (2 alunos em 7519 na base real): quem
+   * tem dois vinculos na MESMA matricula recebe as disciplinas dos dois cursos
+   * juntas pelos enrollments. Pelo LAUNCH nao acontece — a disciplina e a que
+   * ele clicou.
+   */
+  describe('aluno com dois vinculos', () => {
     const DOIS = ['EDUCACAO FISICA', 'NUTRICAO'];
 
-    it('leva para a prova so as disciplinas do curso escolhido', async () => {
+    it('recebe as disciplinas dos dois cursos pelos enrollments', async () => {
       const { service } = montar({
         habilitado: true,
         ofertas: [HISTORIA, NUTRICAO],
-        cruzamento: [
-          cruzada(HISTORIA, 'EDUCACAO FISICA'),
-          cruzada(NUTRICAO, 'NUTRICAO'),
-        ],
+        cruzamento: [cruzada(HISTORIA), cruzada(NUTRICAO)],
       });
 
-      const disciplinas = await service.agendaveis(aluno(DOIS), {
-        curso: 'NUTRICAO',
-      });
+      const disciplinas = await service.agendaveis(aluno(DOIS));
 
-      expect(disciplinas.map((d) => d.orgUnitId)).toEqual(['6610']);
+      expect(disciplinas.map((d) => d.orgUnitId)).toEqual(['6606', '6610']);
     });
 
-    it('ignora acento e caixa ao comparar o curso', async () => {
-      // Os dois CSVs vem do mesmo sistema academico, mas a grafia ja divergiu
-      // antes; casar exato transformaria isso em "voce nao tem prova".
-      const { service } = montar({
-        habilitado: true,
-        ofertas: [NUTRICAO],
-        cruzamento: [cruzada(NUTRICAO, 'NUTRIÇÃO')],
-      });
-
-      const disciplinas = await service.agendaveis(aluno(DOIS), {
-        curso: 'Nutrição',
-      });
-
-      expect(disciplinas).toHaveLength(1);
-    });
-
-    it('nada do curso escolhido = motivo que diz o que fazer', async () => {
-      const { service } = montar({
-        habilitado: true,
-        ofertas: [HISTORIA],
-        cruzamento: [cruzada(HISTORIA, 'EDUCACAO FISICA')],
-      });
-
-      const r = await service.cruzar(aluno(DOIS), { curso: 'NUTRICAO' });
-
-      expect(r.agendaveis).toEqual([]);
-      expect(r.motivo).toMatch(/escolha o outro/);
-    });
-
-    it('disciplina sem curso no CSV nao entra pelos enrollments', async () => {
-      // Ninguem escolheu essa disciplina, e nao ha nada que a ligue a este
-      // vinculo — poe-la na prova seria adivinhar de qual curso ela e.
-      const { service } = montar({
-        habilitado: true,
-        ofertas: [HISTORIA, NUTRICAO],
-        cruzamento: [cruzada(HISTORIA, null), cruzada(NUTRICAO, 'NUTRICAO')],
-      });
-
-      const disciplinas = await service.agendaveis(aluno(DOIS), {
-        curso: 'NUTRICAO',
-      });
-
-      expect(disciplinas.map((d) => d.orgUnitId)).toEqual(['6610']);
-    });
-
-    it('mas entra quando foi ELE quem clicou nela', async () => {
-      // Caminho do launch: a escolha e do aluno, nao ha o que atribuir.
+    it('pelo launch, recebe so a que clicou', async () => {
       const { service } = montar({
         habilitado: false,
-        cruzamento: [cruzada(HISTORIA, null)],
+        cruzamento: [cruzada(HISTORIA)],
       });
 
-      const disciplinas = await service.agendaveis(aluno(DOIS), {
-        curso: 'NUTRICAO',
-      });
+      const disciplinas = await service.agendaveis(aluno(DOIS));
 
-      expect(disciplinas).toHaveLength(1);
+      expect(disciplinas.map((d) => d.orgUnitId)).toEqual(['6606']);
     });
-  });
-
-  it('aluno de um curso so nao passa pelo filtro de curso', async () => {
-    // Filtrar aqui transformaria qualquer divergencia de grafia entre os dois
-    // CSVs em "voce nao tem prova" — e nao ha nada a decidir com um vinculo.
-    const { service } = montar({
-      habilitado: true,
-      ofertas: [HISTORIA],
-      cruzamento: [cruzada(HISTORIA, 'OUTRA GRAFIA DO CURSO')],
-    });
-
-    const disciplinas = await service.agendaveis(aluno(['EDUCACAO FISICA']), {
-      curso: 'EDUCACAO FISICA',
-    });
-
-    expect(disciplinas).toHaveLength(1);
   });
 });

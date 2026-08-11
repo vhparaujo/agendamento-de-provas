@@ -9,26 +9,11 @@ import {
 } from '../../turma/service/turma.service';
 import type { TurmaDoLaunch } from '../../turma/service/turma-match';
 
-/** De onde saiu a lista de turmas. Muda o que fazer com curso desconhecido. */
+/** De onde saiu a lista de turmas. So muda a mensagem quando nao ha nenhuma. */
 type Origem = 'LAUNCH' | 'ENROLLMENTS';
-
-/** O vinculo (curso) desta prova — quem decide a atribuicao das disciplinas. */
-export interface VinculoDaProva {
-  curso: string;
-}
 
 const SEM_PERIODO_LETIVO =
   'O periodo letivo ainda nao foi configurado. Procure a secretaria academica.';
-
-/** Compara nome de curso ignorando acento, caixa e espaco duplicado. */
-function normalizarCurso(curso: string | null | undefined): string {
-  return String(curso ?? '')
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toUpperCase()
-    .replace(/\s+/g, ' ')
-    .trim();
-}
 
 /**
  * ============================================================================
@@ -50,6 +35,18 @@ function normalizarCurso(curso: string | null | undefined): string {
  * O cruzamento com o CSV e o mesmo nos dois casos (`TurmaService`): a costura
  * existe aqui, e nao no `AgendamentoService`, para que a troca de fonte seja de
  * um arquivo so.
+ *
+ * O aluno NAO agenda disciplina por disciplina: um agendamento cobre TODAS as
+ * disciplinas com prova dele, de uma vez. Ele clica o link LTI de dentro de
+ * qualquer uma delas e ve a lista inteira.
+ *
+ * ⚠️ **A lista nao e separada por vinculo** (decisao de 10/08/2026). Uma turma
+ * tem alunos de varios cursos, entao o CSV de turmas nao pode dizer de qual
+ * curso cada oferta e — e sem isso nao ha como atribuir a disciplina a um
+ * vinculo. Quem tem dois vinculos NA MESMA MATRICULA recebe as disciplinas dos
+ * dois cursos juntas pelos enrollments, com duracoes de prova diferentes. Sao 2
+ * alunos em 7519 na base real; resolver isso exige a informacao do par
+ * (aluno, turma), que nenhum dos dois CSVs tem hoje.
  */
 @Injectable()
 export class DisciplinasDoAlunoService {
@@ -64,12 +61,9 @@ export class DisciplinasDoAlunoService {
     private readonly periodo: PeriodoService,
   ) {}
 
-  /** As disciplinas que este vinculo consegue agendar. Pode vir vazia. */
-  async agendaveis(
-    aluno: AlunoJwtPayload,
-    vinculo: VinculoDaProva,
-  ): Promise<DisciplinaAgendavel[]> {
-    const { agendaveis } = await this.cruzar(aluno, vinculo);
+  /** As disciplinas que o aluno consegue agendar. Pode vir vazia. */
+  async agendaveis(aluno: AlunoJwtPayload): Promise<DisciplinaAgendavel[]> {
+    const { agendaveis } = await this.cruzar(aluno);
     return agendaveis;
   }
 
@@ -77,19 +71,14 @@ export class DisciplinasDoAlunoService {
    * Igual ao anterior, mas devolve tambem o MOTIVO de nao ter achado — o portal
    * usa para dizer ao aluno algo melhor que "nao ha o que agendar".
    */
-  async cruzar(
-    aluno: AlunoJwtPayload,
-    vinculo: VinculoDaProva,
-  ): Promise<ResultadoDoCruzamento> {
+  async cruzar(aluno: AlunoJwtPayload): Promise<ResultadoDoCruzamento> {
     const origem = await this.turmasDoAluno(aluno);
 
     if (origem.motivo) return { agendaveis: [], motivo: origem.motivo };
 
     this.avisarSeFiltroDesligado(origem.origem);
 
-    const cruzado = await this.turmaService.filtrarAgendaveis(origem.turmas);
-
-    return this.doVinculo(cruzado, aluno, vinculo, origem.origem);
+    return this.turmaService.filtrarAgendaveis(origem.turmas);
   }
 
   /**
@@ -148,65 +137,5 @@ export class DisciplinasDoAlunoService {
           ? 'Nenhuma disciplina sua aparece no periodo letivo vigente. Procure a secretaria academica.'
           : undefined,
     };
-  }
-
-  /**
-   * ==========================================================================
-   * DE QUAL CURSO E CADA DISCIPLINA
-   * ==========================================================================
-   * Um agendamento cobre as disciplinas de UM vinculo (regra 4): quem tem dois
-   * cursos faz duas provas, com duracoes diferentes. Enquanto a fonte era a
-   * turma clicada, o proprio clique dizia de qual curso era a prova. Os
-   * enrollments vem pelo RA — chegam misturados, e alguem precisa separar.
-   *
-   * Quem separa e a coluna Curso do CSV de turmas, comparada com o curso do
-   * vinculo. Vinculo unico nao passa por aqui: nao ha o que decidir, e filtrar
-   * transformaria uma divergencia de grafia no CSV em "voce nao tem prova".
-   *
-   * Curso desconhecido (`null` no CSV) e tratado conforme a origem, e a
-   * diferenca importa: no LAUNCH o aluno CLICOU naquela turma — a escolha e
-   * dele, e nao ha o que atribuir; nos ENROLLMENTS ninguem escolheu nada, entao
-   * uma disciplina que nao se sabe de que curso e nao pode entrar numa prova de
-   * curso especifico.
-   */
-  private doVinculo(
-    resultado: ResultadoDoCruzamento,
-    aluno: AlunoJwtPayload,
-    vinculo: VinculoDaProva,
-    origem: Origem,
-  ): ResultadoDoCruzamento {
-    if (aluno.vinculos.length <= 1 || resultado.agendaveis.length === 0) {
-      return resultado;
-    }
-
-    const doCurso = normalizarCurso(vinculo.curso);
-
-    const dele = resultado.agendaveis.filter((d) => {
-      const curso = normalizarCurso(d.curso);
-
-      if (!curso) return origem === 'LAUNCH';
-      return curso === doCurso;
-    });
-
-    const foraDoCurso = resultado.agendaveis.length - dele.length;
-
-    if (foraDoCurso > 0) {
-      // Nao e erro: aluno de dois cursos tem disciplinas dos dois no semestre, e
-      // cada prova cobre so as suas. Fica no log porque tambem e o sintoma de
-      // grafia divergente entre os dois CSVs — e ai a secretaria precisa saber.
-      this.logger.debug(
-        `Matricula ${aluno.sub}: ${foraDoCurso} disciplina(s) de outro curso fora da prova de "${vinculo.curso}".`,
-      );
-    }
-
-    return dele.length > 0
-      ? { agendaveis: dele }
-      : {
-          agendaveis: [],
-          motivo:
-            `Nenhuma das suas disciplinas com prova neste semestre pertence ao curso ` +
-            `${vinculo.curso}. Se voce tem mais de um curso, escolha o outro; ` +
-            'se o erro continuar, procure a secretaria academica.',
-        };
   }
 }

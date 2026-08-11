@@ -293,7 +293,7 @@ como opção alternativa secundária; o padrão é manual.
 | CSV | Colunas reais → uso | Observações |
 |---|---|---|
 | **Alunos** | RA→matrícula · ALUNO→nome · EMAIL INSTITUCIONAL→email · CURSO→curso (só exibição) · STATUS CURSO→ativo · CAMPUS→polo | Modalidade vem do **dropdown no upload** (aba EaD/Semi/Híbrido), não de coluna. RA é alfanumérico (String). Encoding real: ISO-8859-1. |
-| **Turmas** | Curso · Código da Turma · Disciplina / Código EAD | filtro final de disciplinas com prova. Separado por `;` (Excel pt-BR). A 3ª coluna traz **nome e código EAD na mesma célula** — separados na leitura. |
+| **Turmas** | Código da Turma · Disciplina / Código EAD (a coluna `Curso`, se vier, é **ignorada**) | filtro final de disciplinas com prova. Separado por `;` (Excel pt-BR). A 2ª coluna traz **nome e código da disciplina na mesma célula** — separados na leitura. |
 
 **Regras dos campos de aluno:**
 - **STATUS CURSO**: importa **todos** os alunos, guardando o valor bruto em
@@ -313,8 +313,9 @@ como opção alternativa secundária; o padrão é manual.
 - **CAMPUS→polo**: casa com `Polo.nome` por string exata (mesma origem do seed).
 
 Todo upload registra auditoria (`ImportacaoCsv`: tipo, arquivo, linhas, quem, quando).
-Importação **idempotente**: upsert por `[matricula, curso]` (alunos) e `orgUnitId`
-(turmas). Re-subir o mesmo arquivo atualiza, nunca duplica.
+Importação **idempotente**: upsert por `[matricula, curso]` (alunos) e
+`[codigoTurma, nomeDisciplina]` (turmas). Re-subir o mesmo arquivo atualiza,
+nunca duplica.
 
 **Endpoints** (todos exigem JWT de admin):
 - `POST /api/importacao/alunos` — multipart: `arquivo` (.csv) + `modalidade`
@@ -337,53 +338,112 @@ sala. O admin corrige a planilha e reenvia.
 default é **bloquear agendamento** (não liberar prova para disciplina errada),
 controlado por um flag claro e invertível (`TURMAS_FILTER_ENABLED`, default `true`).
 
-### O cruzamento é por CÓDIGO + NOME, não por orgUnitId
+### O cruzamento é por CÓDIGO DA TURMA + CÓDIGO DA DISCIPLINA
 
-**O CSV de turmas não traz orgUnitId.** Descobri-lo exigiria consultar o
-Brightspace. Mas os dois campos necessários — código e nome — chegam prontos das
-**duas** fontes possíveis: `context.label`/`context.title` no launch LTI, e
-`OrgUnit.Code`/`OrgUnit.Name` nos enrollments da Valence. Por isso
-`filtrarAgendaveis` recebe uma **lista** de turmas e decide cada uma sozinha: uma
-inconclusiva não derruba as outras, e o `motivo` só vai para a tela do aluno
-quando **nada** passou (com uma disciplina liberada, ele agenda).
-
-**⚠️ `context.label` vem VAZIO neste tenant** — observado num launch real em
-04/08/2026. O código chega grudado no fim do `title`:
+**O CSV não traz orgUnitId** e descobri-lo exigiria consultar o Brightspace. Mas
+o `Code` da oferta nesta instância é **composto** e carrega os dois códigos que
+a planilha tem:
 
 ```
-context: { id: 137677, title: "LABORATÓRIO DE REDES DE COMPUTADORES - GEE11I40254", label: "" }
+GSPS02_GSPS02EAD003_GSPS0I10227_2026/1
+       └─ disciplina  └─ turma
 ```
 
-É o mesmo formato `"NOME - CÓDIGO"` que `normalizarNome` já precisava desmontar.
-Por isso `lerContexto` tenta o `label` e, **só se ele vier vazio**, extrai o
-código do fim do título (`extrairCodigoDoTitulo`, em `turma-match.ts`).
+E o código da turma **se repete**: HISTÓRIA, DANÇA e LUTAS rodam todas sob
+`GSPS0I10227`. O que as separa é o código da disciplina — aquele que vem entre
+parênteses na 3ª coluna do CSV. Por isso **o par identifica a oferta sem depender
+do nome**, e é o primeiro critério, não o último.
 
-Isso não afrouxa nada: o código extraído ainda precisa existir em
-`TurmaImportada` **e** o nome ainda precisa casar. A extração é conservadora de
-propósito — recusa qualquer trecho final que não pareça código (com espaço, só
-letras, ou só números), porque um falso positivo aqui viraria busca por um código
-inexistente e o aluno perderia a disciplina. Há teste para cada recusa.
+Regra e desempate em `src/turma/service/turma-match.ts`, portada de
+`../brightspace-orgunits` (`src/matching.js` + `src/normalize.js`), que já
+resolve isto contra a instância real da UCB.
 
-Sem isso, **todo launch real** terminava em "o launch não trouxe código de turma
-para procurar", e nenhum aluno conseguia agendar.
+**De onde vem o `Code` do nosso lado — e a armadilha:**
 
-**E precisa dos dois.** O mesmo código aparece em mais de uma oferta (semestres,
-turmas diferentes): o código é o primeiro filtro, o **nome é quem decide**. Regra
-e desempate em `src/turma/service/turma-match.ts`, portada do projeto
-`../brightspace-change-dates` (`src/orgUnitResolver.js`), que já resolve isso
-contra a instância real da UCB.
+| Fonte | O que chega |
+|---|---|
+| enrollments (`D2L_HABILITADO=true`) | `OrgUnit.Code` — o **composto inteiro** |
+| launch LTI | `context.label`, que **vem vazio neste tenant**; o código sai do fim do título (`extrairCodigoDoTitulo`), já simples |
+
+⚠️ **Comparar o código por igualdade quebra os enrollments.** `GSPS0I10227` nunca
+seria igual a `GSPS02_GSPS02EAD003_GSPS0I10227_2026/1`, e a consulta voltaria
+vazia **sem erro nenhum** — toda disciplina viraria "não tem prova". Por isso
+`codigosParaBuscar` devolve o código **inteiro E cada token**: o inteiro é o que
+casa com um `codigoTurma` que tenha hífen (`ADM-0142`, que tokenizado viraria
+duas palavras); os tokens são o que casa com o composto. Nenhum cobre o caso do
+outro. Há teste para os dois.
+
+E a comparação de token é **por token, nunca por substring**: `GSPS02` existe
+dentro de `GSPS02EAD003`, e por substring o prefixo do curso passaria por código
+de disciplina.
+
+**Os tiers, na ordem** (o primeiro que produzir exatamente uma vence):
+
+| # | Estratégia | Quando decide |
+|--:|---|---|
+| 0 | `codigo-composto` | o `Code` contém o código da turma **e** o da disciplina |
+| 1 | `codigo` | uma turma só com aquele código |
+| 2 | `codigo-e-nome` | desempate por nome dentro do mesmo código |
+| 3 | `nome-exato` | sem código, ou código sem match |
+| 4 | `nome-parcial` | um nome contém o outro; só a partir de 6 caracteres |
+
+Zero acertos no tier 0 **não é falha**: significa que o `Code` não é composto ou
+que a disciplina não bate, e a decisão segue para os tiers seguintes. É o que
+garante que ele nunca piore o que já funcionava.
 
 **Nada é chutado.** Código sem nome compatível (`DIVERGENTE`) ou empate entre
 candidatas (`AMBIGUA`) **não liberam nada**, e o motivo vai para o log. Chutar
 aqui significaria marcar prova para a disciplina errada — erro que só apareceria
-no dia. O match parcial existe (nome truncado), mas só a partir de 6 caracteres:
-abaixo disso, "ADM" casaria com qualquer coisa.
+no dia.
+
+**O prefixo numérico do código da disciplina sai na leitura.** `(1-GSPS02EAD003)`
+vira `GSPS02EAD003`: o `1-` é do sistema de origem e não aparece no `Code`, então
+mantê-lo faria o token nunca casar. O código só é guardado se **parecer** código
+(letra e número, sem espaço) e se **diferir** do código da turma — `(TURMA A)`,
+`(2026)` e `Nome (CODIGO_DA_PROPRIA_TURMA)` deixam o nome intacto.
 
 **O orgUnitId é aprendido de graça.** Todo launch entrega o `context.id` da turma
 de onde o aluno clicou; quando o cruzamento fecha e a linha ainda não tem
 orgUnitId, ele é gravado (nunca sobrescrito). Ao longo do período de agendamento
-a tabela se completa sozinha. Com os enrollments ligados o aprendizado acelera:
-cada acesso resolve **todas** as turmas do aluno, não só a que ele clicou.
+a tabela se completa sozinha, e o id vira mais um caminho de busca.
+
+### ⚠️ Turma NÃO pertence a um curso (decisão de 10/08/2026)
+
+Uma turma tem alunos de **vários** cursos — disciplina compartilhada, eletiva,
+equivalência. Rotulá-la com um curso é falso, e o filtro que existia chegava a
+**descartar disciplina válida** de quem cursava uma oferta de outro curso.
+
+Por isso `TurmaImportada.curso` foi removido, junto com o `doVinculo` do
+`DisciplinasDoAlunoService`. Uma coluna `Curso` no arquivo é lida e ignorada.
+
+**O preço, aceito conscientemente.** Quem tem dois vínculos **na mesma
+matrícula** recebe, pelos enrollments, as disciplinas dos dois cursos juntas — e
+as durações de prova são diferentes. Medido na base real:
+
+```
+RAs distintos ............... 7519
+com mais de um vínculo ...... 2   (0,03%)
+  → mesma modalidade ........ 0
+  → modalidades diferentes .. 2   ← os únicos afetados
+
+  UC24424289  [EAD/PEDAGOGIA, MODULAR/PSICOLOGIA]
+  UC25426277  [MODULAR/ENFERMAGEM, SEMI/FARMÁCIA]
+```
+
+Dois alunos. E **só aparece com `D2L_HABILITADO=true`**: pelo launch a disciplina
+é a que o aluno clicou, e o problema não existe.
+
+**Por que nenhum dos dois CSVs resolve.** A informação que falta é do par
+**(aluno, turma)** — "esta pessoa cursa esta disciplina por qual vínculo" —, e
+isso não é atributo da turma nem do aluno isoladamente. As saídas possíveis, se
+um dia valer a pena: o aluno escolher na tela, a secretaria montar os dois
+agendamentos pelo remanejo, ou uma tabela de exceção só para quem tem 2+
+vínculos.
+
+**Duas matrículas não bastam para escapar.** Os enrollments são buscados por
+`userIdD2L`, não por matrícula (`ofertasDoPeriodo(aluno.userIdD2L, ...)`). Uma
+pessoa com duas matrículas mas **uma conta só no Brightspace** continua recebendo
+tudo misturado.
 
 ## Integração D2L
 
@@ -422,18 +482,10 @@ desligar o filtro liberava uma disciplina; com os enrollments, libera o semestre
 inteiro do aluno — o CSV de turmas é justamente quem diz quais turmas têm prova.
 O serviço loga um aviso quando as duas coisas estão ligadas ao mesmo tempo.
 
-**De qual vínculo é cada disciplina.** Os enrollments vêm pelo RA, não por curso:
-para quem tem dois vínculos, chegam misturados, e um agendamento cobre as
-disciplinas de **um** vínculo (regra 4 — as durações são diferentes). Quem separa
-é a coluna **Curso** do CSV de turmas, comparada com o curso do vínculo ignorando
-acento e caixa. Detalhes que não são acidentais:
+**A lista NÃO é separada por vínculo.** Os enrollments vêm pelo RA e chegam
+misturados para quem tem dois cursos — e nada os separa, porque turma não
+pertence a um curso. Ver "Turma NÃO pertence a um curso".
 
-- **Vínculo único não passa pelo filtro.** Não há o que decidir, e filtrar
-  transformaria qualquer divergência de grafia entre os dois CSVs em "você não
-  tem prova".
-- **Disciplina sem curso no CSV** entra pelo caminho do launch (o aluno *clicou*
-  nela) e fica de fora pelos enrollments (ninguém escolheu, e não há nada que a
-  ligue àquele vínculo).
 - Referência completa da API em [`docs/D2L_API_REFERENCE.md`](docs/D2L_API_REFERENCE.md)
   (autenticação, endpoints, armadilhas). O projeto `../lti-spike` tem um launch
   LTI funcionando contra `catolicatest.brightspace.com` — é a fonte de verdade
@@ -454,7 +506,7 @@ Modular por domínio. Cada módulo segue subpastas:
 ```
 src/
   auth/        ✅ controller/ dto/ jwt/ lti/ service/ module/ roles.decorator.ts
-  admin/       ✅   aluno/  ✅   importacao/ ✅ (2 CSVs)   turma/ ✅ (cruzamento)
+  admin/       ✅   aluno/  ✅   importacao/ ✅ (2 CSVs)   turma/ ✅ (filtro por id)
   config/      ✅ env.validation.ts · swagger.ts · helmet.config.ts · throttler.config.ts
   seguranca/   ✅ auditoria (log de eventos) · filtro global de excecoes
   database/    ✅ prisma.service.ts · mariadb-adapter.ts · prisma.module.ts
@@ -522,7 +574,7 @@ npm run seed                 # lê SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD do .en
 npm run lti:keygen           # gera a chave RSA da ferramenta (LTI_TOOL_PRIVATE_KEY)
 
 # token de aluno para testar o portal sem o Brightspace (recusa em producao)
-npm run token:aluno -- <RA> [orgUnitId] [titulo da turma]
+npm run token:aluno -- <RA> [orgUnitId]
 
 # access token da Valence a partir do refresh gravado (recusa em producao).
 # Usa o D2lOauthService, entao a ROTACAO do refresh e persistida — nunca fale
@@ -678,7 +730,7 @@ remanejar: se fossem três implementações, uma delas acabaria sem o `FOR UPDAT
 dúvida, não libera. Para testar antes do CRUD administrativo (etapa 7), crie a
 linha em `PeriodoAgendamento` pelo `npm run prisma:studio`.
 
-**Token de aluno para teste:** `npm run token:aluno -- <RA> [orgUnitId] [título]`
+**Token de aluno para teste:** `npm run token:aluno -- <RA> [orgUnitId]`
 monta o mesmo payload do launch lendo os vínculos do banco, pulando só a
 assinatura do Brightspace. **Recusa rodar com `NODE_ENV=production`.**
 
@@ -694,8 +746,13 @@ assinatura do Brightspace. **Recusa rodar com `NODE_ENV=production`.**
 8. 🟡 Valence: OAuth + enrollments (todas as disciplinas do semestre) prontos e
    desligados por padrão. Special access no quiz — **adiado pelo cliente.**
 
-**Bloqueios externos:** nenhum aberto. O CSV real de turmas chegou em 04/08/2026
-e confirmou o mapeamento (`Curso;Código da Turma;Disciplina / Código EAD`, `;`,
-UTF-8, nome e código EAD na mesma célula) — é ele quem diz **quais turmas têm
-prova**, e a coluna Curso é o que separa as disciplinas por vínculo. O special
-access continua adiado pelo cliente.
+**Bloqueios externos:** nenhum aberto. O CSV real de turmas
+(`Curso;Código da Turma;Disciplina / Código EAD`, `;`, UTF-8) é quem diz **quais
+turmas têm prova**. Em 07/08/2026 o match passou a usar o **`Code` composto** do
+Brightspace (código da turma + código da disciplina), portado do
+`../brightspace-orgunits` — sem isso o caminho dos enrollments não achava turma
+nenhuma. O special access continua adiado pelo cliente.
+
+**Aceito conscientemente:** com `D2L_HABILITADO=true`, o aluno de dois vínculos
+na mesma matrícula leva as disciplinas dos dois cursos em cada agendamento — são
+2 em 7519. Ver "Turma NÃO pertence a um curso".

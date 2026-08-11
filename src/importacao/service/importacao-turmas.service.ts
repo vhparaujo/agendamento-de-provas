@@ -47,32 +47,46 @@ export class ImportacaoTurmasService {
     let criadas = 0;
     let atualizadas = 0;
 
+    // Duas linhas com o mesmo par [codigo, nome] sao a MESMA turma. Deduplicar
+    // antes evita que elas caiam no mesmo lote concorrente e disputem o upsert —
+    // a segunda veria a primeira no meio da criacao e estouraria por unicidade.
+    const vistos = new Map<string, number>();
+
     for (let inicio = 0; inicio < linhas.length; inicio += LOTE) {
       const lote = linhas.slice(inicio, inicio + LOTE);
 
       const resultados = await Promise.all(
         lote.map(async (linha, i) => {
           const numero = inicio + i + 1;
-          const turma = mapRowToTurma(linha);
+          const mapeada = mapRowToTurma(linha);
 
-          if (!turma) {
-            return {
-              rejeicao: {
-                linha: numero,
-                motivo:
-                  'codigo da turma ou nome da disciplina vazio — os dois sao ' +
-                  'necessarios para identificar a turma',
-              },
-              criada: false,
-            };
+          if (!mapeada.ok) {
+            return { rejeicao: { linha: numero, motivo: mapeada.motivo } };
           }
 
+          const turma = mapeada.turma;
           const chave = {
             codigoTurma_nomeDisciplina: {
               codigoTurma: turma.codigoTurma,
               nomeDisciplina: turma.nomeDisciplina,
             },
           };
+
+          const assinatura = `${turma.codigoTurma}\u0000${turma.nomeDisciplina}`;
+          const anterior = vistos.get(assinatura);
+
+          if (anterior !== undefined) {
+            return {
+              rejeicao: {
+                linha: numero,
+                motivo:
+                  `Turma "${turma.codigoTurma} — ${turma.nomeDisciplina}" repetida ` +
+                  `(ja veio na linha ${anterior}).`,
+              },
+            };
+          }
+
+          vistos.set(assinatura, numero);
 
           const existente = await this.prisma.turmaImportada.findUnique({
             where: chave,
@@ -83,13 +97,12 @@ export class ImportacaoTurmasService {
             where: chave,
             update: {
               codigoEad: turma.codigoEad,
-              curso: turma.curso,
               importacaoId: importacao.id,
             },
             create: { ...turma, importacaoId: importacao.id },
           });
 
-          return { rejeicao: undefined, criada: !existente };
+          return { criada: !existente };
         }),
       );
 
