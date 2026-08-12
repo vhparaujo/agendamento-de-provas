@@ -118,17 +118,32 @@ export class AgendamentoAdminController {
 
   @Get('exportacao')
   @ApiOperation({
-    summary: 'Baixa o relatorio completo em CSV',
+    summary: 'Baixa o CSV de TODOS os alunos, agendados ou nao',
     description:
-      'Uma linha por agendamento com todos os dados: aluno, curso, modalidade, ' +
-      'polo, data, horario, sala, disciplinas cobertas e quando foi agendado. ' +
-      'Aceita os mesmos filtros da listagem, sem paginacao.\n\n' +
+      'Uma linha por **vinculo importado** (aluno + curso), nao por agendamento: ' +
+      'quem ainda nao marcou prova sai no arquivo com as colunas da prova vazias ' +
+      'e `Status = Não Agendado`. E essa a lista que a secretaria usa para cobrar ' +
+      'quem falta.\n\n' +
+      'Colunas: Matricula, Aluno, E-mail, Curso, Modalidade, Polo, Data da prova, ' +
+      'Inicio, Fim, Sala, Status (`Agendado` | `Não Agendado`) e Agendado em.\n\n' +
+      'O arquivo baixa como **`Lista Agendamento-<data>.csv`**.\n\n' +
+      'O recorte e **um periodo letivo** — o de `periodoLetivoId` ou, sem ele, o ' +
+      'vigente. Um agendamento **cancelado** conta como `Não Agendado`: quem ' +
+      'cancelou e nao remarcou precisa ser contatado igual a quem nunca entrou.\n\n' +
+      '`faixaId`, `salaId`, `de` e `ate` sao filtros da **prova** e, quando ' +
+      'informados, restringem o arquivo a quem tem prova ali. `poloId`, ' +
+      '`modalidadeId` e `busca` filtram o aluno e continuam trazendo quem nao ' +
+      'agendou. `status` nao se aplica aqui — a coluna e derivada.\n\n' +
       'Sai com BOM UTF-8 e separado por `;`, para abrir direto no Excel em ' +
       'portugues sem estragar os acentos.',
   })
   @aplicarFiltros()
-  @ApiQuery({ name: 'busca', required: false, type: String })
-  @ApiQuery({ name: 'status', required: false, enum: StatusAgendamento })
+  @ApiQuery({
+    name: 'busca',
+    required: false,
+    type: String,
+    description: 'Casa com matricula, nome, e-mail ou curso.',
+  })
   @ApiProduces('text/csv')
   @ApiOkResponse({
     description: 'Arquivo CSV',

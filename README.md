@@ -59,7 +59,7 @@ a entrada do aluno por **LTI 1.3**, que funciona.
 Login por e-mail/senha → JWT. Cadastra salas, monta faixas (data + horário +
 quais salas atendem qual modalidade + vagas + ordem), importa os CSVs de alunos e
 turmas, abre/fecha o período de agendamento, acompanha a ocupação de cada sala e
-**exporta o relatório completo em CSV**.
+**exporta em CSV a lista de todos os alunos, com quem já agendou e quem não**.
 
 ---
 
@@ -377,7 +377,7 @@ Exigem JWT de admin. Todas aceitam os mesmos filtros: `poloId`, `faixaId`,
 |---|---|---|
 | `GET` | `/agendamentos` | Listagem paginada (50/pág, máx. 200), com busca por matrícula, nome ou curso |
 | `GET` | `/agendamentos/resumo` | Ocupação por sala: quais abrir, quantos fiscais, quais ficaram vazias |
-| `GET` | `/agendamentos/exportacao` | **O relatório completo em CSV** |
+| `GET` | `/agendamentos/exportacao` | **CSV de TODOS os alunos** — agendados ou não |
 | `GET` | `/agendamentos/:id` | Detalhe |
 | `GET` | `/agendamentos/:id/historico` | **Quem alterou**: o próprio aluno ou qual administrador |
 | `PATCH` | `/agendamentos/:id/remanejar` | Move de sala (`salaFaixaId`) ou de horário (`faixaId`) |
@@ -386,8 +386,82 @@ Exigem JWT de admin. Todas aceitam os mesmos filtros: `poloId`, `faixaId`,
 O remanejo **não depende do período estar aberto** — consertar depois do
 fechamento é justamente o caso de uso.
 
-Sem `status` explícito, tudo traz apenas os **confirmados** — um cancelado na
-lista do dia da prova faria alguém procurar um aluno que não vem.
+Sem `status` explícito, a **consulta** traz apenas os **confirmados** — um
+cancelado na lista do dia da prova faria alguém procurar um aluno que não vem.
+
+#### A exportação é de alunos, não de agendamentos
+
+`GET /agendamentos/exportacao` responde outra pergunta: **com quem a secretaria
+precisa falar.** Por isso a base são os **vínculos importados, todos eles**, e o
+agendamento entra como coluna — quem ainda não marcou sai no arquivo com as
+colunas da prova vazias e `Status = Não Agendado`.
+
+| Coluna | |
+|---|---|
+| `Matricula` · `Aluno` · `E-mail` · `Curso` · `Modalidade` · `Polo` | do vínculo importado |
+| `Data da prova` · `Inicio` · `Fim` · `Sala` | vazias para quem não agendou |
+| `Status` | **só dois valores**: `Agendado` ou `Não Agendado` |
+| `Agendado em` | data/hora em que o aluno confirmou |
+
+- **Cancelado conta como `Não Agendado`.** Quem cancelou e não remarcou precisa
+  ser contatado igual a quem nunca entrou no portal. É também por isso que
+  `status` não se aplica aqui: a coluna é **derivada**, não filtrada.
+- **O recorte é um período letivo** — o de `periodoLetivoId` ou, sem ele, o
+  vigente. Sem isso, quem fez prova no semestre passado apareceria como
+  "agendado" e escaparia da cobrança deste.
+- `faixaId`, `salaId`, `de` e `ate` são filtros da **prova**: informá-los
+  restringe o arquivo a quem tem prova ali (é a lista daquela sala/daquele dia).
+  `poloId`, `modalidadeId` e `busca` filtram o **aluno** e continuam trazendo
+  quem não agendou.
+
+### Relatórios — grupos para o Brightspace
+
+A aba **Relatorios** do painel. Gera o arquivo que o *Groups Import* do
+Brightspace consome, para criar um grupo por horário de prova (e depois liberar
+o quiz para o grupo).
+
+Filtros comuns às três rotas: `poloId`, `periodoLetivoId`, `de`, `ate` (data da
+**prova**).
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `GET` | `/relatorios/grupos-d2l` | Lista as faixas do recorte com quantos alunos cada uma tem |
+| `GET` | `/relatorios/grupos-d2l/zip` | Zip com o CSV de todas as faixas |
+| `GET` | `/relatorios/grupos-d2l/:faixaId` | O CSV de uma faixa |
+
+O arquivo tem **duas colunas**: `Nome de usuário` com a matrícula (RA) e
+`Código do Grupo` **em branco** — o código é preenchido à mão depois de criar o
+grupo no D2L.
+
+```
+Nome de usuário,Código do Grupo
+UC25426847,
+0009552430,
+```
+
+- **Um arquivo por FAIXA**, não por sala: o grupo existe para liberar o quiz num
+  horário, e a sala em que a pessoa senta não muda o acesso.
+- **Cada matrícula aparece uma vez.** Um RA com dois vínculos na mesma modalidade
+  pode ter dois agendamentos na mesma faixa; o grupo é por *usuário*.
+- **Só agendamentos `CONFIRMADO`**, no período letivo do recorte (ou o vigente).
+- Nome do arquivo: **`20-08-2026 08h30-11h30.csv`** — dia e horário, sem polo e
+  sem sala. Dentro do zip, duas faixas do mesmo horário em polos diferentes são
+  desempatadas pelo id (`... #14.csv`).
+- Faixa **sem ninguém** aparece na listagem com `0`, mas fica **fora do zip**.
+
+#### ⚠️ Este CSV é o oposto do outro
+
+| | `/agendamentos/exportacao` | `/relatorios/grupos-d2l/:faixaId` |
+|---|---|---|
+| Quem lê | Pessoa, no Excel pt-BR | O Brightspace |
+| Separador | `;` | `,` |
+| BOM UTF-8 | sim | **não** |
+| Colunas | 12 | 2 |
+
+Com `;` o D2L lê a linha inteira como um campo só; com BOM, os três bytes grudam
+no cabeçalho e `Nome de usuário` deixa de casar com a coluna esperada. O
+montador é o mesmo (`csv-relatorio.ts`), parametrizado por `{ separador, bom }`,
+com **default no formato do Excel**.
 
 ### Autorização da Valence (D2L)
 
@@ -821,7 +895,8 @@ src/
                   agendamento-admin.service.ts (consulta, resumo, exportação)
                   alocacao.ts (regra sequencial, função pura)
                   lock-de-vagas.ts (o FOR UPDATE, compartilhado pelos 3 caminhos)
-                  csv-relatorio.ts (CSV do Excel, com defesa de injeção)
+                  csv-relatorio.ts (montador de CSV parametrizavel — default no
+                  formato do Excel —, com defesa de injeção)
                   disciplinas-do-aluno.service.ts (escolhe a fonte das
                   disciplinas e separa por vínculo)
   aluno/          cruzamento matrícula → vínculos
@@ -841,6 +916,9 @@ src/
   modalidade/     leitura das modalidades e suas durações
   periodo/        janela de agendamento (CRUD do admin + leitura do portal)
   polo/  sala/  sala-faixa/    estrutura física e ajuste da oferta
+  relatorio/
+    service/      relatorio.service.ts (as faixas exportáveis e o zip)
+                  csv-grupos-d2l.ts (o formato que o Groups Import aceita)
   seguranca/      auditoria + filtro global de exceções
   turma/          cruzamento disciplinas ∩ turmas ∩ período
   generated/      client do Prisma (NÃO versionado)

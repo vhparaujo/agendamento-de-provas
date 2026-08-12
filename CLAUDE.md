@@ -270,7 +270,8 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `GET /portal/periodo` · `/portal/disciplinas` · `/portal/faixas` | aluno | O que ele pode escolher |
 | `GET/POST /portal/agendamentos` | aluno | Confirmar a prova e consultar o que já marcou |
 | `GET/POST /periodos` · `GET/PATCH /periodos/:id` | admin | Abrir/fechar a janela de agendamento |
-| `GET /agendamentos` · `/resumo` · `/exportacao` · `/:id` | admin | Relatório: consulta, ocupação por sala e CSV |
+| `GET /agendamentos` · `/resumo` · `/exportacao` · `/:id` | admin | Relatório: consulta, ocupação por sala e o CSV de **todos os alunos** |
+| `GET /relatorios/grupos-d2l` · `/zip` · `/:faixaId` | admin | Grupos do Brightspace: um CSV de matrículas **por faixa** |
 | `PATCH /agendamentos/:id/remanejar` · `DELETE /agendamentos/:id` | admin | Mover de sala/horário e cancelar |
 | `PATCH /portal/agendamentos/:id` · `DELETE` | aluno | Trocar de horário (atômico) e cancelar |
 | `GET /agendamentos/:id/historico` | admin | Quem alterou: aluno ou administrador |
@@ -575,6 +576,7 @@ src/
   modalidade/  ✅  polo/  ✅  sala/  ✅  faixa/  ✅  sala-faixa/  ✅
   agendamento/ ✅ portal do aluno · alocacao.ts (pura) · disciplinas-do-aluno.service.ts
   periodo/     ✅ CRUD do admin + leitura usada pelo portal
+  relatorio/   ✅ grupos do Brightspace por faixa (csv-grupos-d2l.ts + zip)
   d2l/         🟡 autorização OAuth + leitura de matrículas (d2l-enrollments).
                Special access continua adiado — não criar sem pedido.
 
@@ -796,6 +798,83 @@ linha em `PeriodoAgendamento` pelo `npm run prisma:studio`.
 **Token de aluno para teste:** `npm run token:aluno -- <RA> [orgUnitId]`
 monta o mesmo payload do launch lendo os vínculos do banco, pulando só a
 assinatura do Brightspace. **Recusa rodar com `NODE_ENV=production`.**
+
+## A exportação em CSV é de ALUNOS, não de agendamentos
+
+`GET /agendamentos/exportacao` não é a tela virada arquivo. Ele responde **com
+quem a secretaria precisa falar**: a base são os **vínculos importados, todos
+eles**, e o agendamento entra como coluna. Quem não marcou sai com as colunas da
+prova vazias e `Status = Não Agendado`.
+
+Colunas, e só estas: `Matricula · Aluno · E-mail · Curso · Modalidade · Polo ·
+Data da prova · Inicio · Fim · Sala · Status · Agendado em`.
+
+- **`Status` tem dois valores, `Agendado` e `Não Agendado`** — não o enum do
+  banco. Quem for cobrar filtra a coluna no Excel; `CANCELADO` obrigaria a
+  secretaria a saber que cancelado também significa "precisa agendar".
+- **Cancelado conta como `Não Agendado`** e, por isso, o filtro `status` da URL
+  **não se aplica** aqui: a coluna é derivada.
+- **O recorte é um período letivo** (`periodoLetivoId` ou o vigente). Sem ele,
+  prova do semestre passado faria o aluno parecer agendado.
+- `faixaId`/`salaId`/`de`/`ate` são filtros da **prova** e restringem o arquivo a
+  quem tem prova ali; `poloId`/`modalidadeId`/`busca` filtram o **aluno** e
+  continuam trazendo quem não agendou.
+
+Não "otimize" isso de volta para uma consulta em `agendamento`: o arquivo
+deixaria de listar exatamente as pessoas para as quais ele existe.
+
+## ⚠️ São DOIS CSVs, com formatos OPOSTOS
+
+Confundir os dois é o erro fácil desta parte do sistema. Eles têm público,
+conteúdo e bytes diferentes:
+
+| | `GET /agendamentos/exportacao` | `GET /relatorios/grupos-d2l/:faixaId` |
+|---|---|---|
+| Quem lê | **Pessoa**, no Excel pt-BR | **Máquina**: o *Groups Import* do Brightspace |
+| Responde | "com quem a secretaria precisa falar" | "quem entra no grupo desta prova" |
+| Base | Todos os vínculos, agendados ou não | Só quem tem prova **confirmada** |
+| Colunas | 12 | 2 (`Nome de usuário`, `Código do Grupo` **vazia**) |
+| Separador | `;` | `,` |
+| BOM UTF-8 | **sim** | **não** |
+| Recorte | um período letivo | uma **faixa** + um período letivo |
+
+Trocar o separador ou o BOM quebra em silêncio nos dois sentidos: com `;` o D2L
+lê a linha inteira como um campo só; com BOM, os três bytes grudam no cabeçalho e
+`Nome de usuário` deixa de casar com a coluna esperada; e o CSV da secretaria sem
+BOM chega no Excel como "CÃ¢mpus".
+
+Por isso `montarCsv()` (`agendamento/service/csv-relatorio.ts`) recebe
+`{ separador, bom }`, **com default no formato do Excel** — quem não passa nada
+continua produzindo o arquivo da secretaria. O formato do D2L está declarado num
+lugar só, `relatorio/service/csv-grupos-d2l.ts`.
+
+## Grupos do Brightspace: um arquivo por FAIXA
+
+`GET /relatorios/grupos-d2l` lista as faixas do recorte com quantos alunos cada
+uma tem; `/:faixaId` baixa o CSV de uma; `/zip` baixa todas de uma vez. É a aba
+**Relatorios** do painel.
+
+- **O recorte é a FAIXA, não a sala.** O grupo no D2L existe para liberar o quiz
+  num horário; em qual sala a pessoa senta não muda o acesso. As salas da faixa
+  entram na mesma lista.
+- **Uma matrícula aparece UMA vez.** Um RA com dois vínculos na mesma modalidade
+  pode ter dois agendamentos na mesma faixa — o grupo é por *usuário*, e a linha
+  repetida faria o import reclamar ou duplicar. A contagem de `totalAlunos` é de
+  matrículas **distintas**, para bater com o número de linhas do arquivo.
+- **Nome do arquivo: `20-08-2026 08h30-11h30.csv`** — dia e horário, sem polo e
+  sem sala (decisão do cliente). `/` e `:` são inválidos em nome de arquivo, daí
+  o `-` e o `h`; e ficar em ASCII puro dispensa o `filename*=UTF-8''` do RFC 5987
+  no `Content-Disposition`.
+- **Sem o polo no nome, a colisão é o caso normal**: duas faixas do mesmo dia e
+  horário em polos diferentes geram o mesmo nome. Dentro do zip, a partir da
+  segunda o id da faixa entra como desempate (`... #14.csv`) — sem isso a segunda
+  sobrescreveria a primeira em silêncio.
+- **Faixa vazia aparece na listagem** (com `0`, a informação é útil na tela) mas
+  **fica fora do zip**: arquivo só de cabeçalho não importa nada.
+
+O front usa o `nomeArquivo` que vem do backend: resposta em blob não expõe o
+`Content-Disposition`, e montar o nome no cliente deixaria a regra em dois
+lugares.
 
 ## Ao implementar, priorize nesta ordem
 

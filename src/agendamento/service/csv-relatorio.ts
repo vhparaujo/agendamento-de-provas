@@ -13,11 +13,31 @@
  *
  * O separador tambem e a razao de escapar aspas conforme o RFC 4180: campo com
  * `;`, aspas ou quebra de linha vai entre aspas, e aspas internas viram duplas.
+ *
+ * ---------------------------------------------------------------------------
+ * POR QUE O FORMATO E PARAMETRIZAVEL
+ * ---------------------------------------------------------------------------
+ * Existe um segundo consumidor de CSV neste sistema, e ele quer o OPOSTO: o
+ * import de Grupos do Brightspace le VIRGULA e UTF-8 puro (ver
+ * `src/relatorio/service/csv-grupos-d2l.ts`). Um BOM ali vira lixo na primeira
+ * celula do cabecalho e o D2L nao reconhece a coluna.
+ *
+ * O default continua sendo o formato do Excel pt-BR — quem ja chamava estas
+ * funcoes nao muda nada, e nenhum relatorio existente corre o risco de sair com
+ * o separador errado por descuido.
  */
 
 export const BOM_UTF8 = '﻿';
-const SEPARADOR = ';';
 const QUEBRA = '\r\n';
+
+/** O que muda entre o CSV da secretaria e o do D2L. */
+export interface FormatoCsv {
+  separador?: string;
+  bom?: boolean;
+}
+
+/** Excel em pt-BR: `;` e BOM. E o formato de todo relatorio da secretaria. */
+const EXCEL_BR: Required<FormatoCsv> = { separador: ';', bom: true };
 
 /**
  * Caracteres que fazem o Excel/LibreOffice tratar a celula como FORMULA.
@@ -45,26 +65,40 @@ function neutralizar(valor: string): string {
  */
 export type Celula = string | number | boolean | null | undefined;
 
-/** Uma celula pronta para o CSV: neutralizada e, se precisar, entre aspas. */
-export function celula(valor: Celula): string {
+/**
+ * Uma celula pronta para o CSV: neutralizada e, se precisar, entre aspas.
+ *
+ * O separador entra na decisao de aspas porque e ele que quebraria a linha: num
+ * arquivo separado por virgula, "NUTRICAO; LICENCIATURA" nao precisa de aspas,
+ * mas "SILVA, MARIA" precisa — e vice-versa.
+ */
+export function celula(valor: Celula, separador = EXCEL_BR.separador): string {
   if (valor === null || valor === undefined) return '';
 
   const texto = neutralizar(String(valor));
 
-  if (/["\r\n;]/.test(texto)) {
+  if (texto.includes(separador) || /["\r\n]/.test(texto)) {
     return `"${texto.replace(/"/g, '""')}"`;
   }
 
   return texto;
 }
 
-export function montarCsv(cabecalhos: string[], linhas: Celula[][]): string {
+export function montarCsv(
+  cabecalhos: string[],
+  linhas: Celula[][],
+  formato: FormatoCsv = {},
+): string {
+  const { separador, bom } = { ...EXCEL_BR, ...formato };
+
   const conteudo = [cabecalhos, ...linhas]
-    .map((linha) => linha.map(celula).join(SEPARADOR))
+    .map((linha) =>
+      linha.map((valor) => celula(valor, separador)).join(separador),
+    )
     .join(QUEBRA);
 
   // A quebra final evita que alguns leitores descartem a ultima linha.
-  return `${BOM_UTF8}${conteudo}${QUEBRA}`;
+  return `${bom ? BOM_UTF8 : ''}${conteudo}${QUEBRA}`;
 }
 
 /**

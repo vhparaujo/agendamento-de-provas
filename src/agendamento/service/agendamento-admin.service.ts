@@ -10,6 +10,7 @@ import {
   Prisma,
   StatusAgendamento,
 } from '../../generated/prisma/client';
+import { PeriodoService } from '../../periodo/service/periodo.service';
 import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 import { dataBr, dataDaProva, montarCsv } from './csv-relatorio';
 import { AUTOR_ADMIN, descreverOferta, registrarHistorico } from './historico';
@@ -99,6 +100,7 @@ export class AgendamentoAdminService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditoria: AuditoriaService,
+    private readonly periodo: PeriodoService,
   ) {}
 
   /**
@@ -449,51 +451,131 @@ export class AgendamentoAdminService {
   }
 
   /**
-   * O relatorio completo, uma linha por agendamento.
+   * ==========================================================================
+   * A EXPORTACAO E DE ALUNOS, NAO DE AGENDAMENTOS
+   * ==========================================================================
+   * A pergunta que este arquivo responde nao e "quem marcou prova" — a tela ja
+   * responde essa —, e sim "COM QUEM A SECRETARIA PRECISA FALAR". Por isso a
+   * base sao os vinculos importados, TODOS eles, e o agendamento entra como
+   * coluna: quem nao agendou aparece com as colunas da prova vazias e
+   * `Status = Não Agendado`, que e exatamente a lista de quem sera cobrado.
    *
-   * Sem paginacao de proposito — quem exporta quer o arquivo inteiro. O volume
-   * e o de um semestre (milhares de linhas, nao milhoes), e a consulta e uma so.
+   * Duas consequencias que nao sao acidente:
+   *
+   * - **Cancelado conta como "Não Agendado".** Quem cancelou e nao remarcou
+   *   precisa ser contatado igual a quem nunca entrou no portal. Por isso o
+   *   `status` da URL nao vale aqui: a coluna e derivada, nao filtrada.
+   * - **O recorte e UM periodo letivo** (o da URL ou o vigente). Sem isso, um
+   *   aluno com prova no semestre passado apareceria como "agendado" e ficaria
+   *   de fora da cobranca deste semestre.
+   *
+   * Sem paginacao de proposito — quem exporta quer o arquivo inteiro. Sao ~7.500
+   * vinculos, um arquivo de planilha, nao um dump.
    */
   async exportarCsv(filtro: FiltroAgendamentos): Promise<string> {
-    const registros = await this.prisma.agendamento.findMany({
-      where: this.montarWhere(filtro),
-      include: INCLUDE_ADMIN,
+    const periodoLetivoId =
+      filtro.periodoLetivoId ?? (await this.periodo.periodoLetivoVigente());
+
+    const daProva: Prisma.AgendamentoWhereInput = {
+      status: StatusAgendamento.CONFIRMADO,
+      periodoLetivoId,
+      salaFaixa: {
+        salaId: filtro.salaId,
+        faixaId: filtro.faixaId,
+        faixa: { data: janelaDeDatas(filtro) },
+      },
+    };
+
+    // Filtrar por faixa, sala ou data e pedir a lista DAQUELA prova ("quem vai
+    // estar na sala 3 no dia 12"), e ai quem nao tem prova ali nao faz parte da
+    // pergunta. Os filtros do ALUNO (polo, modalidade, busca) sao os unicos que
+    // continuam trazendo quem nao agendou.
+    const recorteDeProva = Boolean(
+      filtro.faixaId || filtro.salaId || filtro.de || filtro.ate,
+    );
+
+    const busca = filtro.busca?.trim();
+
+    const alunos = await this.prisma.alunoImportado.findMany({
+      where: {
+        poloId: filtro.poloId,
+        modalidadeId: filtro.modalidadeId,
+        ...(busca
+          ? {
+              OR: [
+                { matricula: { contains: busca } },
+                { nome: { contains: busca } },
+                { email: { contains: busca } },
+                { curso: { contains: busca } },
+              ],
+            }
+          : {}),
+        ...(recorteDeProva ? { agendamentos: { some: daProva } } : {}),
+      },
+      select: {
+        matricula: true,
+        nome: true,
+        email: true,
+        curso: true,
+        modalidade: { select: { nome: true } },
+        polo: { select: { nome: true } },
+        agendamentos: {
+          where: daProva,
+          select: {
+            createdAt: true,
+            salaFaixa: {
+              select: {
+                sala: { select: { nome: true } },
+                faixa: {
+                  select: { data: true, horaInicio: true, horaFim: true },
+                },
+              },
+            },
+          },
+          orderBy: { salaFaixa: { faixa: { data: 'asc' } } },
+        },
+      },
+      // Polo primeiro: a cobranca e distribuida por campus.
       orderBy: [
-        { salaFaixa: { faixa: { data: 'asc' } } },
-        { salaFaixa: { faixa: { horaInicio: 'asc' } } },
-        { salaFaixa: { ordem: 'asc' } },
+        { polo: { nome: 'asc' } },
+        { nome: 'asc' },
         { matricula: 'asc' },
+        { curso: 'asc' },
       ],
     });
 
-    const linhas = registros
-      .map(montarAdmin)
-      .map((a) => [
-        a.matricula,
-        a.nome,
-        a.email,
-        a.curso,
-        a.modalidade,
-        a.statusCurso,
-        a.polo,
-        dataDaProva(a.data),
-        a.horaInicio,
-        a.horaFim,
-        a.sala,
-        a.disciplinas.map((d) => d.nomeDisciplina ?? d.orgUnitId).join(' | '),
-        a.disciplinas.map((d) => d.orgUnitId).join(' | '),
-        a.status,
-        a.alocadoManual ? 'sim' : 'nao',
-        a.periodoLetivoId,
-        dataBr(a.criadoEm, true),
-        a.id,
+    const linhas = alunos.flatMap((aluno) => {
+      const dadosDoAluno = [
+        aluno.matricula,
+        aluno.nome,
+        aluno.email,
+        aluno.curso,
+        aluno.modalidade.nome,
+        aluno.polo.nome,
+      ];
+
+      if (aluno.agendamentos.length === 0) {
+        return [[...dadosDoAluno, null, null, null, null, NAO_AGENDADO, null]];
+      }
+
+      // A regra e um agendamento por vinculo no periodo; se algum dia houver
+      // mais de um, cada um vira uma linha em vez de sumir do arquivo.
+      return aluno.agendamentos.map(({ salaFaixa, createdAt }) => [
+        ...dadosDoAluno,
+        dataDaProva(salaFaixa.faixa.data),
+        salaFaixa.faixa.horaInicio,
+        salaFaixa.faixa.horaFim,
+        salaFaixa.sala.nome,
+        AGENDADO,
+        dataBr(createdAt, true),
       ]);
+    });
 
     return montarCsv(CABECALHOS_EXPORTACAO, linhas);
   }
 
   /** Nome do arquivo com a data — dois relatorios do mesmo dia nao se confundem. */
-  nomeDoArquivo(prefixo = 'agendamentos'): string {
+  nomeDoArquivo(prefixo = 'Lista Agendamento'): string {
     const agora = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
 
     return `${prefixo}-${agora}.csv`;
@@ -537,22 +619,32 @@ const CABECALHOS_EXPORTACAO = [
   'E-mail',
   'Curso',
   'Modalidade',
-  'Status no curso',
   'Polo',
   'Data da prova',
   'Inicio',
   'Fim',
   'Sala',
-  'Disciplinas',
-  'orgUnitIds',
   'Status',
-  'Alocado manualmente',
-  'Periodo letivo',
   'Agendado em',
-  'Id',
 ];
 
-function janelaDeDatas(filtro: FiltroAgendamentos) {
+/**
+ * Os dois unicos valores da coluna Status — e sao estes dois de proposito.
+ *
+ * O arquivo e trabalhado no Excel: quem vai cobrar filtra a coluna por "Não
+ * Agendado" e liga. `CONFIRMADO`/`CANCELADO` (o enum do banco) obrigaria a
+ * secretaria a saber que "cancelado" tambem significa "precisa agendar".
+ */
+const AGENDADO = 'Agendado';
+const NAO_AGENDADO = 'Não Agendado';
+
+/**
+ * Recorte de datas da prova, compartilhado com o modulo de relatorios: e a
+ * mesma pergunta ("as provas entre tal e tal dia") e precisa tratar o `@db.Date`
+ * do mesmo jeito nos dois lugares, ou os dois relatorios discordariam na virada
+ * do dia.
+ */
+export function janelaDeDatas(filtro: { de?: string; ate?: string }) {
   if (!filtro.de && !filtro.ate) return undefined;
 
   return {

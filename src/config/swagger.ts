@@ -29,6 +29,7 @@ export const TAGS = {
   PORTAL: 'Portal do Aluno',
   PERIODO: 'Periodo de agendamento',
   AGENDAMENTOS: 'Agendamentos (admin)',
+  RELATORIOS: 'Relatorios e exportacoes (admin)',
   D2L: 'Integracao D2L (Valence)',
 } as const;
 
@@ -139,6 +140,10 @@ export function construirDocumento(app: INestApplication): OpenAPIObject {
     .addTag(
       TAGS.AGENDAMENTOS,
       'Consulta, ocupacao por sala e exportacao do relatorio de agendamentos',
+    )
+    .addTag(
+      TAGS.RELATORIOS,
+      'Arquivos prontos para outro sistema — hoje, os grupos do Brightspace por horario de prova',
     )
     .addTag(
       TAGS.D2L,

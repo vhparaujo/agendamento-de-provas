@@ -18,6 +18,7 @@ import { ImportacaoModule } from './importacao/module/importacao.module';
 import { ModalidadeModule } from './modalidade/module/modalidade.module';
 import { PeriodoModule } from './periodo/module/periodo.module';
 import { PoloModule } from './polo/module/polo.module';
+import { RelatorioModule } from './relatorio/module/relatorio.module';
 import { SalaFaixaModule } from './sala-faixa/module/sala-faixa.module';
 import { SalaModule } from './sala/module/sala.module';
 import { ExcecoesFilter } from './seguranca/filter/excecoes.filter';
@@ -48,6 +49,8 @@ import { TurmaModule } from './turma/module/turma.module';
     // Portal do aluno (etapa 6)
     PeriodoModule,
     AgendamentoModule,
+    // Exportacoes para outro sistema (grupos do Brightspace por horario)
+    RelatorioModule,
     // Integracao D2L: por enquanto so a autorizacao OAuth (etapa 8 adiada)
     D2lModule,
   ],

@@ -26,6 +26,8 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
   const POLO_NOME = 'Polo E2E Relatorio';
   const TURMA = 'E2E-REL-TURMA';
   const MATRICULA = 'E2EREL001';
+  /** Existe so para provar que quem NAO agendou sai na exportacao. */
+  const SEM_PROVA = 'E2EREL002';
   const PERIODO_LETIVO = 'E2E-REL-500';
   const DATA_PROVA = '2026-11-12';
 
@@ -120,6 +122,21 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
       },
     });
 
+    // O colega que nunca vai entrar no portal: e ele que a exportacao precisa
+    // listar como "nao agendado".
+    await prisma.alunoImportado.create({
+      data: {
+        matricula: SEM_PROVA,
+        nome: 'FULANO SEM PROVA',
+        email: 'fulano@aluno.ucb.br',
+        curso: 'NUTRIÇÃO',
+        statusCurso: 'Ativo',
+        ativo: true,
+        modalidadeId: ead.id,
+        poloId,
+      },
+    });
+
     alunoToken = (
       await auth.emitirTokenAluno({
         sub: MATRICULA,
@@ -149,7 +166,9 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
   });
 
   async function limpar() {
-    await prisma.agendamento.deleteMany({ where: { matricula: MATRICULA } });
+    await prisma.agendamento.deleteMany({
+      where: { matricula: { in: [MATRICULA, SEM_PROVA] } },
+    });
 
     const polos = await prisma.polo.findMany({ where: { nome: POLO_NOME } });
 
@@ -340,6 +359,9 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
   });
 
   describe('exportacao em CSV', () => {
+    const linhaDe = (csv: string, matricula: string) =>
+      csv.split('\r\n').find((l) => l.includes(matricula)) as string;
+
     it('devolve um arquivo para download', async () => {
       const res = await comoAdmin(
         api().get(`/api/agendamentos/exportacao?poloId=${poloId}`),
@@ -347,18 +369,21 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
 
       expect(res.headers['content-type']).toMatch(/text\/csv/);
       expect(res.headers['content-disposition']).toMatch(
-        /attachment; filename="agendamentos-.*\.csv"/,
+        /attachment; filename="Lista Agendamento-.*\.csv"/,
       );
     });
 
-    it('comeca com BOM UTF-8 e separa por ponto e virgula', async () => {
+    it('comeca com BOM UTF-8, separa por ponto e virgula e so tem as colunas combinadas', async () => {
       const res = await comoAdmin(
         api().get(`/api/agendamentos/exportacao?poloId=${poloId}`),
       ).expect(200);
 
       // Sem o BOM, o Excel em Windows le "Câmpus" como "CÃ¢mpus".
       expect(res.text.charCodeAt(0)).toBe(0xfeff);
-      expect(res.text).toContain('Matricula;Aluno;E-mail;Curso');
+      expect(res.text.split('\r\n')[0]).toBe(
+        '﻿Matricula;Aluno;E-mail;Curso;Modalidade;Polo;Data da prova;' +
+          'Inicio;Fim;Sala;Status;Agendado em',
+      );
     });
 
     it('traz a linha do aluno com todos os dados', async () => {
@@ -366,16 +391,28 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
         api().get(`/api/agendamentos/exportacao?poloId=${poloId}`),
       ).expect(200);
 
-      const linha = res.text
-        .split('\r\n')
-        .find((l) => l.includes(MATRICULA)) as string;
+      const linha = linhaDe(res.text, MATRICULA);
 
       expect(linha).toBeDefined();
       expect(linha).toContain('NUTRIÇÃO');
       expect(linha).toContain('REL-101');
       expect(linha).toContain('12/11/2026'); // data da prova, no fuso certo
       expect(linha).toContain('08:30');
-      expect(linha).toContain('Disciplina do Relatorio');
+      expect(linha).toContain(';Agendado;');
+    });
+
+    // O motivo de o relatorio existir: a secretaria liga para quem falta.
+    it('traz TAMBEM quem nunca agendou, como "Não Agendado"', async () => {
+      const res = await comoAdmin(
+        api().get(`/api/agendamentos/exportacao?poloId=${poloId}`),
+      ).expect(200);
+
+      const linha = linhaDe(res.text, SEM_PROVA);
+
+      expect(linha).toBeDefined();
+      // As colunas da prova ficam vazias — nao ha o que preencher.
+      expect(linha).toContain(`${SEM_PROVA};FULANO SEM PROVA;`);
+      expect(linha.endsWith(';Não Agendado;')).toBe(true);
     });
 
     it('NEUTRALIZA formula do Excel vinda do nome importado', async () => {
@@ -389,7 +426,18 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
       expect(res.text).not.toMatch(/;=SILVA/);
     });
 
-    it('respeita o filtro (polo sem agendamento sai so com cabecalho)', async () => {
+    it('filtro de PROVA (faixa) deixa de fora quem nao tem prova ali', async () => {
+      const res = await comoAdmin(
+        api().get(
+          `/api/agendamentos/exportacao?poloId=${poloId}&faixaId=${faixaId}`,
+        ),
+      ).expect(200);
+
+      expect(res.text).toContain(MATRICULA);
+      expect(res.text).not.toContain(SEM_PROVA);
+    });
+
+    it('respeita o filtro (polo sem aluno sai so com cabecalho)', async () => {
       const res = await comoAdmin(
         api().get('/api/agendamentos/exportacao?poloId=999999'),
       ).expect(200);
