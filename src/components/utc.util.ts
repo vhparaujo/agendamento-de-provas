@@ -91,3 +91,23 @@ export function paraInstanteUtc(
 export function paraIsoUtc(instante: Date): string {
   return instante.toISOString();
 }
+
+/**
+ * Meia-noite de hoje em UTC — o corte de "faixa que ja passou".
+ *
+ * A coluna `data` da faixa e `@db.Date` (sem hora) e e gravada em meia-noite
+ * UTC. Comparar com um `Date` do fuso local descartaria o dia de HOJE em
+ * qualquer fuso a oeste de Greenwich, que e o caso de Brasilia: a prova de hoje
+ * sumiria da lista do aluno no meio da manha.
+ *
+ * Mora aqui, e nao em cada service, porque o portal e o agendamento compulsorio
+ * precisam do MESMO corte. Duas copias de uma regra de fuso divergem na primeira
+ * vez que alguem mexer em uma delas.
+ */
+export function hojeUtc(): Date {
+  const agora = new Date();
+
+  return new Date(
+    Date.UTC(agora.getUTCFullYear(), agora.getUTCMonth(), agora.getUTCDate()),
+  );
+}

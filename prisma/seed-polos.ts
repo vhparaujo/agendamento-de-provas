@@ -9,33 +9,24 @@ import type { PrismaClient } from '../src/generated/prisma/client';
  * NAO reordene palavras. Polo novo = adicionar uma linha aqui e rodar o seed.
  */
 export const POLOS = [
-  'Câmpus Asa Norte',
   'Câmpus Asa Sul',
   'Câmpus Ceilândia',
   'Câmpus Sobradinho',
   'Câmpus Taguatinga',
-  'Polo Anápolis - Jundiaí',
   'Polo Belo Horizonte - Savassi',
-  'Polo Boston',
-  'Polo Cidade Ocidental - GO',
   'Polo Coronel Fabriciano - UNILESTE',
   'Polo Formosa',
   'Polo Gama',
   'Polo Goianésia',
   'Polo Ipatinga',
-  'Polo Japão - Nagoya',
   'Polo Joinville',
   'Polo Morrinhos',
   'Polo Palmas - TO',
-  'Polo Posse',
-  'Polo Recife - FICR',
   'Polo Rio de Janeiro - Jardim Botânico',
-  'Polo Salvador - BA',
-  'Polo Sete Lagoas',
   'Polo São Paulo - Consolata',
-  'Polo Timóteo',
   'Polo Valparaíso - GO',
   'Polo Águas Lindas',
+  'Polo Recife - FICR',
 ] as const;
 
 export async function seedPolos(prisma: PrismaClient): Promise<void> {

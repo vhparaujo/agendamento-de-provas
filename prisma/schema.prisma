@@ -225,6 +225,8 @@ model AlunoImportado {
   importacao   ImportacaoCsv? @relation(fields: [importacaoId], references: [id])
   agendamentos Agendamento[]
 
+  excecoesCompulsorio ExcecaoCompulsorio[]
+
   // chave de idempotencia da importacao e do cruzamento com o launch LTI
   @@unique([matricula, curso])
   @@index([matricula]) // busca do launch: devolve 1..n vinculos
@@ -480,4 +482,117 @@ model PeriodoAgendamento {
   updatedAt       DateTime  @updatedAt
 
   @@map("periodo_agendamento")
+}
+
+// ----------------------------------------------------------------------------
+// AGENDAMENTO COMPULSORIO — o lote que agenda por quem nao agendou
+// ----------------------------------------------------------------------------
+// Fechado o periodo, quem nao marcou prova E alocado pela secretaria: enche a
+// sala de menor `ordem` ate lotar (igual ao portal) e os dias da data mais
+// proxima para a mais distante (`ordenarPorProximidade`).
+//
+// POR QUE ISTO E UMA TABELA, e nao uma resposta de requisicao:
+//
+// 1. O lote demora. Sao ~7 mil alunos e duas chamadas a Valence cada um (achar
+//    o UserId, ler as disciplinas) — dezenas de minutos. Nenhum navegador nem
+//    proxy segura essa conexao aberta, entao quem dispara recebe um id e volta
+//    para perguntar como esta.
+// 2. O resultado precisa sobreviver ao fim da execucao. "Faltaram 130 vagas em
+//    Taguatinga/EAD" e a informacao que faz a secretaria abrir mais uma sala; se
+//    ela vivesse so na tela, sumiria no primeiro F5.
+// 3. E o registro de que o compulsorio ACONTECEU, com quem mandou e quando —
+//    mesma necessidade que criou o HistoricoAgendamento.
+//
+// SIMULACAO e o modo padrao: roda tudo, conta tudo, GRAVA NADA. Existe porque a
+// pergunta "cabe todo mundo?" so tem resposta honesta depois de percorrer a
+// alocacao inteira — e descobrir que nao cabe no meio de uma execucao real
+// deixaria metade dos alunos alocados e a outra metade nao.
+
+model ExecucaoCompulsorio {
+  id              Int            @id @default(autoincrement())
+  status          StatusExecucao @default(EM_ANDAMENTO)
+  // true = nada foi gravado. O relatorio sai igual nos dois modos.
+  simulacao       Boolean        @default(true)
+  // O recorte, congelado no inicio: o vigente pode mudar durante a execucao.
+  periodoLetivoId String
+  // Fotografia do e-mail do admin, como em HistoricoAgendamento.autor: precisa
+  // continuar legivel se a conta for desativada depois.
+  iniciadoPor     String
+
+  totalElegiveis Int @default(0)
+  processados    Int @default(0)
+  alocados       Int @default(0)
+
+  /// Preenchido so quando a execucao INTEIRA falha (banco fora, token vencido).
+  /// Problema de UM aluno vira linha em ExcecaoCompulsorio, nunca isto.
+  erro String? @db.Text
+
+  iniciadoEm   DateTime  @default(now())
+  concluidoEm  DateTime?
+  // Batido a cada aluno: e assim que se distingue um lote VIVO de um que morreu
+  // com o processo. Sem isto, um restart deixaria `EM_ANDAMENTO` para sempre e
+  // bloquearia todo lote seguinte.
+  atualizadoEm DateTime  @updatedAt
+
+  excecoes ExcecaoCompulsorio[]
+
+  @@index([status])
+  @@map("execucao_compulsorio")
+}
+
+enum StatusExecucao {
+  EM_ANDAMENTO
+  CONCLUIDA
+  FALHOU
+}
+
+// ----------------------------------------------------------------------------
+// EXCECAO DO COMPULSORIO — quem NAO foi alocado, e por que
+// ----------------------------------------------------------------------------
+// A saida mais importante do lote. Alocar 4.600 pessoas nao gera trabalho para
+// ninguem; os 200 que ficaram de fora sao a fila da secretaria, e cada motivo
+// pede uma acao diferente: SEM_VAGA abre sala, SEM_CONTA_D2L vira chamado no
+// suporte do LMS, SEM_DISCIPLINA_AGENDAVEL manda conferir o CSV de turmas.
+//
+// Uma linha por VINCULO, nao por RA: um aluno com dois cursos pode ser alocado
+// em um e ficar de fora do outro.
+
+model ExcecaoCompulsorio {
+  id         Int           @id @default(autoincrement())
+  execucaoId Int
+  alunoId    Int
+  matricula  String // desnormalizado: o relatorio precisa dela sem join
+  motivo     MotivoExcecao
+  /// O texto que a secretaria le ("Taguatinga / EAD: 130 sem vaga").
+  detalhe    String?       @db.Text
+
+  execucao ExecucaoCompulsorio @relation(fields: [execucaoId], references: [id], onDelete: Cascade)
+  aluno    AlunoImportado      @relation(fields: [alunoId], references: [id])
+
+  @@index([execucaoId])
+  @@index([motivo])
+  @@map("excecao_compulsorio")
+}
+
+enum MotivoExcecao {
+  /// A matricula nao existe no Brightspace. Sem UserId nao ha disciplina.
+  SEM_CONTA_D2L
+  /// Duas contas com a mesma matricula: escolher uma nao e decisao nossa.
+  MATRICULA_AMBIGUA
+  /// UserId nao numerico — a Valence o recusaria ao ler as disciplinas.
+  ID_INVALIDO_D2L
+  /// Nenhuma disciplina do aluno cruzou com o CSV de turmas.
+  SEM_DISCIPLINA_AGENDAVEL
+  /// O polo do aluno nao tem faixa cadastrada para a modalidade dele.
+  SEM_FAIXA_NO_POLO
+  /// Ha faixa, mas todas as salas da modalidade lotaram. Abrir mais sala.
+  SEM_VAGA
+  /// Cancelou e nao remarcou. Fica de fora POR DECISAO do cliente, e aparece
+  /// aqui para a secretaria ver quem ficou sem lugar nenhum.
+  CANCELOU_E_NAO_REMARCOU
+  /// A Valence falhou so para este aluno (rede, timeout). Reprocessavel.
+  FALHA_NA_INTEGRACAO
+  /// Alocado, mas a conta esta DESATIVADA no LMS: tem lugar na sala e nao
+  /// conseguiria abrir a prova. Unico motivo que convive com uma alocacao.
+  AVISO_CONTA_INATIVA_D2L
 }

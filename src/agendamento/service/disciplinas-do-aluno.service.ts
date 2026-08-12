@@ -103,6 +103,41 @@ export class DisciplinasDoAlunoService {
     );
   }
 
+  /**
+   * ==========================================================================
+   * O CRUZAMENTO SEM LAUNCH — a porta do agendamento COMPULSORIO
+   * ==========================================================================
+   * Igual ao `cruzar`, mas partindo do UserId do Brightspace em vez do JWT.
+   *
+   * Existe porque o compulsorio agenda por quem NUNCA entrou: nao ha token, nao
+   * ha claim `context`, nao ha nada alem da matricula da planilha — e o UserId
+   * vem de `identidadePorMatricula`.
+   *
+   * **Exige `D2L_HABILITADO`, e por isso recusa em vez de devolver vazio.** Com
+   * a integracao desligada a unica fonte de turmas e o clique do aluno, e quem
+   * nao agendou nunca clicou: o resultado seria "nenhuma disciplina" para TODO
+   * mundo, e o lote alocaria zero pessoas relatando um problema que nao e o
+   * verdadeiro.
+   */
+  async cruzarPorUserId(userIdD2L: string): Promise<ResultadoDoCruzamento> {
+    if (!this.enrollments.habilitado()) {
+      return {
+        agendaveis: [],
+        motivo:
+          'O compulsorio depende da integracao com o Brightspace (D2L_HABILITADO), ' +
+          'que e quem sabe as disciplinas de quem nunca fez login.',
+      };
+    }
+
+    const { turmas, motivo } = await this.turmasPorUserId(userIdD2L);
+
+    if (motivo) return { agendaveis: [], motivo };
+
+    this.avisarSeFiltroDesligado('ENROLLMENTS');
+
+    return this.turmaService.filtrarAgendaveis(turmas);
+  }
+
   /** As turmas do aluno, antes de qualquer filtro de prova. */
   private async turmasDoAluno(aluno: AlunoJwtPayload): Promise<{
     turmas: TurmaDoLaunch[];
@@ -116,22 +151,35 @@ export class DisciplinasDoAlunoService {
       };
     }
 
+    const { turmas, motivo } = await this.turmasPorUserId(aluno.userIdD2L);
+
+    return { turmas, origem: 'ENROLLMENTS', motivo };
+  }
+
+  /**
+   * As ofertas do aluno no semestre CADASTRADO pelo admin.
+   *
+   * Compartilhado pelas duas portas (launch e compulsorio) de proposito: se
+   * fossem duas implementacoes, uma delas acabaria sem o filtro do periodo
+   * letivo — e traria os semestres passados junto.
+   */
+  private async turmasPorUserId(userIdD2L: string): Promise<{
+    turmas: TurmaDoLaunch[];
+    motivo?: string;
+  }> {
     // O semestre e o que o admin cadastrou, nao o "atual" segundo o relogio: e
     // ele quem diz quais ofertas do Brightspace contam nesta janela.
     const periodoLetivoId = await this.periodo.periodoLetivoVigente();
 
-    if (!periodoLetivoId) {
-      return { turmas: [], origem: 'ENROLLMENTS', motivo: SEM_PERIODO_LETIVO };
-    }
+    if (!periodoLetivoId) return { turmas: [], motivo: SEM_PERIODO_LETIVO };
 
     const ofertas = await this.enrollments.ofertasDoPeriodo(
-      aluno.userIdD2L,
+      userIdD2L,
       periodoLetivoId,
     );
 
     return {
       turmas: ofertas,
-      origem: 'ENROLLMENTS',
       motivo:
         ofertas.length === 0
           ? 'Nenhuma disciplina sua aparece no periodo letivo vigente. Procure a secretaria academica.'

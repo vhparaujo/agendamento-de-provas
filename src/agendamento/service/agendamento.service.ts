@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import type { AlunoJwtPayload } from '../../auth/jwt/jwt.types';
 import { duracaoEmMinutos } from '../../components/horario.util';
+import { hojeUtc } from '../../components/utc.util';
 import { PrismaService } from '../../database/prisma.service';
 import {
   EventoAgendamento,
@@ -722,17 +723,4 @@ function montarConfirmado(
     disciplinas: agendamento.disciplinas,
     criadoEm: agendamento.createdAt,
   };
-}
-
-/**
- * Meia-noite de hoje em UTC. A coluna `data` da faixa e @db.Date (sem hora), e e
- * gravada em meia-noite UTC — comparar com um Date do fuso local descartaria o
- * dia de hoje em qualquer fuso a oeste de Greenwich.
- */
-function hojeUtc(): Date {
-  const agora = new Date();
-
-  return new Date(
-    Date.UTC(agora.getUTCFullYear(), agora.getUTCMonth(), agora.getUTCDate()),
-  );
 }

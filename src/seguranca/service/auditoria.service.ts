@@ -26,6 +26,12 @@ export type EventoSeguranca =
   | 'AGENDAMENTO_RECUSADO'
   | 'AGENDAMENTO_REMANEJADO'
   | 'AGENDAMENTO_CANCELADO'
+  // O lote que agenda por quem nao agendou. Sao tres eventos e nao um porque a
+  // pergunta de auditoria e "quem mandou alocar 4 mil pessoas, e deu no que?" —
+  // o inicio sozinho nao responde se aquilo chegou ao fim.
+  | 'COMPULSORIO_INICIADO'
+  | 'COMPULSORIO_CONCLUIDO'
+  | 'COMPULSORIO_FALHOU'
   | 'D2L_AUTORIZACAO_OK'
   | 'D2L_AUTORIZACAO_FALHOU'
   | 'D2L_TOKEN_RENOVADO'

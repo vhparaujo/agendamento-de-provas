@@ -389,6 +389,56 @@ fechamento é justamente o caso de uso.
 Sem `status` explícito, a **consulta** traz apenas os **confirmados** — um
 cancelado na lista do dia da prova faria alguém procurar um aluno que não vem.
 
+### Agendamento compulsório
+
+Fechado o prazo, **quem não agendou não fica sem prova**: a secretaria dispara um
+lote que aloca todo mundo automaticamente.
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `POST` | `/agendamentos/compulsorio` | Dispara. Responde na hora com um `id`; **simula por padrão** |
+| `GET` | `/agendamentos/compulsorio/:id` | Andamento e contagem por motivo |
+| `GET` | `/agendamentos/compulsorio/:id/relatorio` | CSV de quem ficou de fora |
+
+```jsonc
+// POST /api/agendamentos/compulsorio
+{ "simulacao": true, "poloId": 27 }   // poloId é opcional; sem ele, roda para todos
+
+// resposta imediata
+{ "id": 3, "simulacao": true, "totalElegiveis": 4812 }
+```
+
+**Preenche em duas dimensões:** as **datas** da mais próxima para a mais distante
+e, dentro de cada faixa, as **salas** por ordem até lotar. É a mesma lógica do
+portal, uma dimensão acima — concentrar em vez de espalhar, para não manter o
+campus mobilizado o período inteiro com fiscal em sala vazia.
+
+**Quem entra:** vínculo `ativo` sem prova confirmada no período letivo. Ficam de
+fora quem já agendou e quem **cancelou e não remarcou** — este último aparece no
+relatório, porque ficar sem lugar nenhum é decisão a tomar caso a caso.
+
+**Rode a simulação primeiro.** Ela percorre a alocação inteira contando as vagas e
+não grava nada. É como se responde "cabe todo mundo?" — descobrir no meio de uma
+execução real que não cabia deixaria metade dos alunos alocados e metade não.
+
+**Demora**, e por isso responde na hora com um `id`: são ~1,5s por aluno (duas
+chamadas ao Brightspace), ou ~25 min para 7 mil. A tela consulta o `GET` enquanto
+o `status` for `EM_ANDAMENTO`. Se o processo morrer no meio, a consulta passa a
+devolver `interrompida: true` — e rodar de novo **retoma de onde parou**, sem
+duplicar ninguém.
+
+**Exige `D2L_HABILITADO=true`**: é a integração que descobre as disciplinas de
+quem nunca entrou pelo link do Brightspace. O `userIdD2L` dessas pessoas não está
+gravado em lugar nenhum (ele só nasce no launch) e é resolvido pelo RA, via
+`users/?orgDefinedId=`.
+
+O relatório sai **ordenado por motivo**, porque cada bloco é uma ação diferente:
+`SEM_VAGA` pede abrir sala, `SEM_CONTA_D2L` pede chamado no suporte do LMS,
+`SEM_DISCIPLINA_AGENDAVEL` pede conferir o CSV de turmas (o detalhe traz o código
+da oferta que não casou). `AVISO_CONTA_INATIVA_D2L` é o único que aparece para
+quem **foi** alocado: tem lugar na sala, mas a conta está desativada no
+Brightspace e do jeito que está não abriria a prova.
+
 #### A exportação é de alunos, não de agendamentos
 
 `GET /agendamentos/exportacao` responde outra pergunta: **com quem a secretaria

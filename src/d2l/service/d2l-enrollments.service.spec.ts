@@ -395,6 +395,140 @@ describe('D2lEnrollmentsService', () => {
     });
   });
 
+  /**
+   * A identidade do aluno pela matricula — a base do agendamento compulsorio.
+   *
+   * O que estes testes protegem: que "nao tem conta" continue sendo um ESTADO
+   * (relatorio de excecoes) e nao uma excecao que derruba o lote, e que nenhum
+   * caminho aqui escolha uma pessoa por aproximacao.
+   */
+  describe('identidadePorMatricula', () => {
+    /** `users/?orgDefinedId=` devolve uma LISTA, ou 404 quando nao acha. */
+    const responderUsuarios = (corpo: unknown, status = 200) => {
+      globalThis.fetch = jest.fn().mockResolvedValue({
+        ok: status >= 200 && status < 300,
+        status,
+        json: () => Promise.resolve(corpo),
+        text: () => Promise.resolve(''),
+      });
+    };
+
+    const usuario = (
+      userId: number | string,
+      orgDefinedId: string,
+      ativo = true,
+    ) => ({
+      UserId: userId,
+      OrgDefinedId: orgDefinedId,
+      DisplayName: 'FULANO DE TAL',
+      Activation: { IsActive: ativo },
+    });
+
+    it('resolve a matricula para o UserId numerico do Brightspace', async () => {
+      responderUsuarios([usuario(6007, 'UC18120644')]);
+
+      await expect(
+        servico().identidadePorMatricula('UC18120644'),
+      ).resolves.toEqual({
+        situacao: 'ACHOU',
+        userIdD2L: '6007',
+        ativoNoD2L: true,
+        nome: 'FULANO DE TAL',
+      });
+    });
+
+    it('pede pelo orgDefinedId, que e onde a matricula vive no LMS', async () => {
+      responderUsuarios([usuario(6007, 'UC18120644')]);
+
+      await servico().identidadePorMatricula('UC18120644');
+
+      const url = (globalThis.fetch as jest.Mock).mock.calls[0][0] as string;
+
+      expect(url).toContain('users/');
+      expect(url).toContain('orgDefinedId=UC18120644');
+    });
+
+    /**
+     * O caso que decide o desenho do lote: aluno na planilha da secretaria sem
+     * conta no LMS e normal. Se isto virasse excecao, um aluno derrubaria o
+     * compulsorio inteiro em vez de sair no relatorio.
+     */
+    it('trata 404 como SEM_CONTA, nao como falha', async () => {
+      responderUsuarios({ Errors: [{ Message: 'Resource Not Found' }] }, 404);
+
+      await expect(
+        servico().identidadePorMatricula('NAOEXISTE999'),
+      ).resolves.toEqual({ situacao: 'SEM_CONTA' });
+    });
+
+    it('trata lista vazia como SEM_CONTA', async () => {
+      responderUsuarios([]);
+
+      await expect(
+        servico().identidadePorMatricula('UC18120644'),
+      ).resolves.toEqual({ situacao: 'SEM_CONTA' });
+    });
+
+    /**
+     * Hoje o tenant filtra por igualdade — foi verificado contra a instancia
+     * real. Este teste existe para o dia em que isso mudar: casar por prefixo
+     * alocaria a prova de uma pessoa na vaga de outra, em silencio.
+     */
+    it('NAO aceita quem so casa por prefixo, se a API mudar', async () => {
+      responderUsuarios([usuario(6007, 'UC18120644')]);
+
+      await expect(servico().identidadePorMatricula('UC18')).resolves.toEqual({
+        situacao: 'SEM_CONTA',
+      });
+    });
+
+    it('ignora caixa e espacos, que sao a mesma pessoa', async () => {
+      responderUsuarios([usuario(6007, ' uc18120644 ')]);
+
+      await expect(
+        servico().identidadePorMatricula('UC18120644'),
+      ).resolves.toMatchObject({ situacao: 'ACHOU', userIdD2L: '6007' });
+    });
+
+    it('nao escolhe nenhuma quando a matricula tem duas contas', async () => {
+      responderUsuarios([
+        usuario(6007, 'UC18120644'),
+        usuario(9999, 'UC18120644'),
+      ]);
+
+      await expect(
+        servico().identidadePorMatricula('UC18120644'),
+      ).resolves.toEqual({ situacao: 'AMBIGUA', quantos: 2 });
+    });
+
+    it('reporta a conta desativada no LMS em vez de escondê-la', async () => {
+      // Ela resolve, mas quem recebe precisa saber: conta inativa nao abre a
+      // prova, e alocar essa pessoa consome uma vaga que ninguem usa.
+      responderUsuarios([usuario(180521, 'UC26427287', false)]);
+
+      await expect(
+        servico().identidadePorMatricula('UC26427287'),
+      ).resolves.toMatchObject({ situacao: 'ACHOU', ativoNoD2L: false });
+    });
+
+    it('recusa UserId nao numerico, que a Valence rejeitaria depois', async () => {
+      responderUsuarios([usuario('abc_76629', 'UC18120644')]);
+
+      await expect(
+        servico().identidadePorMatricula('UC18120644'),
+      ).resolves.toEqual({ situacao: 'ID_INVALIDO', valor: 'abc_76629' });
+    });
+
+    /** `nuloEm404` abre uma excecao para o 404, e SO para ele. */
+    it('continua falhando em erro que nao e 404', async () => {
+      responderUsuarios({}, 500);
+
+      await expect(
+        servico().identidadePorMatricula('UC18120644'),
+      ).rejects.toBeInstanceOf(BadGatewayException);
+    });
+  });
+
   it('nao se considera habilitado sem a URL do tenant', () => {
     // Sem base URL a chamada iria para lugar nenhum — ou para o tenant errado.
     expect(servico({ D2L_HABILITADO: 'true' }).habilitado()).toBe(false);

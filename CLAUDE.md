@@ -273,6 +273,7 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `GET /agendamentos` · `/resumo` · `/exportacao` · `/:id` | admin | Relatório: consulta, ocupação por sala e o CSV de **todos os alunos** |
 | `GET /relatorios/grupos-d2l` · `/zip` · `/:faixaId` | admin | Grupos do Brightspace: um CSV de matrículas **por faixa** |
 | `PATCH /agendamentos/:id/remanejar` · `DELETE /agendamentos/:id` | admin | Mover de sala/horário e cancelar |
+| `POST /agendamentos/compulsorio` · `GET /:id` · `/:id/relatorio` | admin | Agenda por quem não agendou; acompanha o lote e baixa o CSV de exceções |
 | `PATCH /portal/agendamentos/:id` · `DELETE` | aluno | Trocar de horário (atômico) e cancelar |
 | `GET /agendamentos/:id/historico` | admin | Quem alterou: aluno ou administrador |
 | `GET /d2l/callback` | — | Callback OAuth da Valence: troca o `code` e grava o refresh token |
@@ -876,6 +877,119 @@ O front usa o `nomeArquivo` que vem do backend: resposta em blob não expõe o
 `Content-Disposition`, e montar o nome no cliente deixaria a regra em dois
 lugares.
 
+## Agendamento compulsório (etapa 9)
+
+Fechado o prazo, **quem não agendou não fica sem prova**: a secretaria dispara um
+lote que aloca todo mundo automaticamente. `POST /agendamentos/compulsorio`,
+acompanhado por `GET /agendamentos/compulsorio/:id`.
+
+**As duas dimensões de preenchimento**, nesta ordem: as **datas** da mais próxima
+para a mais distante (`ordenarPorProximidade`, em `alocacao.ts`) e, dentro de cada
+faixa, as **salas** por `ordem` até lotar (`escolherOferta`, o mesmo do portal).
+Concentrar em vez de espalhar é a regra nas duas — espalhar 7 mil alunos por todas
+as datas manteria o campus mobilizado o período inteiro, com fiscal em sala vazia.
+
+**Quem entra** (decisão do cliente, 12/08/2026): vínculo `ativo` sem agendamento
+`CONFIRMADO` no período letivo. Fica de fora quem **cancelou e não remarcou** —
+mas aparece no relatório como `CANCELOU_E_NAO_REMARCOU`, porque ficar sem lugar
+nenhum é decisão que a secretaria precisa ver aluno por aluno.
+
+**Depois do compulsório o aluno não troca mais nada**; só o admin remaneja. É a
+trava que já existia (o portal exige período aberto), não uma nova.
+
+**Como o aluno descobre:** entrando pelo link LTI e vendo a prova marcada. Não há
+envio de e-mail no sistema.
+
+### O `userIdD2L` de quem nunca entrou
+
+O compulsório só é possível porque `identidadePorMatricula` (em
+`d2l-enrollments.service.ts`) resolve o RA para o UserId do Brightspace via
+`users/?orgDefinedId=` — o `userIdD2L` **só existe em `Agendamento`**, gravado a
+partir do launch, então quem nunca clicou não tem nenhum id guardado.
+
+Detalhes que custaram investigação:
+
+- **O escopo `users:userdata:read` não é necessário**: o `core:*:*` que já temos
+  cobre a rota. Verificado contra o `ava.catolica.edu.br`.
+- **404 ali é estado ESPERADO** (matrícula sem conta no LMS), não falha. É o único
+  ponto que usa o `nuloEm404` do `pedir()`; todo o resto continua tratando 404
+  como id errado no cadastro.
+- **O filtro do tenant é por igualdade, não por prefixo** — mas a comparação é
+  refeita no nosso lado. Se uma versão futura da API casar por prefixo, o efeito
+  seria alocar a prova de uma pessoa para outra, em silêncio.
+- **Nada é chutado**: duas contas com a mesma matrícula (`AMBIGUA`) ou UserId não
+  numérico (`ID_INVALIDO`) não escolhem ninguém — viram linha de relatório.
+
+### Simulação é o padrão, e não é opcional na prática
+
+`simulacao: true` percorre a alocação inteira **contando as vagas em memória** e
+não grava nada. É a única forma honesta de responder "cabe todo mundo?": descobrir
+no meio de uma execução real que não cabia deixaria metade alocada e metade não.
+
+⚠️ A contagem simulada **muta o mapa de ocupação de propósito** — é ele que
+carrega, de um aluno para o próximo, a vaga recém-tomada. Trabalhar sobre uma
+cópia faz todos caberem na primeira sala, e a simulação passa a responder "cabe
+todo mundo" justamente quando não cabe. Foi um bug real; há teste que o trava
+(`ocuparVagaSimulada`, em `alocacao.spec.ts`).
+
+### Por que duas fases, e por que a segunda é sequencial
+
+| Fase | O quê | Como |
+|---|---|---|
+| 1 | Identidade + disciplinas de cada aluno | rede, **6 em paralelo**, ~1,5s cada |
+| 2 | A alocação | banco, **sequencial**, ~5ms cada |
+
+Alocar em paralelo, conforme cada chamada de rede volta, faria a ordem depender da
+latência da Valence: duas execuções com os mesmos dados dariam salas diferentes, e
+a simulação deixaria de prever a execução. A fase 2 é ordenada por
+`(polo, modalidade, matrícula)` — determinística por construção.
+
+Medido na base real: ~0,76s para achar o usuário + ~0,75s para ler as matrículas.
+Para 7.226 ativos, ~25 min com concorrência 6.
+
+**Falha de um aluno nunca derruba o lote.** `resolverUm` classifica em vez de
+lançar — se um aluno sem conta virasse exceção, o `Promise.all` da fatia levaria
+junto os outros cinco.
+
+### O lote é uma tabela, não uma resposta
+
+`ExecucaoCompulsorio` + `ExcecaoCompulsorio`. Três motivos: a requisição não fica
+aberta 25 minutos; "faltaram 130 vagas em Taguatinga/EaD" é o que faz abrir sala e
+não pode sumir num F5; e é o registro de que o compulsório aconteceu, com quem
+mandou.
+
+`atualizadoEm` é batido a cada fatia — é o que distingue **lote lento de lote
+morto**. Sem isso um restart deixaria `EM_ANDAMENTO` para sempre e bloquearia todo
+lote seguinte. Silêncio de mais de 5 min vira `FALHOU`, e a consulta devolve
+`interrompida: true`.
+
+**Rodar de novo retoma de onde parou**, sem duplicar: quem já tem prova confirmada
+não entra na lista, e a transação reconfere isso sob lock (o aluno pode ter
+agendado pelo portal no meio do lote).
+
+### Os motivos do relatório são a fila de trabalho da secretaria
+
+Cada um pede uma ação diferente, e é por isso que o CSV sai ordenado por motivo:
+
+| Motivo | O que fazer |
+|---|---|
+| `SEM_VAGA` | abrir mais uma sala ou mais uma data |
+| `SEM_FAIXA_NO_POLO` | o polo não tem faixa cadastrada |
+| `SEM_CONTA_D2L` | chamado no suporte do LMS |
+| `MATRICULA_AMBIGUA` | duas contas com o mesmo RA no Brightspace |
+| `ID_INVALIDO_D2L` | UserId não numérico no cadastro do LMS |
+| `SEM_DISCIPLINA_AGENDAVEL` | conferir o CSV de turmas (o detalhe traz o `Code` que não casou) |
+| `CANCELOU_E_NAO_REMARCOU` | decidir caso a caso: ficou sem lugar |
+| `FALHA_NA_INTEGRACAO` | reprocessável — foi rede/timeout naquele aluno |
+| `AVISO_CONTA_INATIVA_D2L` | **foi alocado**, mas a conta está desativada no LMS |
+
+O último é o único que convive com uma alocação: a pessoa tem lugar na sala e não
+conseguiria abrir a prova. Existe porque apareceu na base real — aluno `ativo` no
+nosso CSV e `IsActive: false` no Brightspace.
+
+O CSV é do formato da **secretaria** (`;` + BOM UTF-8), não do D2L. Ver "São DOIS
+CSVs, com formatos OPOSTOS".
+
 ## Ao implementar, priorize nesta ordem
 
 1. ✅ Prisma schema + migrations + Docker + seed do admin.
@@ -887,6 +1001,9 @@ lugares.
 7. ✅ Remanejo administrativo + cancelamento/troca pelo aluno.
 8. 🟡 Valence: OAuth + enrollments (todas as disciplinas do semestre) prontos e
    desligados por padrão. Special access no quiz — **adiado pelo cliente.**
+9. ✅ Agendamento compulsório: o lote que agenda por quem não agendou, com
+   simulação, acompanhamento e relatório de exceções. **Exige `D2L_HABILITADO`**
+   — é a integração que sabe as disciplinas de quem nunca fez launch.
 
 **Bloqueios externos:** nenhum aberto. O CSV real de turmas
 (`Curso;Código da Turma;Disciplina / Código EAD`, `;`, UTF-8) é quem diz **quais

@@ -52,6 +52,37 @@ interface PaginaDeOrgUnits {
   PagingInfo?: { Bookmark?: string | null; HasMoreItems?: boolean };
 }
 
+/** Item do retorno de `users/?orgDefinedId=`. */
+interface UsuarioD2L {
+  UserId?: number | string;
+  OrgDefinedId?: string | null;
+  DisplayName?: string | null;
+  Activation?: { IsActive?: boolean };
+}
+
+/**
+ * Quem e o aluno dentro do Brightspace, a partir da matricula.
+ *
+ * E um resultado CLASSIFICADO, nao um id ou uma excecao: quem chama e o
+ * agendamento compulsorio, que precisa separar "esta pessoa nao tem conta" de
+ * "a busca falhou" para montar o relatorio de excecoes. Uma excecao a cada
+ * aluno sem conta transformaria um estado esperado em erro de lote.
+ */
+export type IdentidadeNoD2L =
+  | {
+      situacao: 'ACHOU';
+      userIdD2L: string;
+      /** `Activation.IsActive`: conta desativada nao consegue abrir a prova. */
+      ativoNoD2L: boolean;
+      nome: string | null;
+    }
+  /** 404, ou lista vazia: a matricula nao existe neste tenant. */
+  | { situacao: 'SEM_CONTA' }
+  /** Duas contas com a mesma matricula. Nao se escolhe uma: alguem decide. */
+  | { situacao: 'AMBIGUA'; quantos: number }
+  /** `UserId` nao numerico — a Valence o recusaria depois (ver lti.service). */
+  | { situacao: 'ID_INVALIDO'; valor: string };
+
 /** Um Periodo Letivo do Brightspace, para o dropdown do admin. */
 export interface PeriodoLetivoD2L {
   /** OrgUnitId — e o que vai gravado em `PeriodoAgendamento.periodoLetivoId`. */
@@ -109,6 +140,10 @@ const CACHE_DESCENDENTES_MS = 10 * 60_000;
  * escolher": o `periodoLetivoId` vem de `PeriodoAgendamento`, cadastrado pelo
  * admin. Sem ele, as matriculas trariam tambem os semestres passados.
  *
+ * Daqui sai tambem a IDENTIDADE do aluno no LMS (`identidadePorMatricula`),
+ * necessaria para o agendamento compulsorio: quem nunca fez launch nao tem
+ * `userIdD2L` gravado, e sem ele nao ha como ler as disciplinas dele.
+ *
  * E daqui tambem sai a LISTA de periodos letivos (`periodosLetivos`), que
  * alimenta o dropdown onde o admin escolhe qual cadastrar — digitar o OrgUnitId
  * na mao e a receita para o erro que nao aparece: um id errado nao da erro
@@ -164,6 +199,75 @@ export class D2lEnrollmentsService {
     );
 
     return dentro;
+  }
+
+  /**
+   * ==========================================================================
+   * QUEM E O ALUNO NO BRIGHTSPACE, PELA MATRICULA
+   * ==========================================================================
+   * Existe para o agendamento COMPULSORIO: o admin agenda por quem nao agendou,
+   * e essas pessoas nunca fizeram launch — entao nao ha `userIdD2L` gravado em
+   * lugar nenhum. Sem esta rota, o compulsorio nao teria como descobrir as
+   * disciplinas de ninguem.
+   *
+   * A matricula e o `OrgDefinedId` do Brightspace, o mesmo campo que chega no
+   * claim do launch.
+   *
+   * **404 aqui e estado ESPERADO, nao falha** — e a resposta do tenant para
+   * matricula inexistente (`{"Errors":[{"Message":"Resource Not Found"}]}`).
+   * Um aluno pode estar na planilha da secretaria e nao ter conta no LMS. Por
+   * isso este e o unico ponto que pede `nuloEm404`.
+   *
+   * **O filtro do tenant e por igualdade, nao por prefixo** (verificado: um RA
+   * truncado devolve 404, e a caixa e ignorada). Mesmo assim a comparacao e
+   * refeita aqui: se uma versao futura da API passar a casar por prefixo, o
+   * efeito seria alocar a prova de uma pessoa para outra, em silencio.
+   */
+  async identidadePorMatricula(matricula: string): Promise<IdentidadeNoD2L> {
+    const cfg = this.exigirConfigurado();
+
+    const url = this.url(cfg, 'lp', 'users/', { orgDefinedId: matricula });
+
+    const dados = await this.pedir<UsuarioD2L[]>(url, 'usuario por matricula', {
+      nuloEm404: true,
+    });
+
+    const alvo = matricula.trim().toLowerCase();
+
+    const exatos = (dados ?? []).filter(
+      (u) => (u.OrgDefinedId ?? '').trim().toLowerCase() === alvo,
+    );
+
+    if (exatos.length === 0) return { situacao: 'SEM_CONTA' };
+
+    if (exatos.length > 1) {
+      // Duas contas para a mesma matricula e problema de cadastro no LMS.
+      // Escolher uma seria decidir de qual conta a prova sai — nao e nossa
+      // decisao, e o erro so apareceria no dia.
+      this.logger.warn(
+        `Matricula ${matricula} tem ${exatos.length} contas no Brightspace; ` +
+          'nenhuma foi escolhida.',
+      );
+
+      return { situacao: 'AMBIGUA', quantos: exatos.length };
+    }
+
+    const usuario = exatos[0];
+    const userId = String(usuario.UserId ?? '');
+
+    // Mesma trava do launch (lti.service.ts): a Valence so aceita UserId
+    // numerico, e um valor de outro formato falharia depois, ao ler as
+    // disciplinas — longe daqui e sem ligacao obvia com a causa.
+    if (!/^\d+$/.test(userId)) {
+      return { situacao: 'ID_INVALIDO', valor: userId };
+    }
+
+    return {
+      situacao: 'ACHOU',
+      userIdD2L: userId,
+      ativoNoD2L: usuario.Activation?.IsActive !== false,
+      nome: usuario.DisplayName ?? null,
+    };
   }
 
   /**
@@ -441,7 +545,24 @@ export class D2lEnrollmentsService {
     );
   }
 
-  private async pedir<T>(url: string, o_que: string): Promise<T> {
+  /**
+   * `nuloEm404` inverte o significado do 404 para UMA chamada: em vez de "id
+   * errado no cadastro", passa a ser "nao existe", devolvido como `null`.
+   *
+   * As sobrecargas existem para que so quem passa a opcao precise tratar o
+   * `null` — os outros chamadores continuam com o tipo nao-nulavel de antes.
+   */
+  private async pedir<T>(url: string, o_que: string): Promise<T>;
+  private async pedir<T>(
+    url: string,
+    o_que: string,
+    opcoes: { nuloEm404: true },
+  ): Promise<T | null>;
+  private async pedir<T>(
+    url: string,
+    o_que: string,
+    opcoes: { nuloEm404?: boolean } = {},
+  ): Promise<T | null> {
     const token = await this.oauth.obterAccessToken();
 
     let resposta: Response;
@@ -464,6 +585,8 @@ export class D2lEnrollmentsService {
 
     if (!resposta.ok) {
       const corpo = (await resposta.text().catch(() => '')).slice(0, 300);
+
+      if (resposta.status === 404 && opcoes.nuloEm404) return null;
 
       // 404 aqui quase sempre e id errado no cadastro — do periodo letivo ou do
       // aluno —, nao instabilidade. A mensagem diz onde procurar.
