@@ -266,7 +266,7 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `POST /importacao/alunos` · `/importacao/turmas` · `GET /importacao` | admin | CSVs + auditoria |
 | `GET /alunos` · `/alunos/cursos` · `/alunos/:id` | admin | Pesquisa os vínculos importados (só leitura) |
 | `GET /turmas` · `/turmas/:id` | admin | Pesquisa as turmas/disciplinas do CSV (só leitura) |
-| `GET /modalidades` · `GET/POST/PATCH /polos` · `/salas` · `/faixas` · `/sala-faixas` | admin | Estrutura física e oferta de vagas |
+| `GET /modalidades` · `GET/POST/PATCH/DELETE /polos` · `/salas` · `/faixas` · `/sala-faixas` | admin | Estrutura física e oferta de vagas |
 | `GET /portal/periodo` · `/portal/disciplinas` · `/portal/faixas` | aluno | O que ele pode escolher |
 | `GET/POST /portal/agendamentos` | aluno | Confirmar a prova e consultar o que já marcou |
 | `GET/POST /periodos` · `GET/PATCH /periodos/:id` | admin | Abrir/fechar a janela de agendamento |
@@ -283,10 +283,36 @@ matrículas existem — ver "Disciplinas do aluno: launch ou enrollments".
 
 ## Cadastro: polos, salas e os 2 CSVs
 
-**Polos — via SEED, não CSV.** Os 27 polos são populados por `prisma/seed-polos.ts`
+**Polos — via SEED, não CSV.** Os polos são populados por `prisma/seed-polos.ts`
 (nomes extraídos da coluna CAMPUS do CSV de alunos, exatamente como aparecem). O
 `Polo.nome` é único e serve de chave de casamento. Adicionar polo novo = inserir
-linha, não migration.
+linha, não migration. A importação **nunca cria polo**: ela só faz lookup por
+nome, e CAMPUS sem polo cadastrado **rejeita a linha do aluno** (o vínculo não
+entra no banco), reportando em `polosNaoEncontrados[]`.
+
+### Campus que sai da oferta: DESATIVA, não apaga
+
+`Polo.ativo` é a trava do ciclo "este campus não tem mais prova". Um polo inativo
+**não aceita sala nem faixa nova** (409 em `POST /salas` e `POST /faixas`) — e é
+só isso que ele faz. Sem faixa nova, ninguém agenda ali, e o compulsório reporta
+esses alunos como `SEM_FAIXA_NO_POLO`, que é a linha que a secretaria precisa ver.
+
+**A trava é do lado administrativo de propósito.** Nada no portal do aluno
+consulta `Polo.ativo`: desativar um campus no meio do semestre não pode esconder
+a prova de quem já agendou. Mesma lógica da regra 7 — fechar tranca a *escolha*,
+nunca a *consulta*. A importação também segue casando alunos com polo inativo:
+rejeitá-los faria sumir dos relatórios gente que ainda existe.
+
+**`POST /polos` com nome de polo INATIVO reativa, com o mesmo id** — em vez de
+409. É como o campus volta na oferta seguinte, sem perder salas, faixas passadas
+nem alunos. Sem isso o admin ficaria travado: o nome está ocupado por um polo que
+ele não vê na tela, e renomear não é permitido. Só nome de polo **ativo** conflita.
+
+**`DELETE /polos/:id` só apaga polo VIRGEM** — sem sala, sem faixa e sem aluno.
+Ele existe para desfazer cadastro errado (nome com acento trocado), que ficaria
+no banco para sempre porque `nome` não é editável. Polo com histórico responde
+409 com as contagens: apagá-lo arrastaria junto as faixas que sustentam
+agendamentos já realizados, e a prova sumiria do relatório.
 
 **Salas — CADASTRO MANUAL.** O admin cadastra sala (nome + capacidade) e escolhe o
 polo num dropdown populado pelos polos do seed. Import de salas por CSV existe só
@@ -628,7 +654,7 @@ npm run prisma:studio
 npm run db:down              # derruba o compose
 npm run db:reset             # migrate reset — APAGA os dados
 
-# seeds idempotentes: modalidades + 27 polos + 1º admin
+# seeds idempotentes: modalidades + polos + 1º admin
 npm run seed                 # lê SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD do .env
 
 # LTI
@@ -722,10 +748,12 @@ campus), `SalaFaixa.modalidadeId` (trocar depois de haver agendamento poria o
 aluno numa prova de outra duração). Nos três casos o campo não existe no DTO de
 update, então `forbidNonWhitelisted` devolve 400.
 
-**Apagar vs. desativar:** só se apaga o que nunca foi usado. Sala já ofertada,
-faixa com agendamento e oferta com aluno alocado respondem 409 sugerindo
-`ativo=false` — o histórico de quem já tem prova marcada precisa sobreviver.
-Reduzir `vagas` abaixo dos agendamentos existentes também é 409.
+**Apagar vs. desativar:** só se apaga o que nunca foi usado. Polo com sala/faixa/
+aluno, sala já ofertada, faixa com agendamento e oferta com aluno alocado
+respondem 409 sugerindo `ativo=false` — o histórico de quem já tem prova marcada
+precisa sobreviver. Reduzir `vagas` abaixo dos agendamentos existentes também é
+409. No caso do polo, desativar tem efeito próprio (não recebe sala nem faixa
+nova) e `POST /polos` com o mesmo nome reativa — ver "Campus que sai da oferta".
 
 ## Portal do aluno (etapa 6)
 

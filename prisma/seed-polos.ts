@@ -1,7 +1,7 @@
 import type { PrismaClient } from '../src/generated/prisma/client';
 
 /**
- * Os 27 polos, extraidos dos valores DISTINTOS da coluna CAMPUS do CSV de alunos
+ * Os polos, extraidos dos valores DISTINTOS da coluna CAMPUS do CSV de alunos
  * (arquivo real, ISO-8859-1) — exatamente como aparecem no arquivo.
  *
  * Polo.nome e a CHAVE DE CASAMENTO com a importacao de alunos: o import procura

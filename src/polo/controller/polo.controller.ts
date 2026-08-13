@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseBoolPipe,
@@ -26,6 +27,7 @@ import {
   CriarPoloDto,
   PoloComContagensDto,
   PoloDto,
+  RemocaoPoloDto,
 } from '../dto/polo.dto';
 import { PoloService } from '../service/polo.service';
 
@@ -39,9 +41,10 @@ export class PoloController {
   @ApiOperation({
     summary: 'Lista os polos',
     description:
-      'Popula o dropdown do cadastro de sala. Os 27 polos vem do seed, extraidos ' +
-      'da coluna CAMPUS do CSV de alunos. Traz quantas salas e quantos vinculos de ' +
-      'aluno cada polo tem, para o admin ver onde ainda falta cadastrar sala.',
+      'Popula o dropdown do cadastro de sala. Os polos vem do seed, extraidos ' +
+      'da coluna CAMPUS do CSV de alunos. Traz quantas salas, faixas e vinculos de ' +
+      'aluno cada polo tem — serve para ver onde falta cadastrar sala e para saber ' +
+      'se o polo ainda pode ser apagado (as tres contagens em zero).',
   })
   @ApiQuery({
     name: 'apenasAtivos',
@@ -68,13 +71,16 @@ export class PoloController {
 
   @Post()
   @ApiOperation({
-    summary: 'Cadastra um polo',
+    summary: 'Cadastra (ou reativa) um polo',
     description:
       'Para polos que surgirem depois do seed. O nome precisa bater EXATAMENTE com ' +
-      'a coluna CAMPUS do CSV de alunos — e a chave de casamento da importacao.',
+      'a coluna CAMPUS do CSV de alunos — e a chave de casamento da importacao. ' +
+      'Se ja existir um polo INATIVO com esse nome, ele e REATIVADO com o mesmo id: ' +
+      'e assim que um campus que saiu da oferta volta, sem perder salas, faixas ' +
+      'passadas nem os alunos ja importados. So conflita com polo ativo.',
   })
   @ApiCreatedResponse({ type: PoloDto })
-  @ApiConflictResponse({ description: 'Ja existe um polo com este nome' })
+  @ApiConflictResponse({ description: 'Ja existe um polo ATIVO com este nome' })
   criar(@Body() dto: CriarPoloDto) {
     return this.poloService.criar(dto);
   }
@@ -95,5 +101,25 @@ export class PoloController {
     @Body() dto: AtualizarPoloDto,
   ) {
     return this.poloService.atualizar(id, dto);
+  }
+
+  @Delete(':id')
+  @ApiOperation({
+    summary: 'Remove um polo sem sala, faixa nem aluno',
+    description:
+      'Serve para desfazer cadastro errado — como o nome nao pode ser editado, ' +
+      'um polo digitado errado ficaria no banco para sempre. Campus que apenas ' +
+      'saiu da oferta NAO se apaga: ele sustenta os alunos importados e as provas ' +
+      'ja realizadas. Para esse caso, desative (PATCH ativo=false) e cadastre de ' +
+      'novo com o mesmo nome quando voltar a ter prova.',
+  })
+  @ApiParam({ name: 'id', type: Number, example: 6 })
+  @ApiOkResponse({ type: RemocaoPoloDto })
+  @ApiNotFoundResponse({ description: 'Polo nao encontrado' })
+  @ApiConflictResponse({
+    description: 'Polo com salas, faixas ou alunos — desative em vez de apagar',
+  })
+  remover(@Param('id', ParseIntPipe) id: number) {
+    return this.poloService.remover(id);
   }
 }

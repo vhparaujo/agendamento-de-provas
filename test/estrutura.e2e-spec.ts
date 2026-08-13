@@ -19,6 +19,7 @@ describe('Estrutura: polo, sala, faixa e oferta (e2e)', () => {
   const SENHA = 'senha-do-teste-123';
   const POLO_NOME = 'Polo E2E Estrutura';
   const OUTRO_POLO_NOME = 'Polo E2E Outro';
+  const POLO_CICLO_NOME = 'Polo E2E Ciclo';
 
   let poloId: number;
   let outroPoloId: number;
@@ -83,7 +84,7 @@ describe('Estrutura: polo, sala, faixa e oferta (e2e)', () => {
 
   async function limpar() {
     const polos = await prisma.polo.findMany({
-      where: { nome: { in: [POLO_NOME, OUTRO_POLO_NOME] } },
+      where: { nome: { in: [POLO_NOME, OUTRO_POLO_NOME, POLO_CICLO_NOME] } },
     });
 
     for (const polo of polos) {
@@ -128,6 +129,107 @@ describe('Estrutura: polo, sala, faixa e oferta (e2e)', () => {
       await auth(api().patch(`/api/polos/${poloId}`))
         .send({ nome: 'Outro Nome' })
         .expect(400);
+    });
+  });
+
+  /**
+   * O ciclo real de um campus: entra na oferta, sai numa oferta seguinte, volta.
+   * Sair NAO e apagar — o polo sustenta alunos importados e provas ja feitas.
+   */
+  describe('ciclo de vida do polo', () => {
+    let cicloId: number;
+    let salaDoCicloId: number;
+
+    it('cria o polo do ciclo', async () => {
+      const res = await auth(api().post('/api/polos'))
+        .send({ nome: POLO_CICLO_NOME })
+        .expect(201);
+
+      cicloId = res.body.id;
+      expect(res.body.ativo).toBe(true);
+    });
+
+    it('recusa apagar polo que ja tem sala', async () => {
+      const sala = await auth(api().post('/api/salas'))
+        .send({ poloId: cicloId, nome: 'SALA CICLO', capacidade: 10 })
+        .expect(201);
+
+      salaDoCicloId = sala.body.id;
+
+      await auth(api().delete(`/api/polos/${cicloId}`)).expect(409);
+    });
+
+    it('desativado, nao recebe sala nem faixa nova', async () => {
+      await auth(api().patch(`/api/polos/${cicloId}`))
+        .send({ ativo: false })
+        .expect(200);
+
+      await auth(api().post('/api/salas'))
+        .send({ poloId: cicloId, nome: 'SALA TARDIA', capacidade: 10 })
+        .expect(409);
+
+      await auth(api().post('/api/faixas'))
+        .send({
+          poloId: cicloId,
+          data: '2030-08-20',
+          horaInicio: '08:30',
+          horaFim: '11:30',
+          salas: [{ salaId: salaDoCicloId, modalidadeId: ead.id, vagas: 5 }],
+        })
+        .expect(409);
+    });
+
+    it('sai da lista de ativos, mas continua na lista completa', async () => {
+      const ativos = await auth(
+        api().get('/api/polos?apenasAtivos=true'),
+      ).expect(200);
+      expect(ativos.body.map((p: { id: number }) => p.id)).not.toContain(
+        cicloId,
+      );
+
+      const todos = await auth(api().get('/api/polos')).expect(200);
+      expect(todos.body.map((p: { id: number }) => p.id)).toContain(cicloId);
+    });
+
+    it('cadastrar de novo com o mesmo nome REATIVA o mesmo polo', async () => {
+      const res = await auth(api().post('/api/polos'))
+        .send({ nome: POLO_CICLO_NOME })
+        .expect(201);
+
+      // mesmo id: a sala cadastrada antes continua pendurada nele
+      expect(res.body.id).toBe(cicloId);
+      expect(res.body.ativo).toBe(true);
+
+      const detalhe = await auth(api().get(`/api/polos/${cicloId}`)).expect(
+        200,
+      );
+      expect(detalhe.body.totalSalas).toBe(1);
+    });
+
+    it('reativado, volta a aceitar faixa', async () => {
+      await auth(api().post('/api/faixas'))
+        .send({
+          poloId: cicloId,
+          data: '2030-08-20',
+          horaInicio: '08:30',
+          horaFim: '11:30',
+          salas: [{ salaId: salaDoCicloId, modalidadeId: ead.id, vagas: 5 }],
+        })
+        .expect(201);
+    });
+
+    it('apaga o polo depois que ele fica sem sala e sem faixa', async () => {
+      const faixas = await auth(
+        api().get(`/api/faixas?poloId=${cicloId}`),
+      ).expect(200);
+
+      for (const faixa of faixas.body) {
+        await auth(api().delete(`/api/faixas/${faixa.id}`)).expect(200);
+      }
+
+      await auth(api().delete(`/api/salas/${salaDoCicloId}`)).expect(200);
+      await auth(api().delete(`/api/polos/${cicloId}`)).expect(200);
+      await auth(api().get(`/api/polos/${cicloId}`)).expect(404);
     });
   });
 

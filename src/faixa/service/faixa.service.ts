@@ -72,6 +72,17 @@ export class FaixaService {
       `Polo ${dados.poloId} nao encontrado`,
     );
 
+    // Polo inativo = campus fora da oferta. Esta e a trava que faz "desativar o
+    // polo" significar de fato "nao ha mais prova aqui": sem faixa nova, nenhum
+    // aluno consegue agendar, e o compulsorio os reporta como SEM_FAIXA_NO_POLO.
+    // As faixas JA criadas continuam de pe — quem agendou nao perde a prova.
+    if (!polo.ativo) {
+      throw new ConflictException(
+        `O polo "${polo.nome}" esta inativo e nao recebe faixas novas. ` +
+          'Reative-o (PATCH ativo=true) se o campus voltou a ter prova.',
+      );
+    }
+
     const data = paraData(dados.data);
 
     // Duas faixas identicas no mesmo polo quase sempre sao duplo-clique, e
@@ -247,15 +258,33 @@ export class FaixaService {
 
     if (!faixa) throw new NotFoundException(`Faixa ${id} nao encontrada`);
 
-    const agendamentos = await this.prisma.agendamento.count({
-      where: { salaFaixa: { faixaId: id } },
-    });
+    // O CANCELADO conta tanto quanto o confirmado, e a mensagem precisa dizer
+    // isso: quem cancelou os agendamentos acha que "tirou tudo" e nao entende o
+    // 409. Cancelado nao some do banco de proposito (quem aparecer no dia sem
+    // estar na lista precisa ser explicavel), e ele ainda aponta para a
+    // SalaFaixa — a FK e Restrict, entao apagar aqui daria erro de banco cru.
+    const [confirmados, cancelados] = await Promise.all([
+      this.prisma.agendamento.count({
+        where: { salaFaixa: { faixaId: id }, status: 'CONFIRMADO' },
+      }),
+      this.prisma.agendamento.count({
+        where: { salaFaixa: { faixaId: id }, status: 'CANCELADO' },
+      }),
+    ]);
 
-    if (agendamentos > 0) {
+    if (confirmados > 0 || cancelados > 0) {
+      const situacao =
+        confirmados > 0
+          ? `${confirmados} agendamento(s) confirmado(s)` +
+            (cancelados > 0 ? ` e ${cancelados} cancelado(s)` : '')
+          : `${cancelados} agendamento(s) CANCELADO(s) — nenhum confirmado`;
+
       throw new ConflictException(
-        `Esta faixa ja tem ${agendamentos} agendamento(s) e nao pode ser apagada. ` +
-          'Desative-a (PATCH ativo=false) para tira-la da lista dos alunos sem ' +
-          'perder o historico de quem ja agendou.',
+        `Esta faixa tem ${situacao} e nao pode ser apagada. ` +
+          'Cancelar nao apaga o agendamento: ele vira CANCELADO e continua ' +
+          'registrado, com o historico de quem marcou e desmarcou. ' +
+          'Desative a faixa (PATCH ativo=false) para tira-la da lista dos alunos ' +
+          'sem perder esse registro.',
       );
     }
 

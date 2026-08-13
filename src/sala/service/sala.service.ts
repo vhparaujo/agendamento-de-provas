@@ -82,6 +82,16 @@ export class SalaService {
       throw new NotFoundException(`Polo ${dados.poloId} nao encontrado`);
     }
 
+    // Polo inativo = campus fora da oferta. Sala nova ali seria cadastro que
+    // nunca vira prova, e o admin so descobriria ao montar a faixa e nao achar
+    // o polo na lista.
+    if (!polo.ativo) {
+      throw new ConflictException(
+        `O polo "${polo.nome}" esta inativo e nao recebe salas novas. ` +
+          'Reative-o (PATCH ativo=true) se o campus voltou a ter prova.',
+      );
+    }
+
     const nome = dados.nome.trim();
 
     const jaExiste = await this.prisma.sala.findUnique({

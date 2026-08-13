@@ -130,7 +130,7 @@ cp .env.example .env
 npm run db:up            # sobe só o MySQL (o app roda na sua máquina)
 npm run prisma:generate  # gera o client em src/generated/prisma (não versionado)
 npm run prisma:migrate   # aplica as migrations
-npm run seed             # modalidades + 27 polos + primeiro admin
+npm run seed             # modalidades + polos + primeiro admin
 
 npm run start:dev
 ```
@@ -347,7 +347,7 @@ por dentro da faixa.
 | Método | Rota | Descrição |
 |---|---|---|
 | `GET` | `/modalidades` | Lista (só leitura — vêm do seed) |
-| `GET` `POST` | `/polos` · `/polos/:id` `PATCH` | `nome` não é editável: é a chave de casamento com o CSV |
+| `GET` `POST` `PATCH` `DELETE` | `/polos` · `/polos/:id` | `nome` não é editável: é a chave de casamento com o CSV. Ver "Campus que sai da oferta" |
 | `GET` `POST` `PATCH` `DELETE` | `/salas` · `/salas/:id` | `poloId` imutável; só apaga o que nunca foi ofertado |
 | `GET` `POST` `PATCH` `DELETE` | `/faixas` · `/faixas/:id` | Cria a faixa e a oferta numa transação |
 | `POST` | `/faixas/:id/salas` | Adiciona sala a uma faixa existente |
@@ -692,7 +692,7 @@ TurmaImportada ── ImportacaoCsv      Admin      PeriodoAgendamento
 |---|---|
 | `Admin` | Login administrativo (bcrypt, `mustChangePassword`, campos de reset) |
 | `Modalidade` | `codigo` (EAD/SEMI/MODULAR/PRESENCIAL) + `duracaoMinutos` |
-| `Polo` | 27 unidades, `nome` **único** = chave de casamento com o CSV |
+| `Polo` | Unidades do seed, `nome` **único** = chave de casamento com o CSV |
 | `Sala` | Polo + nome + capacidade. Neutra |
 | `Faixa` | Polo + data + horaInício + horaFim. Neutra |
 | `SalaFaixa` | Sala + Faixa + Modalidade + `vagas` + `ordem`. **O núcleo** |
@@ -723,6 +723,27 @@ TurmaImportada ── ImportacaoCsv      Admin      PeriodoAgendamento
 
 Os polos vêm de **seed**, não de CSV. As salas são **cadastro manual** pelo admin
 (nome + capacidade + polo por dropdown). Só dois arquivos são importados:
+
+> **A importação nunca cria polo.** Ela procura o valor de `CAMPUS` entre os polos
+> cadastrados; não achando, **a linha do aluno é rejeitada** (o vínculo não entra
+> no banco) e o campus aparece em `polosNaoEncontrados[]` na resposta do upload.
+> Para o aluno entrar, cadastre o polo antes — `POST /polos`, com o nome idêntico
+> ao do arquivo.
+
+#### Campus que sai da oferta
+
+Um campus que deixa de ter prova **se desativa, não se apaga**:
+
+| Ação | Efeito |
+|---|---|
+| `PATCH /polos/:id` `{ ativo: false }` | O polo para de aceitar **sala e faixa novas** (409). Nada do que já existe é afetado: salas, faixas e provas marcadas continuam valendo, e o aluno segue vendo a prova dele |
+| `POST /polos` com o **mesmo nome** | **Reativa** o polo, com o mesmo id — salas, faixas passadas e alunos voltam junto. Só conflita (409) se já houver polo **ativo** com aquele nome |
+| `DELETE /polos/:id` | Só apaga polo **virgem** (sem sala, sem faixa, sem aluno). Serve para desfazer cadastro errado, já que `nome` não é editável. Com histórico: 409 |
+
+Sem faixa nova, ninguém agenda naquele polo, e o agendamento compulsório reporta
+esses alunos como `SEM_FAIXA_NO_POLO` — a lista que a secretaria precisa ver.
+O portal do aluno **não** consulta `Polo.ativo` de propósito: desativar um campus
+no meio do semestre não pode esconder a prova de quem já agendou.
 
 ### CSV de alunos
 

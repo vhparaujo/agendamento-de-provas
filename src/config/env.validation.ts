@@ -36,6 +36,15 @@ export class EnvironmentVariables {
   })
   SWAGGER_ENABLED?: string;
 
+  /**
+   * Numero de proxies confiaveis na frente da API (`1` = so o nosso Nginx), ou
+   * uma das formas do Express ('loopback', lista de IPs/CIDRs). Vazio/ausente =
+   * desligado, que e o correto rodando sem proxy. Ver src/main.ts.
+   */
+  @IsOptional()
+  @IsString()
+  TRUST_PROXY?: string;
+
   @IsNotEmpty({ message: 'DATABASE_URL e obrigatoria' })
   @IsString()
   DATABASE_URL!: string;

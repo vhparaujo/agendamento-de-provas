@@ -366,6 +366,38 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
       ).expect(409);
     });
 
+    /**
+     * A duvida que isto trava: "cancelei todo mundo, por que a faixa nao apaga?".
+     * Cancelado continua no banco (e a FK para SalaFaixa e Restrict), entao a
+     * faixa segue bloqueada — mas a mensagem tem que DIZER que sao cancelados,
+     * senao o admin acha que o sistema esta errado e fica tentando de novo.
+     */
+    it('faixa com agendamentos so CANCELADOS continua sem poder ser apagada, e a mensagem explica', async () => {
+      const aluno = await criarAluno('SOCANCEL');
+      const sala = await criarSala('SO-CANCEL', 2);
+      const { faixaId } = await criarFaixa('2030-11-05', poloId, [
+        { salaId: sala.id, modalidadeId: ead.id, vagas: 1, ordem: 1 },
+      ]);
+
+      const ag = await agendar(aluno.token, faixaId);
+      await como(
+        api().delete(`/api/portal/agendamentos/${ag.id}`),
+        aluno.token,
+      ).expect(200);
+
+      const res = await comoAdmin(api().delete(`/api/faixas/${faixaId}`)).expect(
+        409,
+      );
+
+      expect(res.body.message).toContain('CANCELADO');
+      expect(res.body.message).toContain('ativo=false');
+
+      // e o caminho que a mensagem indica funciona
+      await comoAdmin(api().patch(`/api/faixas/${faixaId}`))
+        .send({ ativo: false })
+        .expect(200);
+    });
+
     it('fora do prazo o aluno nao cancela nem troca sozinho', async () => {
       const aluno = await criarAluno('PRAZO');
       const ag = await agendar(aluno.token, faixaB);

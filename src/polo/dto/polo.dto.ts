@@ -50,7 +50,9 @@ export class AtualizarPoloDto {
   @ApiPropertyOptional({
     example: false,
     description:
-      'Polo inativo some do dropdown de cadastro de sala. Nao afeta faixas ja criadas.',
+      'Polo inativo nao aceita sala nem faixa nova — e assim que um campus sai ' +
+      'da oferta. Nao afeta o que ja existe: salas, faixas e provas ja marcadas ' +
+      'continuam valendo, e o aluno segue vendo a prova dele.',
   })
   @IsOptional()
   @IsBoolean()
@@ -76,8 +78,22 @@ export class PoloComContagensDto extends PoloDto implements PoloComContagens {
   totalSalas!: number;
 
   @ApiProperty({
+    example: 4,
+    description:
+      'Faixas cadastradas neste polo, INCLUSIVE as de datas passadas — sao elas ' +
+      'que sustentam os agendamentos ja realizados. Com as outras duas contagens ' +
+      'em zero, o polo pode ser apagado.',
+  })
+  totalFaixas!: number;
+
+  @ApiProperty({
     example: 2515,
     description: 'Vinculos de aluno importados neste polo (aluno + curso).',
   })
   totalAlunos!: number;
+}
+
+export class RemocaoPoloDto {
+  @ApiProperty({ example: 'Polo "Polo Formosa" removido' })
+  mensagem!: string;
 }
