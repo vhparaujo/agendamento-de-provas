@@ -30,6 +30,7 @@ a entrada do aluno por **LTI 1.3**, que funciona.
 - [Autenticação em detalhe](#autenticação-em-detalhe)
 - [Estrutura do código](#estrutura-do-código)
 - [Notas de infraestrutura (Prisma 7)](#notas-de-infraestrutura-prisma-7)
+- [Deploy em produção](#deploy-em-produção)
 - [Testes](#testes)
 - [Estado atual e roadmap](#estado-atual-e-roadmap)
 
@@ -100,23 +101,32 @@ mesma faixa, porém, a sala fica travada numa única modalidade (garantido pelo
 4. **Disciplinas agendáveis** = disciplinas do aluno na Valence ∩ turmas reais
    (CSV) ∩ período letivo vigente. **Não são todas as disciplinas do aluno.**
 5. **Um agendamento cobre todas as disciplinas agendáveis de UM vínculo**, no
-   mesmo horário. Aluno com dois cursos faz dois agendamentos — as durações são
-   diferentes, então caem em faixas diferentes.
-6. **Alocação de sala é sequencial**: preenche a sala de menor `ordem` até lotar,
+   mesmo horário. Aluno com dois cursos faz dois agendamentos.
+6. **Uma prova por PESSOA em cada horário** (decisão do cliente, 14/08/2026). O
+   RA de dois cursos faz duas provas, mas **não pode marcar as duas na mesma
+   faixa**: são provas diferentes e ninguém faz as duas ao mesmo tempo. Antes
+   disso ele ocupava duas cadeiras e só fazia uma delas. Vale no portal, na
+   troca, no **remanejo do admin** e no compulsório — a regra vive num lugar só
+   (`exigirUmaProvaPorFaixa`). O recorte é a **faixa**, não a sobreposição de
+   horário: 09:00-12:00 e 10:00-11:30 continuam permitidos.
+7. **Alocação de sala é sequencial**: preenche a sala de menor `ordem` até lotar,
    só então usa a próxima. A vaga é da SalaFaixa (`count(agendamentos) < vagas`).
-7. **Concorrência**: a checagem de vaga + criação do agendamento **deve** ocorrer
+8. **Concorrência**: a checagem de vaga + criação do agendamento **deve** ocorrer
    na mesma transação, serializada por SalaFaixa. Nunca conte fora da transação.
    Feito com `SELECT ... FOR UPDATE` sob READ COMMITTED — há teste que prova:
-   remover o lock faz 5 alunos entrarem na mesma vaga.
-8. **Reagendamento tem dono.** O aluno só troca/cancela com o período **aberto**
+   remover o lock faz 5 alunos entrarem na mesma vaga. O primeiro lock é por
+   **matrícula**, não por vínculo: senão os dois cursos do mesmo RA passariam
+   pela regra 6 em paralelo.
+9. **Reagendamento tem dono.** O aluno só troca/cancela com o período **aberto**
    e só no período **vigente**. O admin remaneja a qualquer tempo (é a válvula de
-   escape), marcando `alocadoManual = true`, mas nem ele muda polo ou modalidade.
+   escape), marcando `alocadoManual = true`, mas nem ele muda polo, modalidade ou
+   joga o aluno no horário da outra prova dele.
    **Toda alteração grava quem a fez** — aluno ou administrador — na mesma
    transação da mudança.
-9. **O período fecha só por data/hora** (`dataFechamento`), nunca por esgotamento
-   de vagas. A janela de agendamento e as datas das provas são linhas do tempo
-   independentes.
-10. **Sync com D2L é assíncrono e tolerante a falha**: 404 (aluno não matriculado)
+10. **O período fecha só por data/hora** (`dataFechamento`), nunca por esgotamento
+    de vagas. A janela de agendamento e as datas das provas são linhas do tempo
+    independentes.
+11. **Sync com D2L é assíncrono e tolerante a falha**: 404 (aluno não matriculado)
     é estado **esperado** (`NAO_MATRICULADO`), não erro. *(fase adiada — a fila já
     é gravada, mas ninguém a consome ainda)*
 
@@ -265,7 +275,7 @@ Todos sob o prefixo `/api`. Um `ValidationPipe` global com `whitelist` e
 
 | Método | Rota | Descrição |
 |---|---|---|
-| `GET` | `/health` | Status da API e do banco |
+| `GET` | `/health` | Status da API, do banco e da integração D2L (campo `d2l`) |
 
 ### Autenticação — admin
 
@@ -381,9 +391,19 @@ datas das provas**, que são as faixas. São duas linhas do tempo independentes.
 | `GET` | `/periodos/:id` | Detalhe, com quantos já agendaram |
 | `POST` | `/periodos` | Cria — **nasce fechado**, para conferir as faixas antes de liberar |
 | `PATCH` | `/periodos/:id` | Abre, fecha ou ajusta o prazo |
+| `DELETE` | `/periodos/:id` | Só apaga período **sem agendamento nenhum**; devolve quem virou vigente |
 
 Fecha **só por data/hora**. Vaga esgotando é problema de capacidade (o admin abre
 mais salas), nunca motivo para encerrar o agendamento de quem ainda não escolheu.
+
+**Vigente = o cadastrado mais recentemente**, e não existe como marcar outro no
+lugar. Por isso cadastrar o semestre seguinte com antecedência **rouba o vigente
+do período em curso** — a linha nova passa a ser a única que o portal do aluno
+consulta. O `DELETE` é a saída para isso e para cadastro errado, com duas travas:
+período letivo que já tem agendamento (**contando os cancelados**) responde 409, e
+a resposta traz `vigenteAgora` porque apagar o mais recente devolve o portal ao
+semestre anterior, normalmente com o prazo já vencido. Para encerrar o prazo sem
+perder o histórico, é o `PATCH` — não este.
 
 ### Relatório de agendamentos
 
@@ -397,6 +417,7 @@ Exigem JWT de admin. Todas aceitam os mesmos filtros: `poloId`, `faixaId`,
 | `GET` | `/agendamentos/exportacao` | **CSV de TODOS os alunos** — agendados ou não |
 | `GET` | `/agendamentos/:id` | Detalhe |
 | `GET` | `/agendamentos/:id/historico` | **Quem alterou**: o próprio aluno ou qual administrador |
+| `POST` | `/agendamentos` | **Agenda a prova de um aluno específico**, em nome da secretaria |
 | `PATCH` | `/agendamentos/:id/remanejar` | Move de sala (`salaFaixaId`) ou de horário (`faixaId`) |
 | `DELETE` | `/agendamentos/:id` | Cancela (vira `CANCELADO`, não apaga) |
 
@@ -405,6 +426,50 @@ fechamento é justamente o caso de uso.
 
 Sem `status` explícito, a **consulta** traz apenas os **confirmados** — um
 cancelado na lista do dia da prova faria alguém procurar um aluno que não vem.
+
+### Agendamento pelo admin (um aluno)
+
+O atendimento de balcão, e a outra ponta do compulsório: lá é o lote inteiro (no
+mínimo um polo), aqui é **uma pessoa**. É esta rota que fecha a fila de trabalho
+do relatório de exceções — antes dela, depois de abrir a sala que faltava, a
+única ação disponível era redisparar o lote do polo todo (`PATCH /remanejar`
+exige um agendamento que já exista, e não cria nenhum).
+
+```jsonc
+// POST /api/agendamentos — um dos dois destinos, nunca os dois
+{ "alunoId": 3120, "faixaId": 14 }      // a alocação escolhe a sala (menor ordem até lotar)
+{ "alunoId": 3120, "salaFaixaId": 55 }  // o admin escolhe a sala exata
+
+// resposta
+{
+  "agendamento": { "id": 512, "sala": "M114", "alocadoManual": true, ... },
+  "origemDasDisciplinas": "BRIGHTSPACE",
+  "avisos": []
+}
+```
+
+**Fica registrado que foi o ADMIN, não o aluno**: `HistoricoAgendamento` grava
+`CRIADO` com o e-mail de quem clicou, e o agendamento nasce com
+`alocadoManual: true` — que aqui significa "isto não saiu do portal do aluno",
+mesmo quando a alocação escolheu a sala.
+
+**Recusa o mesmo que o remanejo** (outro polo, outra modalidade, sala lotada, e a
+mesma pessoa duas vezes no mesmo horário), mais o que só faz sentido ao criar:
+aluno que já tem prova no semestre (para mudar de horário existe o remanejo) e
+situação de curso que bloqueia — esta última liberável com
+`"ignorarStatusCurso": true`, que volta em `avisos` e vai para a auditoria.
+Bloquear de vez trancaria a secretaria justamente no caso em que ela precisa da
+válvula de escape.
+
+**As disciplinas cobertas** vêm do Brightspace quando `D2L_HABILITADO`; sem ele,
+ou se a Valence não responder, são copiadas da **reserva anterior do aluno neste
+semestre — a cancelada serve**, e é o caso `CANCELOU_E_NAO_REMARCOU` que o
+compulsório deixa de fora de propósito. `origemDasDisciplinas` diz qual das duas
+foi (`BRIGHTSPACE` ou `RESERVA_ANTERIOR`) e `avisos` traz o motivo. Sem nenhuma
+das duas fontes a rota **recusa**: `userIdD2L` é coluna obrigatória, e uma prova
+que não cobre disciplina nenhuma não libera nada no LMS.
+
+Como o remanejo, **não depende do período estar aberto**.
 
 ### Agendamento compulsório
 
@@ -483,7 +548,9 @@ colunas da prova vazias e `Status = Não Agendado`.
 
 ### Relatórios — grupos para o Brightspace
 
-A aba **Relatorios** do painel. Gera o arquivo que o *Groups Import* do
+A aba **Relatorios** do painel tem **dois documentos**, com públicos opostos: os
+grupos abaixo, lidos por máquina, e as [listas de presença](#listas-de-presença-pdf--o-papel-que-vai-para-a-sala),
+lidas por gente, no papel. Este primeiro gera o arquivo que o *Groups Import* do
 Brightspace consome, para criar um grupo por horário de prova **de cada turma**
 (e depois liberar o quiz para o grupo).
 
@@ -551,6 +618,73 @@ Com `;` o D2L lê a linha inteira como um campo só; com BOM, os três bytes gru
 no cabeçalho e `Nome de usuário` deixa de casar com a coluna esperada. O
 montador é o mesmo (`csv-relatorio.ts`), parametrizado por `{ separador, bom }`,
 com **default no formato do Excel**.
+
+### Listas de presença (PDF) — o papel que vai para a sala
+
+O documento que a secretaria imprime, o fiscal leva para a sala e volta assinado.
+**Uma página por sala de aplicação.** Mesma aba **Relatorios** do painel, mesmos
+filtros (`poloId`, `periodoLetivoId`, `de`, `ate` — data da **prova**). Na rota de
+uma sala só, `poloId`/`de`/`ate` são ignorados, pela mesma razão de sempre: quem
+pediu aquela folha já escolheu o horário.
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `GET` | `/relatorios/listas-de-presenca` | Lista as salas que terão aplicação e quantos assinam em cada |
+| `GET` | `/relatorios/listas-de-presenca/pdf` | O PDF do recorte, uma página por sala |
+| `GET` | `/relatorios/listas-de-presenca/:salaFaixaId/pdf` | A folha avulsa de uma sala |
+
+Cada página traz o cabeçalho (modalidade, polo, data, horário, sala) e a tabela:
+
+```
+              EaD    Câmpus Asa Sul
+             11/06/2026 09:00 - 12:00
+                   SALA 1 EAD
+
+┌────┬────────────┬──────────────────────────┬────────────┬─────────────┐
+│ Nº │     RA     │           Nome           │ Modalidade │ Assinatura  │
+├────┼────────────┼──────────────────────────┼────────────┼─────────────┤
+│ 1  │ UC26426197 │ ERIK MACEDO SANTOS       │ EaD        │             │
+│ 2  │ UC26421421 │ MATEUS DA SILVA ALARÇÃO  │ EaD        │             │
+└────┴────────────┴──────────────────────────┴────────────┴─────────────┘
+```
+
+- **O recorte é a SALA**, não o horário. Uma folha com a faixa inteira imprimiria
+  sem erro nenhum, e o fiscal da SALA 1 receberia uma lista com quem está na
+  SALA 2 — chamando nome de quem não está ali. É o oposto do grupo do D2L, onde
+  a sala **não** entra porque não muda o acesso ao quiz.
+- **Uma linha por pessoa.** A folha é assinada à mão: o mesmo RA duas vezes faria
+  o fiscal chamar a mesma pessoa duas vezes e sobrar uma linha em branco no fim.
+  Desde a regra "uma prova por pessoa em cada horário" o RA de dois cursos não
+  consegue mais marcar as duas provas na mesma faixa, então um repetido só existe
+  em agendamento anterior a ela — e nesse caso `totalAlunos` fica **menor** que
+  `ocupadas` em `GET /agendamentos/resumo`. A divergência é o sintoma do dado
+  velho; o certo é cancelar o agendamento duplicado.
+- **Só agendamentos `CONFIRMADO`**, no período letivo do recorte (ou o vigente).
+  Quem cancelou devolveu a vaga e não aparece.
+- **Sala sem ninguém agendado não vira página** — não haverá aplicação ali, e
+  folha em branco no meio da pilha só faz procurar o erro.
+- **Ordem alfabética por nome** dentro da página (é por ele que o fiscal procura
+  a pessoa na frente dele); as páginas saem por **dia → horário → polo → sala**,
+  de modo que a pilha já sai separável por campus.
+- **Sala grande continua na página seguinte**, com o cabeçalho repetido e marcado
+  `(cont.)`, e a numeração seguindo de onde parou.
+- **A coluna `Assinatura` é uma célula vazia com borda** — a linha da tabela é a
+  linha em que se assina. Não há linha em branco no fim: a folha é a relação de
+  quem tem lugar ali.
+- Nome do arquivo:
+  **`Lista de presenca - 11-06-2026 09h00-12h00 - Campus Asa Sul - SALA 1 EAD.pdf`**.
+  Aqui **o polo entra** (ao contrário do CSV de grupos): as folhas de dois campi
+  vão para lugares físicos diferentes, e sala homônima em dois polos é comum.
+
+**O logo é opcional.** Coloque um `logo.png` em `src/relatorio/assets/` e ele
+passa a aparecer no canto superior esquerdo de toda página — nada mais precisa
+mudar. Sem o arquivo, o PDF sai só com o cabeçalho de texto, que já identifica a
+folha. Detalhes de tamanho em `src/relatorio/assets/LEIA-ME.md`.
+
+O PDF é gerado com **`pdfkit`**, usando a Helvetica padrão do formato
+(`WinAnsiEncoding` cobre todo acento do português, sem embutir arquivo de fonte).
+O desenho fica isolado num módulo puro (`pdf-lista-presenca.ts`, recebe dados e
+devolve `Buffer`), separado das consultas (`lista-presenca.service.ts`).
 
 ### Autorização da Valence (D2L)
 
@@ -1172,6 +1306,131 @@ esconde isso — aí o caminho é desfazer à mão o que foi aplicado, antes de 
 
 ---
 
+## Deploy em produção
+
+O compose de produção está na pasta **acima** desta (`../docker-compose.prod.yml`):
+três containers numa máquina só — `mysql`, `api` e `web`. O `web` (nginx) serve o
+portal e repassa `/api` para a API, então **tudo é same-origin** e CORS não entra
+na história. TLS fica na borda: o proxy institucional da UCB, ou o Caddy de
+`../docker-compose.tls.yml`.
+
+```bash
+cp ../.env.prod.example ../.env && chmod 600 ../.env   # credenciais do MySQL, porta, domínio
+cp .env.example .env && chmod 600 .env                 # segredos da aplicação
+docker compose -f ../docker-compose.prod.yml up -d --build
+```
+
+⚠️ **São dois arquivos `.env` com papéis diferentes** — o de cima é do compose, o
+daqui é da aplicação. A `DATABASE_URL` não entra em nenhum dos dois: o compose a
+monta, porque o host do banco depende da topologia.
+
+⚠️ **Uma réplica da API, sempre.** O `state` do LTI e o `code` de uso único ficam
+em memória (`LtiStateStore` / `LtiCodeStore`), e o refresh do D2L é serializado
+por uma promessa de processo. Com duas réplicas o launch que chega na instância B
+não acha o state criado na A, e o login de aluno quebra de forma intermitente.
+Escala é vertical.
+
+### O que muda do desenvolvimento para o servidor real
+
+Sair do ngrok exige mexer em **duas configurações no Brightspace**, não só no
+`.env`. As duas comparam URL byte a byte.
+
+| Variável | Dev | Produção | Também precisa mudar em |
+|---|---|---|---|
+| `D2L_REDIRECT_URI` | `https://….ngrok-free.dev/api/d2l/callback` | `https://SEU-DOMINIO/api/d2l/callback` | **Admin Tools → Manage Extensibility → OAuth 2.0** |
+| `PORTAL_ALUNO_URL` | vazia (o launch devolve JSON) | `https://SEU-DOMINIO/` | — |
+| URLs do LTI (login, launch, JWKS) | túnel | domínio real | **o registro da ferramenta LTI** |
+| `NODE_ENV` | `development` | `production` | — |
+
+Três consequências de `NODE_ENV=production`, todas propositais: o Swagger sai do
+ar (a menos de `SWAGGER_ENABLED=true`), o `LTI_DEBUG_CLAIMS` é ignorado, e o
+`GET /d2l/callback` para de devolver o access token no corpo.
+
+**`PORTAL_ALUNO_URL` vazia é a pegadinha mais fácil de deixar passar**: sem ela o
+`POST /lti/launch` responde o JSON do launch em vez de redirecionar — é o modo de
+teste. O aluno vê um blob de JSON no lugar do portal, e nada no log parece errado.
+
+**A autorização OAuth feita no ngrok não vale em produção**: o `redirect_uri` do
+refresh não vai bater. Autorize de novo, já apontando para o domínio real.
+
+### Autorizar a Valence no servidor
+
+Uma vez só, pelo browser (o passo a passo completo está em
+[Autorização da Valence (D2L)](#autorização-da-valence-d2l)). Depois disso o
+`D2lOauthService` se vira sozinho, persistindo cada rotação do refresh token.
+
+Três coisas que valem para a vida do sistema, não só para o dia do deploy:
+
+- **A chamada roda como o humano que autorizou.** Se essa conta for desativada ou
+  a pessoa sair da instituição, a integração morre junto. Use uma conta de
+  serviço, com a role adequada na hierarquia de org units — e note que permissão
+  insuficiente pode devolver **200 com dados incompletos**, não 403
+  (`docs/D2L_API_REFERENCE.md` §3). Valide contra um aluno conhecido depois de
+  autorizar.
+- **Restaurar um backup do banco invalida o token.** O refresh token vive só em
+  `integracao_d2l`, e cada uso rotaciona e invalida o anterior — um backup traz
+  um token já morto. Depois de qualquer restore, reautorize.
+- **Nunca fale com o token endpoint por fora do service** (`npm run d2l:token` usa
+  o service justamente por isso). Uma rotação feita por fora transforma o refresh
+  gravado em lixo, e a integração morre depois, longe da causa.
+
+### Conferir que subiu inteiro
+
+```bash
+curl -s https://SEU-DOMINIO/api/health
+# {"status":"ok","database":"up","d2l":"ok","timestamp":"..."}
+```
+
+`status` reflete **só a API e o banco** — de propósito: é o que o healthcheck do
+compose testa, e uma integração opcional não pode marcar o container como
+unhealthy. Quem monitora o Brightspace lê o campo `d2l`:
+
+| `d2l` | O que significa | Ação |
+|---|---|---|
+| `desligado` | `D2L_HABILITADO=false` ou faltam variáveis | Nenhuma — o portal usa a turma do launch |
+| `ok` | ligada e autorizada | Nenhuma |
+| `nao_autorizado` | **ligada no `.env` e sem refresh token gravado** | Reautorizar pelo browser |
+| `desconhecido` | não deu para consultar (banco fora) | Ver `database` |
+
+**`nao_autorizado` é o alerta que justifica o campo.** `habilitado()` só lê o
+`.env`: num ambiente nessa situação a API se comporta como se a integração
+existisse, e toda leitura de disciplina falha. Sem o `/health`, só um aluno
+tentando agendar revelaria o problema. **Monitore este campo.**
+
+### Quando a Valence cai, o portal degrada — não para
+
+Com a integração ligada e fora do ar (token expirado, revogado, Brightspace
+indisponível), `DisciplinasDoAlunoService` cai para a **turma do launch**: o aluno
+agenda a disciplina de onde clicou em vez de tomar 503. É um fallback pobre de
+propósito — quem tem três provas agenda uma, e o remanejo administrativo conserta
+o resto —, mas agendar uma prova é melhor que agendar nenhuma.
+
+O log traz `Valence indisponivel: usando a turma do launch como fallback`, no
+máximo uma vez por minuto (a queda atinge todo request de todo aluno; sem o
+intervalo o incidente enterraria o resto do log).
+
+**O compulsório não tem esse fallback, e não pode ter**: quem nunca fez launch não
+tem turma clicada. Lá o erro sobe e vira `FALHA_NA_INTEGRACAO` naquele aluno —
+linha de relatório reprocessável, em vez de gente alocada para a disciplina errada.
+
+### Checklist
+
+- [ ] `../.env` e `./.env` preenchidos, ambos `chmod 600`
+- [ ] `JWT_SECRET` e `JWT_REFRESH_SECRET` novos (`openssl rand -base64 32`) — não os de dev
+- [ ] `NODE_ENV=production`, `TRUST_PROXY=1` (já vem no compose de produção)
+- [ ] `PORTAL_ALUNO_URL` preenchida
+- [ ] `D2L_REDIRECT_URI` no domínio real **e** atualizada no app OAuth do Brightspace
+- [ ] URLs do LTI atualizadas no registro da ferramenta
+- [ ] `npm run prisma:deploy` aplicado (o container já faz no start)
+- [ ] `npm run seed` rodado — modalidades, polos e o primeiro admin
+- [ ] Senha do admin do seed trocada no primeiro login (`mustChangePassword`)
+- [ ] Autorização OAuth da Valence feita pelo domínio real
+- [ ] `GET /api/health` devolvendo `status: ok` e `d2l: ok`
+- [ ] Um launch LTI real de ponta a ponta, com um aluno de verdade
+- [ ] Backup do volume `agendamento-mysql-data` agendado
+
+---
+
 ## Testes
 
 ```bash
@@ -1216,6 +1475,8 @@ A ordem de implementação segue a prioridade definida para o projeto.
   para depois. Referência técnica em `docs/D2L_API_REFERENCE.md`.
 - A leitura de matrículas (`D2L_HABILITADO=true`) exige a autorização OAuth feita
   uma vez pelo browser e `D2L_BASE_URL` preenchida. Enquanto isso não acontecer,
-  o portal usa a turma do launch e nada quebra.
+  o portal cai para a turma do launch e o aluno continua agendando — mas só a
+  disciplina de onde clicou, e o compulsório não roda. `GET /health` acusa o
+  estado em `d2l` (`nao_autorizado`); ver [Deploy em produção](#deploy-em-produção).
 - A modalidade `PRESENCIAL` existe no modelo (prova de 2h) mas ainda não tem CSV
   correspondente.

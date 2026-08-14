@@ -28,19 +28,86 @@ export const OPCOES_DA_TRANSACAO = {
 } as const;
 
 /**
- * Trava o VINCULO. Serializa o mesmo aluno consigo mesmo — duplo clique, duas
- * abas, ou agendar e trocar ao mesmo tempo — inclusive quando as requisicoes
- * apontam para faixas diferentes, caso que o lock das salas nao pegaria.
+ * Trava a PESSOA — todos os vinculos daquela matricula, nao so um.
+ *
+ * Serializa o mesmo aluno consigo mesmo: duplo clique, duas abas, ou agendar e
+ * trocar ao mesmo tempo, inclusive quando as requisicoes apontam para faixas
+ * diferentes — caso que o lock das salas nao pegaria.
+ *
+ * ⚠️ **Trava por `matricula`, e nao por `id` do vinculo (14/08/2026).** Um RA com
+ * dois cursos tem DUAS linhas em `aluno_importado`, e travar so a dele deixaria
+ * as duas transacoes correrem em paralelo — cada uma conferindo
+ * `exigirUmaProvaPorFaixa` antes de a outra gravar, e as duas passando. O aluno
+ * sairia com os dois cursos marcados no mesmo horario, que e exatamente o que
+ * aquela regra existe para impedir. Travar a matricula inteira e o que torna a
+ * checagem confiavel.
  *
  * SEMPRE o primeiro lock da transacao. A ordem e sempre
- * `vinculo -> sala_faixa -> agendamento`, e e isso que impede ciclo de deadlock.
+ * `aluno -> sala_faixa -> agendamento`, e e isso que impede ciclo de deadlock.
+ * Como as linhas vem pelo indice de `matricula`, duas transacoes concorrentes da
+ * mesma pessoa as pegam na mesma ordem — nao ha ciclo entre elas tampouco.
  */
-export async function travarVinculo(
+export async function travarAluno(
   tx: Transacao,
-  vinculoId: number,
+  matricula: string,
 ): Promise<void> {
   await tx.$queryRaw`
-    SELECT id FROM aluno_importado WHERE id = ${vinculoId} FOR UPDATE`;
+    SELECT id FROM aluno_importado WHERE matricula = ${matricula} FOR UPDATE`;
+}
+
+/**
+ * ============================================================================
+ * UMA PROVA POR PESSOA EM CADA HORARIO — nao por vinculo
+ * ============================================================================
+ * O RA com dois cursos faz DUAS provas, uma por vinculo, e ate aqui nada o
+ * impedia de marcar as duas na MESMA faixa. Ele nao pode fazer as duas ao mesmo
+ * tempo: sao provas diferentes, de disciplinas diferentes. Na pratica ele
+ * ocupava duas cadeiras, aparecia duas vezes na lista de presenca e so faria uma
+ * das provas — a outra cadeira ficava vazia com o nome dele.
+ *
+ * A regra e por **matricula + faixa**, deliberadamente:
+ *
+ * - **matricula, e nao vinculo.** O limite por vinculo ja existe e responde
+ *   outra pergunta ("uma prova por curso no semestre"); este responde "uma prova
+ *   por PESSOA naquele horario". Os dois convivem.
+ * - **faixa, e nao sobreposicao de horario** (decisao do cliente, 14/08/2026).
+ *   Duas faixas que se cruzam no relogio (09:00-12:00 e 10:00-11:30) continuam
+ *   permitidas. Se um dia isso virar problema, o lugar de mudar e aqui — e so
+ *   aqui, porque as quatro portas de entrada passam por esta funcao.
+ * - **`periodoLetivoId` entra na conta.** Sem ele, a prova do semestre passado na
+ *   mesma faixa bloquearia a deste.
+ *
+ * `exceto` existe para a troca e o remanejo: o agendamento que esta sendo movido
+ * nao pode conflitar consigo mesmo.
+ */
+export async function exigirUmaProvaPorFaixa(
+  tx: Transacao,
+  dados: {
+    matricula: string;
+    faixaId: number;
+    periodoLetivoId: string;
+    exceto?: number;
+  },
+): Promise<void> {
+  const outra = await tx.agendamento.findFirst({
+    where: {
+      matricula: dados.matricula,
+      periodoLetivoId: dados.periodoLetivoId,
+      salaFaixa: { faixaId: dados.faixaId },
+      ...CONFIRMADO,
+      ...(dados.exceto ? { id: { not: dados.exceto } } : {}),
+    },
+    select: { id: true, aluno: { select: { curso: true } } },
+  });
+
+  if (!outra) return;
+
+  throw new ConflictException(
+    `Voce ja tem prova marcada neste horario para o curso ` +
+      `${outra.aluno.curso} (agendamento ${outra.id}). Sao duas provas ` +
+      'diferentes e nao da para fazer as duas ao mesmo tempo — escolha outro ' +
+      'horario para esta.',
+  );
 }
 
 /**

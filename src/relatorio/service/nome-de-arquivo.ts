@@ -124,6 +124,27 @@ export function nomeDoArquivo(
 }
 
 /**
+ * `Lista de presenca - 11-06-2026 09h00-12h00 - Campus Asa Sul - SALA 1 EAD.pdf`
+ *
+ * Aqui o POLO entra no nome, ao contrario do CSV de grupos: as folhas de dois
+ * campi no mesmo dia e horario vao para lugares fisicos diferentes, e quem
+ * baixa precisa saber de qual campus e o arquivo antes de abrir. E tambem o que
+ * torna o nome unico — sala com o mesmo nome em dois polos e comum.
+ */
+export function nomeDaListaDePresenca(
+  pagina: FaixaDoArquivo & { polo: string; sala: string },
+): string {
+  const partes = [
+    'Lista de presenca',
+    horarioDaProva(pagina),
+    sanear(pagina.polo),
+    sanear(pagina.sala),
+  ];
+
+  return `${partes.join(' - ')}.pdf`;
+}
+
+/**
  * O caminho dentro do zip: uma pasta por turma, o horario como nome do arquivo.
  *
  * Duas faixas do MESMO dia e horario em polos diferentes sao o caso normal de

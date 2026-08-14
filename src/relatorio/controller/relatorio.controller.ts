@@ -22,6 +22,8 @@ import type { Response } from 'express';
 import { SomenteAdmin } from '../../auth/roles.decorator';
 import { TAGS } from '../../config/swagger';
 import { GrupoExportavelDto } from '../dto/grupo-exportavel.dto';
+import { SalaComListaDto } from '../dto/sala-com-lista.dto';
+import { ListaPresencaService } from '../service/lista-presenca.service';
 import { RelatorioService } from '../service/relatorio.service';
 
 /** Recorte compartilhado pelas tres rotas. */
@@ -41,18 +43,24 @@ const aplicarFiltros = () =>
   applyDecorators(...FILTROS.map((f) => ApiQuery({ required: false, ...f })));
 
 /**
- * Exportacoes prontas para levar a outro sistema — hoje, os grupos do
- * Brightspace.
+ * Os documentos prontos da aba Relatorios. Sao DOIS, com publicos opostos:
  *
- * Nao confunda com `GET /agendamentos/exportacao`: aquele e a lista de cobranca
- * da secretaria (todos os vinculos, agendados ou nao, formato de Excel). Aqui o
- * arquivo e consumido por MAQUINA, e o formato e o que o D2L exige.
+ * - **Grupos do Brightspace** (`grupos-d2l`): consumido por MAQUINA, no formato
+ *   que o *Groups Import* do D2L exige.
+ * - **Listas de presenca** (`listas-de-presenca`): consumido por PESSOA, em
+ *   papel — o PDF que o fiscal leva para a sala e devolve assinado.
+ *
+ * Nenhum dos dois se confunde com `GET /agendamentos/exportacao`, que e a lista
+ * de cobranca da secretaria (todos os vinculos, agendados ou nao, em Excel).
  */
 @ApiTags(TAGS.RELATORIOS)
 @Controller('relatorios')
 @SomenteAdmin()
 export class RelatorioController {
-  constructor(private readonly service: RelatorioService) {}
+  constructor(
+    private readonly service: RelatorioService,
+    private readonly listas: ListaPresencaService,
+  ) {}
 
   @Get('grupos-d2l')
   @ApiOperation({
@@ -183,6 +191,124 @@ export class RelatorioController {
     );
 
     return conteudo as string;
+  }
+
+  // ==========================================================================
+  // LISTAS DE PRESENCA — o PDF que vai para a sala
+  // ==========================================================================
+
+  @Get('listas-de-presenca')
+  @ApiOperation({
+    summary:
+      'Lista as salas que terao aplicacao de prova e quantos assinam em cada',
+    description:
+      'Uma linha por **sala E horario** (a oferta, `SalaFaixa`) — e a tabela ' +
+      'da aba Relatorios. Cada linha vira uma PAGINA no PDF.\n\n' +
+      'O recorte e a sala porque a folha e fisica: ela vai para a mao do fiscal ' +
+      'daquela sala, e nao pode listar quem esta na sala ao lado.\n\n' +
+      '`totalAlunos` conta **agendamentos confirmados**, nao pessoas distintas: ' +
+      'um RA com dois vinculos na mesma modalidade ocupa duas vagas e assina ' +
+      'duas vezes. E exatamente o numero de linhas que a folha tera, e bate com ' +
+      '`ocupadas` em `GET /agendamentos/resumo`.\n\n' +
+      '**Sala sem ninguem agendado nao aparece**: nao havera aplicacao ali, e ' +
+      'uma folha em branco no meio da pilha so faz procurar o erro. Para ver a ' +
+      'oferta montada, cheia ou vazia, use `GET /agendamentos/resumo`.\n\n' +
+      'O recorte e **um periodo letivo** — o de `periodoLetivoId` ou, sem ele, o ' +
+      'vigente.',
+  })
+  @aplicarFiltros()
+  @ApiOkResponse({ type: [SalaComListaDto] })
+  listarSalas(@Query() query: Record<string, string>) {
+    return this.listas.listar(this.lerFiltro(query));
+  }
+
+  /**
+   * Declarada ANTES da rota com parametro: o Nest casa as rotas na ordem em que
+   * sao declaradas.
+   */
+  @Get('listas-de-presenca/pdf')
+  @ApiOperation({
+    summary: 'Baixa o PDF com a lista de presenca de todas as salas do recorte',
+    description:
+      'Uma **pagina por sala**, na ordem em que as folhas sao entregues: dia, ' +
+      'horario, polo e sala — a pilha ja sai separavel por campus.\n\n' +
+      'Cada pagina traz o cabecalho com polo, data, horario e sala, e a tabela ' +
+      'com **Nº · RA · Nome · Modalidade · Assinatura**. A coluna de assinatura ' +
+      'e uma celula vazia com borda: a propria linha da tabela e a linha em que ' +
+      'se assina.\n\n' +
+      'Sala com muita gente continua na pagina seguinte, com o cabecalho ' +
+      'repetido e marcado `(cont.)` — folha solta sem identificacao nao serve ' +
+      'para nada, e a numeracao segue de onde parou.\n\n' +
+      'A ordem dentro da pagina e **alfabetica por nome**: o fiscal procura pela ' +
+      'pessoa que esta na frente dele, e o que ela sabe dizer e o proprio nome.',
+  })
+  @aplicarFiltros()
+  @ApiProduces('application/pdf')
+  @ApiOkResponse({
+    description: 'Arquivo PDF',
+    schema: { type: 'string', format: 'binary' },
+  })
+  @ApiNotFoundResponse({
+    description: 'Nenhuma sala com aluno confirmado neste recorte',
+  })
+  @Header('Content-Type', 'application/pdf')
+  async pdfDasListas(
+    @Query() query: Record<string, string>,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { nomeArquivo, conteudo } = await this.listas.pdfDoRecorte(
+      this.lerFiltro(query),
+    );
+
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${nomeArquivo}"`,
+    );
+
+    return new StreamableFile(conteudo as Buffer);
+  }
+
+  @Get('listas-de-presenca/:salaFaixaId/pdf')
+  @ApiOperation({
+    summary: 'Baixa a lista de presenca de UMA sala',
+    description:
+      'A folha avulsa — a que faltou na pilha, ou que precisou ser reimpressa. ' +
+      'Mesmo conteudo de uma pagina do PDF completo.\n\n' +
+      '`de`, `ate` e `poloId` sao **ignorados** aqui: quem pediu esta sala ja ' +
+      'escolheu o horario, e um filtro esquecido na URL devolveria 404 em vez ' +
+      'do arquivo. `periodoLetivoId` continua valendo — e ele que separa os ' +
+      'semestres.',
+  })
+  @ApiParam({
+    name: 'salaFaixaId',
+    type: Number,
+    example: 31,
+    description: 'A oferta (`SalaFaixa`): sala + horario + polo num id so.',
+  })
+  @aplicarFiltros()
+  @ApiProduces('application/pdf')
+  @ApiOkResponse({
+    description: 'Arquivo PDF',
+    schema: { type: 'string', format: 'binary' },
+  })
+  @ApiNotFoundResponse({ description: 'Nenhum aluno confirmado nesta sala' })
+  @Header('Content-Type', 'application/pdf')
+  async pdfDeUmaSala(
+    @Param('salaFaixaId', ParseIntPipe) salaFaixaId: number,
+    @Query() query: Record<string, string>,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { nomeArquivo, conteudo } = await this.listas.pdfDeUmaSala(
+      salaFaixaId,
+      this.lerFiltro(query),
+    );
+
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${nomeArquivo}"`,
+    );
+
+    return new StreamableFile(conteudo as Buffer);
   }
 
   /**

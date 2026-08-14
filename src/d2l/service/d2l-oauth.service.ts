@@ -115,6 +115,27 @@ export class D2lOauthService {
   }
 
   /**
+   * Ha refresh token gravado? E o que separa "integracao configurada" de
+   * "integracao que funciona".
+   *
+   * Existe para o `/health`: `D2lEnrollmentsService.habilitado()` so le o .env, e
+   * responde `true` num ambiente que nunca foi autorizado — exatamente o estado
+   * em que todo agendamento falha. Sem esta consulta nao havia como monitorar a
+   * diferenca, e ela so aparecia quando um aluno tentava agendar.
+   *
+   * NAO renova nem valida o token contra o Brightspace de proposito: o /health e
+   * consultado pelo healthcheck do compose a cada 30s, e cada renovacao ROTACIONA
+   * o refresh — monitorar acabaria gastando a credencial que monitora.
+   */
+  async autorizado(): Promise<boolean> {
+    const guardado = await this.prisma.integracaoD2L.findUnique({
+      where: { id: 1 },
+    });
+
+    return Boolean(guardado?.refreshToken);
+  }
+
+  /**
    * O access token para falar com a Valence — a porta de entrada de todo o resto
    * da integracao.
    *

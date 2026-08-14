@@ -29,6 +29,8 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
   /** Existe so para provar que quem NAO agendou sai na exportacao. */
   const SEM_PROVA = 'E2EREL002';
   const PERIODO_LETIVO = 'E2E-REL-500';
+  /** O semestre seguinte cadastrado cedo demais, que o DELETE desfaz. */
+  const PERIODO_LETIVO_ENGANO = 'E2E-REL-501';
   const DATA_PROVA = '2026-11-12';
 
   let poloId: number;
@@ -184,7 +186,9 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
 
     await prisma.turmaImportada.deleteMany({ where: { codigoTurma: TURMA } });
     await prisma.periodoAgendamento.deleteMany({
-      where: { periodoLetivoId: PERIODO_LETIVO },
+      where: {
+        periodoLetivoId: { in: [PERIODO_LETIVO, PERIODO_LETIVO_ENGANO] },
+      },
     });
   }
 
@@ -262,6 +266,44 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
         .send({ dataFechamento: '2026-11-01T23:59:00-03:00' })
         .expect(200);
     });
+
+    /**
+     * O caso que a rota existe para resolver: o semestre seguinte cadastrado
+     * cedo demais rouba o vigente do periodo em curso, e nao ha flag para
+     * marcar outro no lugar. Apagar devolve o portal a quem estava valendo — e
+     * `vigenteAgora` e o que prova isso para quem chamou.
+     */
+    it('apagar o periodo cadastrado por engano devolve o vigente ao anterior', async () => {
+      const novo = await comoAdmin(api().post('/api/periodos'))
+        .send({
+          periodoLetivoId: PERIODO_LETIVO_ENGANO,
+          descricao: 'semestre seguinte, cedo demais',
+          dataFechamento: '2027-03-01T23:59:00-03:00',
+        })
+        .expect(201);
+
+      expect(novo.body.vigente).toBe(true);
+
+      const anterior = await comoAdmin(
+        api().get(`/api/periodos/${periodoId}`),
+      ).expect(200);
+      expect(anterior.body.vigente).toBe(false);
+
+      const remocao = await comoAdmin(
+        api().delete(`/api/periodos/${novo.body.id}`),
+      ).expect(200);
+
+      expect(remocao.body.vigenteAgora).toMatchObject({ id: periodoId });
+
+      const devolvido = await comoAdmin(
+        api().get(`/api/periodos/${periodoId}`),
+      ).expect(200);
+      expect(devolvido.body.vigente).toBe(true);
+    });
+
+    it('404 ao apagar periodo inexistente', async () => {
+      await comoAdmin(api().delete('/api/periodos/99999999')).expect(404);
+    });
   });
 
   describe('o aluno agenda, e o admin ve', () => {
@@ -321,6 +363,19 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
       ).expect(200);
 
       expect(res.body.totalAgendamentos).toBe(1);
+    });
+
+    /**
+     * A linha some, as provas nao — `Agendamento.periodoLetivoId` e string, sem
+     * FK. Elas ficariam orfas da janela que as identifica e sumiriam do portal
+     * do aluno, que so enxerga o vigente.
+     */
+    it('recusa apagar o periodo depois que alguem agendou', async () => {
+      const res = await comoAdmin(
+        api().delete(`/api/periodos/${periodoId}`),
+      ).expect(409);
+
+      expect(res.body.message).toMatch(/agendamento/i);
     });
 
     it('detalha um agendamento', async () => {

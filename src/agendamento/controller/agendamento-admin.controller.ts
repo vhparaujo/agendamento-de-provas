@@ -8,12 +8,14 @@ import {
   Param,
   ParseIntPipe,
   Patch,
+  Post,
   Query,
   Res,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
+  ApiCreatedResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
@@ -29,6 +31,8 @@ import { TAGS } from '../../config/swagger';
 import { StatusAgendamento } from '../../generated/prisma/client';
 import {
   AgendamentoAdminDto,
+  AgendamentoPeloAdminDto,
+  AgendarPeloAdminDto,
   EventoDoHistoricoDto,
   LinhaDoResumoDto,
   MensagemDto,
@@ -58,14 +62,58 @@ const aplicarFiltros = () =>
   applyDecorators(...FILTROS.map((f) => ApiQuery({ required: false, ...f })));
 
 /**
- * A visao do admin sobre o que os alunos marcaram. Somente leitura: o
- * agendamento nasce pelo portal do aluno, e o remanejo e um passo a parte.
+ * A visao do admin sobre o que os alunos marcaram — e as tres acoes que ele tem
+ * sobre isso: criar (`POST`), mover (`PATCH /:id/remanejar`) e cancelar.
+ *
+ * O caminho normal continua sendo o portal do aluno. Estas rotas sao a valvula
+ * de escape, e cada uma delas grava no historico QUEM a acionou.
  */
 @ApiTags(TAGS.AGENDAMENTOS)
 @Controller('agendamentos')
 @SomenteAdmin()
 export class AgendamentoAdminController {
   constructor(private readonly service: AgendamentoAdminService) {}
+
+  @Post()
+  @ApiOperation({
+    summary: 'Agenda a prova de UM aluno especifico',
+    description:
+      'O atendimento de balcao: o compulsorio agenda por todo mundo que nao ' +
+      'agendou (recorte minimo: o polo), e esta rota agenda por **uma pessoa**.\n\n' +
+      'Informe **`salaFaixaId`** (o admin escolhe a sala) OU **`faixaId`** (a ' +
+      'alocacao sequencial escolhe, enchendo a sala de menor `ordem`) — um dos ' +
+      'dois.\n\n' +
+      'Fica tudo registrado como **ADMIN**: `HistoricoAgendamento` grava ' +
+      '`CRIADO` com o e-mail de quem clicou, e `alocadoManual: true` marca que ' +
+      'aquilo nao saiu do portal do aluno.\n\n' +
+      'Como no remanejo, **nao depende do periodo estar aberto**, e recusa ' +
+      'outro **polo** ou outra **modalidade**. Recusa tambem quem ja tem prova ' +
+      'no semestre (para mudar de horario existe o remanejo) e a situacao de ' +
+      'curso que bloqueia — esta ultima liberavel com `ignorarStatusCurso`.\n\n' +
+      '**As disciplinas cobertas** saem do Brightspace quando `D2L_HABILITADO`; ' +
+      'sem ele, ou se a Valence nao responder, sao copiadas da reserva anterior ' +
+      'do aluno neste semestre (a cancelada serve — e o caso `CANCELOU_E_NAO_' +
+      'REMARCOU` do compulsorio). `origemDasDisciplinas` diz qual das duas foi, ' +
+      'e `avisos` traz o motivo.',
+  })
+  @ApiCreatedResponse({ type: AgendamentoPeloAdminDto })
+  @ApiBadRequestResponse({
+    description:
+      'Nenhum ou ambos os destinos informados, polo ou modalidade diferentes ' +
+      'do aluno, ou nenhum periodo de agendamento cadastrado',
+  })
+  @ApiNotFoundResponse({ description: 'Vinculo, faixa ou oferta inexistente' })
+  @ApiConflictResponse({
+    description:
+      'Sala lotada, aluno ja com prova no semestre, prova da mesma pessoa no ' +
+      'mesmo horario, situacao de curso bloqueada, ou disciplinas indescobriveis',
+  })
+  agendar(
+    @Body() dto: AgendarPeloAdminDto,
+    @AdminLogado() admin: AdminJwtPayload,
+  ) {
+    return this.service.agendarPeloAdmin(dto, admin.email);
+  }
 
   @Get()
   @ApiOperation({

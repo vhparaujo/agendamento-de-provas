@@ -23,8 +23,9 @@ import { DisciplinasDoAlunoService } from './disciplinas-do-aluno.service';
 import {
   CONFIRMADO,
   escolherOfertaComLock,
+  exigirUmaProvaPorFaixa,
   OPCOES_DA_TRANSACAO,
-  travarVinculo,
+  travarAluno,
 } from './lock-de-vagas';
 
 /**
@@ -44,6 +45,12 @@ export interface FaixaDisponivel {
   vagas: number;
   disponiveis: number;
   temVaga: boolean;
+  /**
+   * A MESMA PESSOA ja tem prova neste horario, pelo outro curso dela. Tem vaga,
+   * mas ela nao pode ocupar: sao duas provas diferentes e nao da para fazer as
+   * duas ao mesmo tempo. Sempre `false` para quem tem um vinculo so.
+   */
+  conflitaComOutraProva: boolean;
 }
 
 export interface AgendamentoConfirmado {
@@ -85,13 +92,18 @@ export class AgendamentoService {
    *
    * Faixas lotadas continuam na lista com `temVaga: false`. Some-las seria pior
    * para quem esta olhando: o horario que o colega comentou simplesmente nao
-   * apareceria, sem explicacao.
+   * apareceria, sem explicacao. Mesma escolha para o horario ja tomado pelo
+   * OUTRO curso do aluno: ele volta com `conflitaComOutraProva`, e a tela diz
+   * por que aquele nao serve — em vez de o aluno descobrir no clique de
+   * confirmar.
    */
   async listarFaixas(
     aluno: AlunoJwtPayload,
     alunoId?: number,
   ): Promise<FaixaDisponivel[]> {
     const vinculo = await this.exigirVinculo(aluno, alunoId);
+
+    const ocupadasPelaOutraProva = await this.faixasDoOutroVinculo(vinculo);
 
     const faixas = await this.prisma.faixa.findMany({
       where: {
@@ -137,8 +149,45 @@ export class AgendamentoService {
         vagas: ofertas.reduce((total, o) => total + o.vagas, 0),
         disponiveis,
         temVaga: disponiveis > 0,
+        // Separado de `temVaga` de proposito: a vaga existe, o que falta e o
+        // aluno. Juntar os dois faria a tela dizer "lotado" para um horario que
+        // esta vazio, e ele reclamaria — com razao.
+        conflitaComOutraProva: ocupadasPelaOutraProva.has(faixa.id),
       };
     });
+  }
+
+  /**
+   * As faixas em que a MESMA PESSOA ja tem prova por OUTRO vinculo.
+   *
+   * Sao as que `exigirUmaProvaPorFaixa` vai recusar na confirmacao; aqui elas
+   * viram aviso na tela. Um aluno de um vinculo so — 99,97% deles — nao tem
+   * outro vinculo, e o conjunto sai vazio sem consulta nenhuma.
+   *
+   * O filtro `alunoId: { not }` e o que impede a propria reserva do aluno de se
+   * marcar como conflito: para o vinculo que esta olhando, o horario dele
+   * proprio nao e impedimento — trocar para o mesmo horario ja tem recusa
+   * propria, com mensagem melhor.
+   */
+  private async faixasDoOutroVinculo(vinculo: {
+    id: number;
+    matricula: string;
+  }): Promise<Set<number>> {
+    const periodoLetivoId = await this.periodo.periodoLetivoVigente();
+
+    if (!periodoLetivoId) return new Set();
+
+    const outras = await this.prisma.agendamento.findMany({
+      where: {
+        matricula: vinculo.matricula,
+        alunoId: { not: vinculo.id },
+        periodoLetivoId,
+        ...CONFIRMADO,
+      },
+      select: { salaFaixa: { select: { faixaId: true } } },
+    });
+
+    return new Set(outras.map((a) => a.salaFaixa.faixaId));
   }
 
   /** As disciplinas que a prova vai cobrir — o aluno confere antes de confirmar. */
@@ -261,7 +310,16 @@ export class AgendamentoService {
     }
 
     await this.prisma.$transaction(async (tx) => {
-      await travarVinculo(tx, vinculo.id);
+      await travarAluno(tx, vinculo.matricula);
+
+      // A troca e um agendamento novo aos olhos da regra: trocar nao pode ser a
+      // porta para cair no horario da outra prova do mesmo RA.
+      await exigirUmaProvaPorFaixa(tx, {
+        matricula: vinculo.matricula,
+        faixaId: faixa.id,
+        periodoLetivoId: atual.periodoLetivoId,
+        exceto: agendamentoId,
+      });
 
       const de = await descreverOferta(tx, atual.salaFaixaId);
 
@@ -424,7 +482,7 @@ export class AgendamentoService {
     disciplinas: DisciplinaAgendavel[];
   }): Promise<{ id: number; salaFaixaId: number }> {
     return this.prisma.$transaction(async (tx) => {
-      await travarVinculo(tx, dados.vinculoId);
+      await travarAluno(tx, dados.matricula);
 
       const jaAgendado = await tx.agendamento.findFirst({
         where: {
@@ -441,6 +499,15 @@ export class AgendamentoService {
             `(agendamento ${jaAgendado.id}). Use a troca de horario para mudar.`,
         );
       }
+
+      // O limite acima e por VINCULO ("uma prova por curso no semestre"); este e
+      // por PESSOA ("uma prova por horario"). Um RA com dois cursos passa pelo
+      // primeiro e precisa parar no segundo.
+      await exigirUmaProvaPorFaixa(tx, {
+        matricula: dados.matricula,
+        faixaId: dados.faixaId,
+        periodoLetivoId: dados.periodoLetivoId,
+      });
 
       const escolhida = await escolherOfertaComLock(
         tx,

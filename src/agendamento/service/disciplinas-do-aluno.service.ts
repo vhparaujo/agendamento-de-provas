@@ -16,6 +16,19 @@ const SEM_PERIODO_LETIVO =
   'O periodo letivo ainda nao foi configurado. Procure a secretaria academica.';
 
 /**
+ * A Valence caiu E o launch nao trouxe turma nenhuma — nao ha de onde tirar a
+ * lista. Mensagem PROPRIA de proposito: devolver "nenhuma disciplina sua aparece
+ * no periodo letivo vigente" mandaria o aluno a secretaria por um problema que e
+ * nosso, e a secretaria procuraria defeito no CSV de turmas.
+ */
+const VALENCE_FORA_SEM_LAUNCH =
+  'Nao foi possivel consultar suas disciplinas no Brightspace agora. ' +
+  'Tente de novo em alguns minutos; se continuar, procure a secretaria academica.';
+
+/** Intervalo minimo entre dois avisos de Valence fora. Ver `avisarIndisponivel`. */
+const INTERVALO_AVISO_MS = 60_000;
+
+/**
  * ============================================================================
  * QUAIS DISCIPLINAS A PROVA AGENDADA COBRE
  * ============================================================================
@@ -54,6 +67,9 @@ export class DisciplinasDoAlunoService {
 
   /** Ver `avisarSeFiltroDesligado`: o aviso sai uma vez por processo. */
   private avisouFiltroDesligado = false;
+
+  /** Ver `avisarIndisponivel`: um aviso por minuto, nao um por request. */
+  private avisouIndisponivelEmMs = 0;
 
   constructor(
     private readonly turmaService: TurmaService,
@@ -118,6 +134,12 @@ export class DisciplinasDoAlunoService {
    * nao agendou nunca clicou: o resultado seria "nenhuma disciplina" para TODO
    * mundo, e o lote alocaria zero pessoas relatando um problema que nao e o
    * verdadeiro.
+   *
+   * **E por isso que aqui NAO ha o fallback de `cairParaOLaunch`.** Sem turma
+   * clicada ele degradaria para lista vazia, e o lote registraria
+   * `SEM_DISCIPLINA_AGENDAVEL` — motivo que manda a secretaria conferir o CSV de
+   * turmas — quando a causa foi a rede. O erro sobe, `resolverUm` o classifica
+   * como `FALHA_NA_INTEGRACAO`, e rodar de novo reprocessa so aquele aluno.
    */
   async cruzarPorUserId(userIdD2L: string): Promise<ResultadoDoCruzamento> {
     if (!this.enrollments.habilitado()) {
@@ -151,9 +173,68 @@ export class DisciplinasDoAlunoService {
       };
     }
 
-    const { turmas, motivo } = await this.turmasPorUserId(aluno.userIdD2L);
+    try {
+      const { turmas, motivo } = await this.turmasPorUserId(aluno.userIdD2L);
 
-    return { turmas, origem: 'ENROLLMENTS', motivo };
+      return { turmas, origem: 'ENROLLMENTS', motivo };
+    } catch (erro) {
+      return this.cairParaOLaunch(aluno, erro);
+    }
+  }
+
+  /**
+   * ==========================================================================
+   * A VALENCE CAIU NO MEIO DO LAUNCH — degrada, nao derruba
+   * ==========================================================================
+   * `habilitado()` so olha o .env: ele NAO sabe se ha refresh token gravado, se
+   * ele ainda vale, nem se o Brightspace esta de pe. Sem este catch, qualquer um
+   * dos tres vira 503 na cara do aluno e o portal inteiro para — foi assim que o
+   * ambiente ficou com `D2L_HABILITADO=true` e `integracao_d2l` vazia, e nada
+   * avisou ate alguem tentar agendar.
+   *
+   * A turma clicada e um fallback POBRE, e de proposito: ela cobre so a
+   * disciplina de onde o aluno entrou, e quem tem tres provas agenda uma. Mas
+   * agendar uma prova e melhor que agendar nenhuma, e o remanejo administrativo
+   * conserta o resto — enquanto o 503 nao deixa nem comecar.
+   *
+   * **O compulsorio NAO passa por aqui, e nao pode passar**: quem nunca fez
+   * launch nao tem turma clicada, entao o fallback seria a lista vazia. Ver
+   * `cruzarPorUserId`, que deixa o erro subir para virar `FALHA_NA_INTEGRACAO`
+   * naquele aluno — linha de relatorio reprocessavel, em vez de aluno alocado
+   * para as disciplinas erradas.
+   */
+  private cairParaOLaunch(
+    aluno: AlunoJwtPayload,
+    erro: unknown,
+  ): { turmas: TurmaDoLaunch[]; origem: Origem; motivo?: string } {
+    this.avisarIndisponivel(erro);
+
+    if (!aluno.contexto) {
+      return { turmas: [], origem: 'LAUNCH', motivo: VALENCE_FORA_SEM_LAUNCH };
+    }
+
+    return { turmas: [aluno.contexto], origem: 'LAUNCH' };
+  }
+
+  /**
+   * O aviso sai no maximo uma vez por minuto.
+   *
+   * Uma queda da Valence atinge TODO request de TODO aluno: sem o intervalo, o
+   * incidente que precisa ser visto vira milhares de linhas iguais e enterra o
+   * resto do log — inclusive a auditoria, que e JSON na mesma saida.
+   */
+  private avisarIndisponivel(erro: unknown): void {
+    const agora = Date.now();
+
+    if (agora - this.avisouIndisponivelEmMs < INTERVALO_AVISO_MS) return;
+
+    this.avisouIndisponivelEmMs = agora;
+
+    this.logger.warn(
+      'Valence indisponivel: usando a turma do launch como fallback. ' +
+        'O aluno so ve a disciplina de onde clicou ate isto normalizar. ' +
+        `Causa: ${erro instanceof Error ? erro.message : String(erro)}`,
+    );
   }
 
   /**

@@ -4,7 +4,9 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { hojeUtc } from '../../components/utc.util';
 import { PrismaService } from '../../database/prisma.service';
+import { D2lEnrollmentsService } from '../../d2l/service/d2l-enrollments.service';
 import {
   EventoAgendamento,
   Prisma,
@@ -12,13 +14,17 @@ import {
 } from '../../generated/prisma/client';
 import { PeriodoService } from '../../periodo/service/periodo.service';
 import { AuditoriaService } from '../../seguranca/service/auditoria.service';
+import type { DisciplinaAgendavel } from '../../turma/service/turma.service';
 import { dataBr, dataDaProva, montarCsv } from './csv-relatorio';
+import { DisciplinasDoAlunoService } from './disciplinas-do-aluno.service';
 import { AUTOR_ADMIN, descreverOferta, registrarHistorico } from './historico';
 import {
+  CONFIRMADO,
   escolherOfertaComLock,
+  exigirUmaProvaPorFaixa,
   exigirVagaNaOferta,
   OPCOES_DA_TRANSACAO,
-  travarVinculo,
+  travarAluno,
 } from './lock-de-vagas';
 
 export interface FiltroAgendamentos {
@@ -77,6 +83,22 @@ export interface EventoDoHistorico {
   quando: Date;
 }
 
+/**
+ * De onde saiu a lista de disciplinas de um agendamento feito pelo admin.
+ *
+ * `RESERVA_ANTERIOR` nao e um plano B qualquer: e a fotografia que a PROPRIA
+ * reserva anterior daquele aluno, no MESMO semestre, ja guardava — ver
+ * `disciplinasParaOAdmin`.
+ */
+export type OrigemDasDisciplinas = 'BRIGHTSPACE' | 'RESERVA_ANTERIOR';
+
+export interface AgendamentoPeloAdmin {
+  agendamento: AgendamentoAdmin;
+  origemDasDisciplinas: OrigemDasDisciplinas;
+  /** Ressalvas que NAO impediram o agendamento. Vazio quando nao ha nenhuma. */
+  avisos: string[];
+}
+
 export interface LinhaDoResumo {
   poloId: number;
   polo: string;
@@ -101,7 +123,419 @@ export class AgendamentoAdminService {
     private readonly prisma: PrismaService,
     private readonly auditoria: AuditoriaService,
     private readonly periodo: PeriodoService,
+    private readonly d2l: D2lEnrollmentsService,
+    private readonly disciplinasDoAluno: DisciplinasDoAlunoService,
   ) {}
+
+  /**
+   * ==========================================================================
+   * AGENDAR NO LUGAR DE UM ALUNO — o atendimento de balcao
+   * ==========================================================================
+   * O compulsorio agenda por TODO MUNDO que nao agendou, e o recorte mais fino
+   * dele e o polo. Esta rota e a outra ponta: UMA pessoa, uma decisao, tomada
+   * com o aluno na frente.
+   *
+   * E ela que fecha a fila de trabalho do relatorio de excecoes. Ate aqui, os
+   * motivos diziam o que fazer (`SEM_VAGA` -> abrir sala) mas a unica acao
+   * disponivel depois de abrir a sala era redisparar o lote do polo inteiro:
+   * `PATCH /remanejar` exige um agendamento que ja exista, e nao cria nenhum.
+   *
+   * TUDO fica registrado como ADMIN, e nao como aluno:
+   *
+   * - `HistoricoAgendamento` grava `CRIADO` com o e-mail de quem clicou. E a
+   *   resposta para "eu nunca marquei essa prova" — que aqui e VERDADE.
+   * - `alocadoManual: true` sempre, inclusive quando a alocacao escolheu a
+   *   sala: o que a coluna diz e "isto nao saiu do portal do aluno".
+   *
+   * O admin NAO depende do periodo estar aberto — como no remanejo, agendar
+   * depois do fechamento e justamente o caso de uso.
+   *
+   * O que ela recusa e o mesmo que o remanejo recusa (outro polo, outra
+   * modalidade, sala lotada, a mesma pessoa duas vezes no mesmo horario) mais o
+   * que so faz sentido ao CRIAR: aluno que ja tem prova neste semestre (para
+   * isso existe o remanejo) e situacao de curso que nao permite agendar — esta
+   * ultima liberavel com `ignorarStatusCurso`, porque bloquear de vez trancaria
+   * a secretaria no unico caso em que ela precisa da valvula de escape.
+   */
+  async agendarPeloAdmin(
+    dados: {
+      alunoId: number;
+      salaFaixaId?: number;
+      faixaId?: number;
+      ignorarStatusCurso?: boolean;
+    },
+    ator?: string,
+  ): Promise<AgendamentoPeloAdmin> {
+    if (!dados.salaFaixaId === !dados.faixaId) {
+      throw new BadRequestException(
+        'Informe `salaFaixaId` (sala exata) OU `faixaId` (deixa a alocacao escolher) — um dos dois.',
+      );
+    }
+
+    const vinculo = await this.prisma.alunoImportado.findUnique({
+      where: { id: dados.alunoId },
+      include: { modalidade: true, polo: true },
+    });
+
+    if (!vinculo) {
+      throw new NotFoundException(`Vinculo ${dados.alunoId} nao encontrado`);
+    }
+
+    const periodoLetivoId = await this.periodo.periodoLetivoVigente();
+
+    if (!periodoLetivoId) {
+      throw new BadRequestException(
+        'Nenhum periodo de agendamento cadastrado: sem periodo letivo nao ha ' +
+          'como saber de qual semestre e esta prova. Cadastre em /periodos.',
+      );
+    }
+
+    const avisos: string[] = [];
+
+    // Nao ha "avisa e nao bloqueia" possivel antes de gravar: ou a prova entra,
+    // ou nao. Por isso a recusa e o padrao e a liberacao e explicita — o admin
+    // que reenvia com `ignorarStatusCurso` esta tomando a decisao por escrito.
+    if (!vinculo.ativo) {
+      if (!dados.ignorarStatusCurso) {
+        throw new ConflictException(
+          `A situacao deste aluno no curso ${vinculo.curso} esta como ` +
+            `"${vinculo.statusCurso}", que nao permite agendar prova. Se for o ` +
+            'caso mesmo assim, reenvie com `ignorarStatusCurso: true`.',
+        );
+      }
+
+      avisos.push(
+        `Agendado apesar da situacao no curso ser "${vinculo.statusCurso}", ` +
+          'que normalmente nao permite agendar.',
+      );
+    }
+
+    // Conferido de novo dentro da transacao, sob lock. Aqui e so para a
+    // mensagem: "use o remanejo" resolve o problema; "409" nao diz nada.
+    const jaTem = await this.prisma.agendamento.findFirst({
+      where: { alunoId: vinculo.id, periodoLetivoId, ...CONFIRMADO },
+      select: { id: true },
+    });
+
+    if (jaTem) {
+      throw new ConflictException(
+        `Este aluno ja tem prova marcada para o curso ${vinculo.curso} neste ` +
+          `semestre (agendamento ${jaTem.id}). Para mudar de sala ou horario, ` +
+          'use o remanejo.',
+      );
+    }
+
+    const alvo = await this.resolverDestino(dados, vinculo);
+
+    avisos.push(...(await this.ressalvasDaFaixa(alvo.faixaId)));
+
+    const fonte = await this.disciplinasParaOAdmin(
+      { id: vinculo.id, matricula: vinculo.matricula },
+      periodoLetivoId,
+    );
+
+    avisos.push(...fonte.avisos);
+
+    const criado = await this.prisma.$transaction(async (tx) => {
+      await travarAluno(tx, vinculo.matricula);
+
+      // Entre a checagem la em cima e agora, o proprio aluno pode ter agendado
+      // pelo portal — ou outro atendente pode ter feito exatamente isto.
+      const existente = await tx.agendamento.findFirst({
+        where: { alunoId: vinculo.id, periodoLetivoId, ...CONFIRMADO },
+        select: { id: true },
+      });
+
+      if (existente) {
+        throw new ConflictException(
+          `Este aluno acabou de receber prova neste semestre (agendamento ` +
+            `${existente.id}), enquanto esta tela estava aberta. Recarregue e ` +
+            'use o remanejo se precisar mudar de horario.',
+        );
+      }
+
+      // Vale para o admin tambem (decisao do cliente, 14/08/2026): uma prova por
+      // pessoa em cada horario, mesmo quando as duas sao de cursos diferentes.
+      await exigirUmaProvaPorFaixa(tx, {
+        matricula: vinculo.matricula,
+        faixaId: alvo.faixaId,
+        periodoLetivoId,
+      });
+
+      const salaFaixaId =
+        alvo.salaFaixaId ??
+        (await escolherOfertaComLock(tx, alvo.faixaId, vinculo.modalidadeId))
+          .id;
+
+      if (alvo.salaFaixaId) {
+        await exigirVagaNaOferta(tx, alvo.salaFaixaId);
+      }
+
+      const agendamento = await tx.agendamento.create({
+        data: {
+          alunoId: vinculo.id,
+          salaFaixaId,
+          matricula: vinculo.matricula,
+          userIdD2L: fonte.userIdD2L,
+          periodoLetivoId,
+          // Fotografia do vinculo na data da reserva — ver o schema.
+          modalidadeId: vinculo.modalidadeId,
+          poloId: vinculo.poloId,
+          // SEMPRE, inclusive quando a alocacao escolheu a sala: o que a coluna
+          // diz nao e "quem escolheu a sala", e sim "isto nao saiu do portal".
+          alocadoManual: true,
+          disciplinas: {
+            create: fonte.disciplinas.map((d) => ({
+              orgUnitId: d.orgUnitId,
+              nomeDisciplina: d.nomeDisciplina,
+            })),
+          },
+          // A fila de liberacao nasce na MESMA transacao, como no portal: um
+          // agendamento sem ela e prova marcada que nunca chega a ser liberada.
+          syncs: {
+            create: fonte.disciplinas.map((d) => ({ orgUnitId: d.orgUnitId })),
+          },
+        },
+        select: { id: true, salaFaixaId: true },
+      });
+
+      await registrarHistorico(tx, {
+        agendamentoId: agendamento.id,
+        evento: EventoAgendamento.CRIADO,
+        // ADMIN, com o e-mail. Quando o aluno perguntar no balcao por que tem
+        // prova marcada sem ter marcado, esta linha e a resposta.
+        autor: AUTOR_ADMIN(ator),
+        para: await descreverOferta(tx, agendamento.salaFaixaId),
+      });
+
+      return agendamento;
+    }, OPCOES_DA_TRANSACAO);
+
+    this.auditoria.registrar('AGENDAMENTO_CRIADO', {
+      ator,
+      detalhe:
+        `agendamento ${criado.id} criado pelo administrador para o vinculo ` +
+        `${vinculo.id} (${vinculo.matricula}), sala_faixa ${criado.salaFaixaId}, ` +
+        `${fonte.disciplinas.length} disciplina(s) via ${fonte.origem}` +
+        (dados.ignorarStatusCurso && !vinculo.ativo
+          ? `, com statusCurso "${vinculo.statusCurso}" ignorado`
+          : ''),
+    });
+
+    return {
+      agendamento: await this.buscar(criado.id),
+      origemDasDisciplinas: fonte.origem,
+      avisos,
+    };
+  }
+
+  /**
+   * ==========================================================================
+   * QUAIS DISCIPLINAS ESTA PROVA COBRE, sem launch e sem aluno na frente
+   * ==========================================================================
+   * O portal descobre isso pelo JWT do launch; o compulsorio, pelo UserId que
+   * `identidadePorMatricula` resolve. Aqui nao ha token nenhum — e o
+   * `userIdD2L` do agendamento e coluna obrigatoria, entao "criar sem
+   * disciplina" nem existe como saida.
+   *
+   * Sao duas fontes, nesta ordem:
+   *
+   * 1. **A Valence**, quando `D2L_HABILITADO` — a lista de agora, que e a certa.
+   * 2. **A reserva ANTERIOR do mesmo aluno no MESMO semestre**, inclusive
+   *    cancelada. Nao e um chute: e a fotografia que aquele agendamento gravou,
+   *    do mesmo periodo letivo, com o `userIdD2L` que veio do launch dele.
+   *
+   * A segunda existe porque cobre justamente o caso mais comum do balcao —
+   * `CANCELOU_E_NAO_REMARCOU`, o motivo que o compulsorio deixa de fora de
+   * proposito — e porque funciona com a integracao desligada, que e o default.
+   *
+   * O que ela NAO faz e substituir a Valence quando a Valence responde: uma
+   * lista velha e melhor que nenhuma, e pior que a atual.
+   */
+  private async disciplinasParaOAdmin(
+    vinculo: { id: number; matricula: string },
+    periodoLetivoId: string,
+  ): Promise<{
+    userIdD2L: string;
+    disciplinas: DisciplinaAgendavel[];
+    origem: OrigemDasDisciplinas;
+    avisos: string[];
+  }> {
+    const anterior = await this.reservaAnterior(vinculo, periodoLetivoId);
+
+    /** Cai para a reserva anterior, ou recusa dizendo o porque de cada uma. */
+    const semBrightspace = (motivo: string) => {
+      if (!anterior) {
+        throw new ConflictException(
+          `${motivo} E este aluno nao tem nenhuma reserva anterior neste ` +
+            'semestre de onde copiar as disciplinas — sem elas, a prova seria ' +
+            'marcada sem cobrir disciplina nenhuma.',
+        );
+      }
+
+      return {
+        ...anterior.dados,
+        origem: 'RESERVA_ANTERIOR' as const,
+        avisos: [
+          `${motivo} As disciplinas foram copiadas da reserva anterior deste ` +
+            `aluno neste semestre (agendamento ${anterior.id}). Confira antes ` +
+            'de liberar a prova no Brightspace.',
+        ],
+      };
+    };
+
+    if (!this.d2l.habilitado()) {
+      return semBrightspace(
+        'A integracao com o Brightspace esta desligada (D2L_HABILITADO), e e ' +
+          'ela quem sabe as disciplinas de quem nao agendou pelo portal.',
+      );
+    }
+
+    try {
+      const identidade = await this.d2l.identidadePorMatricula(
+        vinculo.matricula,
+      );
+
+      if (identidade.situacao === 'SEM_CONTA') {
+        return semBrightspace(
+          `A matricula ${vinculo.matricula} nao existe no Brightspace.`,
+        );
+      }
+
+      if (identidade.situacao === 'AMBIGUA') {
+        return semBrightspace(
+          `Ha ${identidade.quantos} contas no Brightspace com a matricula ` +
+            `${vinculo.matricula}, e escolher uma nao e decisao do sistema.`,
+        );
+      }
+
+      if (identidade.situacao === 'ID_INVALIDO') {
+        return semBrightspace(
+          `O UserId "${identidade.valor}" no Brightspace nao e numerico e ` +
+            'seria recusado pela Valence.',
+        );
+      }
+
+      const cruzamento = await this.disciplinasDoAluno.cruzarPorUserId(
+        identidade.userIdD2L,
+      );
+
+      if (cruzamento.agendaveis.length === 0) {
+        return semBrightspace(
+          cruzamento.motivo ??
+            `Nenhuma disciplina dele no periodo letivo ${periodoLetivoId} ` +
+              'cruzou com o CSV de turmas com prova.',
+        );
+      }
+
+      return {
+        userIdD2L: identidade.userIdD2L,
+        disciplinas: cruzamento.agendaveis,
+        origem: 'BRIGHTSPACE',
+        avisos: identidade.ativoNoD2L
+          ? []
+          : [
+              'A conta deste aluno esta DESATIVADA no Brightspace: ele tem ' +
+                'lugar na sala, mas do jeito que esta nao conseguiria abrir a ' +
+                'prova. Abra chamado no suporte do LMS.',
+            ],
+      };
+    } catch (erro) {
+      // Rede, token vencido, 500 da Valence. Igual ao portal (`cairParaOLaunch`)
+      // e ao contrario do compulsorio: aqui ha um humano esperando resposta, e
+      // uma lista velha o deixa resolver o atendimento agora.
+      return semBrightspace(
+        'Nao foi possivel consultar o Brightspace agora ' +
+          `(${erro instanceof Error ? erro.message : String(erro)}).`,
+      );
+    }
+  }
+
+  /**
+   * A reserva mais recente daquela PESSOA neste semestre, CANCELADA inclusive.
+   *
+   * A cancelada e o ponto: quem cancelou e nao remarcou e quem mais aparece no
+   * balcao, e a reserva dele guarda exatamente o que precisamos — o `userIdD2L`
+   * que veio do launch e as disciplinas daquele semestre.
+   *
+   * A busca e por **matricula**, e nao pelo vinculo, com o vinculo apenas como
+   * desempate. E a mesma razao pela qual o compulsorio consulta a Valence uma
+   * vez por RA: as disciplinas vem da PESSOA — turma nao pertence a um curso —,
+   * entao a reserva do outro curso dela e uma fonte igualmente valida, e a unica
+   * disponivel para o segundo vinculo de quem tem dois.
+   *
+   * Reserva sem disciplina nenhuma nao serve: seria marcar prova que nao cobre
+   * nada. Por isso o filtro nao e "a mais recente", e sim "a mais recente que
+   * tem o que copiar".
+   */
+  private async reservaAnterior(
+    vinculo: { id: number; matricula: string },
+    periodoLetivoId: string,
+  ): Promise<{
+    id: number;
+    dados: { userIdD2L: string; disciplinas: DisciplinaAgendavel[] };
+  } | null> {
+    const anteriores = await this.prisma.agendamento.findMany({
+      where: { matricula: vinculo.matricula, periodoLetivoId },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        alunoId: true,
+        userIdD2L: true,
+        disciplinas: { select: { orgUnitId: true, nomeDisciplina: true } },
+      },
+    });
+
+    const uteis = anteriores.filter((a) => a.disciplinas.length > 0);
+
+    const escolhida = uteis.find((a) => a.alunoId === vinculo.id) ?? uteis[0];
+
+    if (!escolhida) return null;
+
+    return {
+      id: escolhida.id,
+      dados: {
+        userIdD2L: escolhida.userIdD2L,
+        disciplinas: escolhida.disciplinas,
+      },
+    };
+  }
+
+  /**
+   * Faixa inativa ou com data passada AVISA, nao bloqueia.
+   *
+   * O portal recusa as duas, e com razao: o aluno escolhendo sozinho um horario
+   * que ja passou so pode ser engano. Aqui quem escolhe e a secretaria, e os
+   * dois casos tem uso real — registrar quem fez a prova sem estar na lista, ou
+   * usar uma faixa que foi desativada para sair do portal. Recusar seria
+   * decidir no lugar dela; ficar calado esconderia um erro de digitacao.
+   */
+  private async ressalvasDaFaixa(faixaId: number): Promise<string[]> {
+    const faixa = await this.prisma.faixa.findUnique({
+      where: { id: faixaId },
+      select: { data: true, ativo: true },
+    });
+
+    if (!faixa) return [];
+
+    const avisos: string[] = [];
+
+    if (!faixa.ativo) {
+      avisos.push(
+        'Este horario esta INATIVO: ele nao aparece no portal do aluno.',
+      );
+    }
+
+    if (faixa.data < hojeUtc()) {
+      avisos.push(
+        `A data deste horario (${faixa.data.toLocaleDateString('pt-BR', {
+          timeZone: 'UTC',
+        })}) ja passou.`,
+      );
+    }
+
+    return avisos;
+  }
 
   /**
    * ==========================================================================
@@ -120,8 +554,9 @@ export class AgendamentoAdminService {
    * - `faixaId` — muda de horario e deixa a alocacao sequencial escolher a sala.
    *
    * O que NAO se pode remanejar, em nenhuma das duas: outro polo (o aluno
-   * viajaria para o campus errado) e outra modalidade (a prova tem outra
-   * duracao). Sao os dois erros que o remanejo poderia esconder.
+   * viajaria para o campus errado), outra modalidade (a prova tem outra
+   * duracao) e o horario em que a MESMA PESSOA ja tem a prova do outro curso
+   * dela. Sao os tres erros que o remanejo poderia esconder.
    */
   async remanejar(
     id: number,
@@ -157,7 +592,18 @@ export class AgendamentoAdminService {
     }
 
     await this.prisma.$transaction(async (tx) => {
-      await travarVinculo(tx, atual.aluno.id);
+      await travarAluno(tx, atual.matricula);
+
+      // Vale para o admin tambem (decisao do cliente, 14/08/2026): mover o aluno
+      // para o horario da OUTRA prova dele criaria, em silencio, exatamente o
+      // estado que o portal recusa — duas provas ao mesmo tempo para a mesma
+      // pessoa. Nao trava a secretaria: basta mover primeiro a outra prova.
+      await exigirUmaProvaPorFaixa(tx, {
+        matricula: atual.matricula,
+        faixaId: alvo.faixaId,
+        periodoLetivoId: atual.periodoLetivoId,
+        exceto: id,
+      });
 
       const de = await descreverOferta(tx, atual.salaFaixa.id);
 

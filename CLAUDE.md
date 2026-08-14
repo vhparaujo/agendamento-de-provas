@@ -51,20 +51,47 @@ regra de negócio ou estrutura, atualize os dois.
 3. **Disciplinas agendáveis** = disciplinas do aluno na Valence ∩ turmas reais
    (CSV de turmas) ∩ período letivo vigente. **Não são todas as disciplinas do aluno.**
 4. **Um agendamento cobre todas as disciplinas agendáveis de UM vínculo**
-   (mesmo horário). Aluno com dois cursos faz dois agendamentos, um por curso —
-   as durações são diferentes, então caem em faixas diferentes. Quando o RA tem
-   mais de um vínculo, o portal pergunta de qual curso é a prova
+   (mesmo horário). Aluno com dois cursos faz dois agendamentos, um por curso.
+   Quando o RA tem mais de um vínculo, o portal pergunta de qual curso é a prova
    (`precisaEscolherCurso` na resposta do launch).
+4b. **UMA PROVA POR PESSOA EM CADA HORÁRIO** (decisão do cliente, 14/08/2026).
+   O RA com dois cursos faz duas provas, mas **não pode marcar as duas na mesma
+   faixa**: são provas diferentes e ninguém faz as duas ao mesmo tempo. Antes
+   disso ele ocupava duas cadeiras, aparecia duas vezes na lista de presença e
+   só fazia uma das provas — a outra cadeira ficava vazia com o nome dele.
+
+   - A regra é **`matrícula` + `faixa` + `periodoLetivoId`**, e vive num lugar
+     só: `exigirUmaProvaPorFaixa` (`lock-de-vagas.ts`). As quatro portas passam
+     por ela — agendar, trocar, **remanejar** (o admin também, por decisão do
+     cliente) e o compulsório.
+   - **É a faixa, não a sobreposição de horário.** Duas faixas que se cruzam no
+     relógio (09:00-12:00 e 10:00-11:30) continuam permitidas. Se isso virar
+     problema, o lugar de mudar é aquela função, e só ela.
+   - Ela **convive** com o limite por vínculo (`uma prova por curso no
+     semestre`), que responde outra pergunta e continua valendo.
+   - No portal, `GET /portal/faixas` devolve `conflitaComOutraProva` para que a
+     tela explique em vez de deixar o aluno descobrir no clique de confirmar.
+     É separado de `temVaga`: a vaga existe, quem não pode é o aluno.
+   - No compulsório, o `ConflictException` é tratado como faixa cheia — **tenta
+     a próxima data**. A simulação faz o mesmo em memória (`faixasDaPessoa` em
+     `ocuparVagaSimulada`); sem isso ela prometeria um resultado que o lote não
+     entrega.
 5. **Alocação de sala é sequencial**: preenche a sala de menor `ordem` até lotar,
    só então usa a próxima. A vaga é da SalaFaixa (`count(agendamentos) < vagas`).
 6. **Concorrência**: a checagem de vaga + criação do agendamento DEVE ocorrer na
    mesma transação, serializada por SalaFaixa. **Nunca conte fora da transação.**
-   Implementado em `agendamento.service.ts` como `SELECT ... FOR UPDATE` (vínculo,
+   Implementado em `agendamento.service.ts` como `SELECT ... FOR UPDATE` (aluno,
    depois as ofertas da faixa+modalidade) sob **READ COMMITTED** — não
    `SERIALIZABLE`: em REPEATABLE READ o snapshot da transação pode ser anterior ao
    lock e a contagem viria velha, e SERIALIZABLE acrescentaria gap lock sem ganho.
    O `FOR UPDATE` é o que garante a exclusão mútua; há teste que prova (remover o
    lock faz 5 alunos entrarem na mesma vaga).
+
+   ⚠️ **O primeiro lock é por `matrícula`, não por id do vínculo** (`travarAluno`,
+   mudou em 14/08/2026 junto com a regra 4b). Um RA com dois cursos tem DUAS
+   linhas em `aluno_importado`; travar só uma deixaria as duas transações
+   correrem em paralelo, cada uma conferindo a regra 4b antes de a outra gravar,
+   e as duas passando. A ordem continua `aluno → sala_faixa → agendamento`.
 7. **Reagendamento tem dono, e fica registrado.**
    - **O aluno só reagenda com o período ABERTO.** Trocar de horário e cancelar
      valem enquanto o prazo corre; depois disso, só a secretaria. É a mesma trava
@@ -257,7 +284,7 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 
 | Rota | Auth | O que faz |
 |---|:---:|---|
-| `GET /health` | — | Status da API + banco (200 mesmo com banco fora) |
+| `GET /health` | — | Status da API + banco + integração D2L (200 mesmo com banco fora) |
 | `POST /auth/login` · `/auth/refresh` | — | Tokens do admin |
 | `POST /auth/trocar-senha` · `GET /auth/me` | admin | Liberadas com senha provisória |
 | `GET/POST /lti/login` · `POST /lti/launch` · `GET /lti/jwks` | — | Fluxo LTI (autentica pela assinatura do Brightspace) |
@@ -270,11 +297,13 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `GET /modalidades` · `GET/POST/PATCH/DELETE /polos` · `/salas` · `/faixas` · `/sala-faixas` | admin | Estrutura física e oferta de vagas |
 | `GET /portal/periodo` · `/portal/disciplinas` · `/portal/faixas` | aluno | O que ele pode escolher |
 | `GET/POST /portal/agendamentos` | aluno | Confirmar a prova e consultar o que já marcou |
-| `GET/POST /periodos` · `GET/PATCH /periodos/:id` | admin | Abrir/fechar a janela de agendamento |
+| `GET/POST /periodos` · `GET/PATCH/DELETE /periodos/:id` | admin | Abrir/fechar a janela de agendamento |
 | `GET /agendamentos` · `/resumo` · `/exportacao` · `/:id` | admin | Relatório: consulta, ocupação por sala e o CSV de **todos os alunos** |
 | `GET /relatorios/grupos-d2l` · `/zip` · `/:faixaId/:orgUnitId` | admin | Grupos do Brightspace: um CSV de matrículas **por horário e turma** |
+| `GET /relatorios/listas-de-presenca` · `/pdf` · `/:salaFaixaId/pdf` | admin | Lista de presença: um PDF com **uma página por sala** de aplicação |
 | `PATCH /agendamentos/:id/remanejar` · `DELETE /agendamentos/:id` | admin | Mover de sala/horário e cancelar |
 | `POST /agendamentos/compulsorio` · `GET /:id` · `/:id/relatorio` | admin | Agenda por quem não agendou; acompanha o lote e baixa o CSV de exceções |
+| `POST /agendamentos` | admin | Agenda a prova de **um** aluno, escolhendo a sala ou deixando a alocação escolher |
 | `PATCH /portal/agendamentos/:id` · `DELETE` | aluno | Trocar de horário (atômico) e cancelar |
 | `GET /agendamentos/:id/historico` | admin | Quem alterou: aluno ou administrador |
 | `GET /d2l/callback` | — | Callback OAuth da Valence: troca o `code` e grava o refresh token |
@@ -619,6 +648,25 @@ O serviço loga um aviso quando as duas coisas estão ligadas ao mesmo tempo.
 misturados para quem tem dois cursos — e nada os separa, porque turma não
 pertence a um curso. Ver "Turma NÃO pertence a um curso".
 
+**Valence fora = degrada para o launch, nunca 503 no aluno.** `habilitado()` só lê
+o `.env`: ele não sabe se há refresh token gravado, se ele ainda vale, nem se o
+Brightspace está de pé. Sem o `catch` de `cairParaOLaunch`, os três viravam erro
+na cara do aluno e o portal inteiro parava — foi o estado real do ambiente com
+`D2L_HABILITADO=true` e `integracao_d2l` vazia, e nada avisou até alguém tentar
+agendar. O fallback é pobre de propósito (só a disciplina clicada; quem tem três
+provas agenda uma), mas agendar uma é melhor que agendar nenhuma, e o remanejo
+conserta o resto. Aviso no log, no máximo 1×/min.
+
+**O compulsório NÃO tem esse fallback, e não pode ter**: quem nunca fez launch não
+tem turma clicada, então degradar daria lista vazia e o lote registraria
+`SEM_DISCIPLINA_AGENDAVEL` — que manda conferir o CSV — quando a causa foi a rede.
+Lá o erro sobe e vira `FALHA_NA_INTEGRACAO`, reprocessável. Há teste para os dois.
+
+**`GET /health` expõe o estado em `d2l`** (`desligado` · `ok` · `nao_autorizado` ·
+`desconhecido`), e `status` continua refletindo só banco+API — integração opcional
+não pode marcar o container como unhealthy. `nao_autorizado` é o alerta: ligada no
+`.env` e sem token gravado. Ver "Deploy em produção" no README.
+
 - Referência completa da API em [`docs/D2L_API_REFERENCE.md`](docs/D2L_API_REFERENCE.md)
   (autenticação, endpoints, armadilhas). O projeto `../lti-spike` tem um launch
   LTI funcionando contra `catolicatest.brightspace.com` — é a fonte de verdade
@@ -653,7 +701,9 @@ src/
   agendamento/ ✅ portal do aluno · alocacao.ts (pura) · disciplinas-do-aluno.service.ts
   periodo/     ✅ CRUD do admin + leitura usada pelo portal
   relatorio/   ✅ grupos do Brightspace por horário e turma (csv-grupos-d2l.ts,
-               nome-de-arquivo.ts, zip com uma pasta por turma)
+               nome-de-arquivo.ts, zip com uma pasta por turma) +
+               lista de presença por sala (lista-presenca.service.ts,
+               pdf-lista-presenca.ts puro, assets/logo.png opcional)
   d2l/         🟡 autorização OAuth + leitura de matrículas (d2l-enrollments).
                Special access continua adiado — não criar sem pedido.
 
@@ -838,6 +888,7 @@ alocador precisam ver o mesmo número, senão um dos dois está mentindo.
 | Faixa de outro polo | 403 |
 | Faixa inativa ou com data passada | 409 |
 | Já tem prova marcada para o vínculo | 409 |
+| A MESMA PESSOA já tem prova nesta faixa, pelo outro curso | 409 (regra 4b) |
 | Vagas esgotadas | 409 |
 | `alunoId` que não está no token | 403 + auditoria |
 
@@ -873,6 +924,24 @@ remanejar: se fossem três implementações, uma delas acabaria sem o `FOR UPDAT
 **Sem período cadastrado = fechado.** Mesma escolha do filtro de turmas: na
 dúvida, não libera. Para testar antes do CRUD administrativo (etapa 7), crie a
 linha em `PeriodoAgendamento` pelo `npm run prisma:studio`.
+
+### `DELETE /periodos/:id` — vigente é derivado, e por isso se erra fácil
+
+Vigente = **o cadastrado mais recentemente** (`createdAt desc`), não um flag no
+banco. Não há como marcar outro no lugar: cadastrar o semestre seguinte com
+antecedência, ou criar uma linha errada, **rouba o vigente do período em curso**,
+e a única saída era mexer no banco à mão. É o mesmo caso de uso do
+`DELETE /polos/:id` — desfazer cadastro que não deveria existir.
+
+| Decisão | Por quê |
+|---|---|
+| Só apaga período letivo **sem agendamento nenhum** (409 caso contrário) | Apagar a linha não apaga prova: `Agendamento.periodoLetivoId` é string, sem FK. As provas ficariam órfãs de janela, e o aluno perderia de vista a que já marcou — o oposto da regra 7, em que fechar tranca a escolha e nunca a consulta |
+| A contagem inclui **CANCELADO**, ao contrário do `totalAgendamentos` da tela (só `CONFIRMADO`) | São perguntas diferentes: a tela mostra vagas tomadas, e cancelar devolveu a vaga; aqui a pergunta é "alguém já usou este semestre?", e o cancelamento é justamente o registro que precisa continuar explicável no dia da prova |
+| A conta é por `periodoLetivoId`, então duas linhas do mesmo semestre travam uma a outra | Com o mesmo id de período letivo nos dois, não há como dizer a qual linha a prova pertence |
+| **Apagar o vigente é permitido**, e a resposta traz `vigenteAgora` | É o motivo de a rota existir. Mas o portal passa ao período anterior, em geral com o prazo vencido — avisa e não bloqueia, como `alteracoesComAgendamento` |
+
+Encerrar o prazo continua sendo `PATCH` (`aberto=false` ou `dataFechamento` no
+passado): a linha fica no histórico, e quem já agendou não perde nada.
 
 **Token de aluno para teste:** `npm run token:aluno -- <RA> [orgUnitId]`
 monta o mesmo payload do launch lendo os vínculos do banco, pulando só a
@@ -910,20 +979,25 @@ Data da prova · Inicio · Fim · Sala · Status · Agendado em`.
 Não "otimize" isso de volta para uma consulta em `agendamento`: o arquivo
 deixaria de listar exatamente as pessoas para as quais ele existe.
 
-## ⚠️ São DOIS CSVs, com formatos OPOSTOS
+## ⚠️ São TRÊS documentos, com públicos e recortes OPOSTOS
 
-Confundir os dois é o erro fácil desta parte do sistema. Eles têm público,
-conteúdo e bytes diferentes:
+Confundir os três é o erro fácil desta parte do sistema. Eles respondem a
+perguntas diferentes e recortam a mesma base de jeitos incompatíveis:
 
-| | `GET /agendamentos/exportacao` | `GET /relatorios/grupos-d2l/:faixaId/:orgUnitId` |
-|---|---|---|
-| Quem lê | **Pessoa**, no Excel pt-BR | **Máquina**: o *Groups Import* do Brightspace |
-| Responde | "com quem a secretaria precisa falar" | "quem entra no grupo desta prova" |
-| Base | Todos os vínculos, agendados ou não | Só quem tem prova **confirmada** |
-| Colunas | 12 | 2 (`Nome de usuário`, `Código do Grupo` **vazia**) |
-| Separador | `;` | `,` |
-| BOM UTF-8 | **sim** | **não** |
-| Recorte | um período letivo | uma **faixa + uma turma** + um período letivo |
+| | `GET /agendamentos/exportacao` | `GET /relatorios/grupos-d2l/:faixaId/:orgUnitId` | `GET /relatorios/listas-de-presenca/pdf` |
+|---|---|---|---|
+| Quem lê | **Pessoa**, no Excel pt-BR | **Máquina**: o *Groups Import* do Brightspace | **Pessoa**, no papel: o fiscal da sala |
+| Responde | "com quem a secretaria precisa falar" | "quem entra no grupo desta prova" | "quem senta nesta sala" |
+| Base | Todos os vínculos, agendados ou não | Só quem tem prova **confirmada** | Só quem tem prova **confirmada** |
+| Formato | CSV, 12 colunas | CSV, 2 colunas (`Nome de usuário`, `Código do Grupo` **vazia**) | PDF A4, 5 colunas |
+| Uma linha é | um vínculo | um **usuário** (RA distinto) | uma **pessoa** (RA distinto) |
+| Separador · BOM | `;` · **sim** | `,` · **não** | — |
+| Recorte | um período letivo | uma **faixa + uma turma** + um período letivo | uma **sala + uma faixa** + um período letivo |
+
+**O primeiro conta diferente dos outros dois, e não está errado.** Ele lista
+*vínculos*, então o RA de dois cursos aparece duas vezes — é a lista de quem a
+secretaria precisa cobrar, e são duas provas a cobrar. Os outros dois listam
+*pessoas* e o trazem uma vez só.
 
 Trocar o separador ou o BOM quebra em silêncio nos dois sentidos: com `;` o D2L
 lê a linha inteira como um campo só; com BOM, os três bytes grudam no cabeçalho e
@@ -993,6 +1067,81 @@ um tem; `/:faixaId/:orgUnitId` baixa o CSV de um; `/zip` baixa todos de uma vez.
 O front usa o `nomeArquivo` que vem do backend: resposta em blob não expõe o
 `Content-Disposition`, e montar o nome no cliente deixaria a regra em dois
 lugares.
+
+## Lista de presença: um PDF com uma página por SALA
+
+`GET /relatorios/listas-de-presenca` lista as salas que terão aplicação e quantos
+assinam em cada; `/pdf` baixa o PDF do recorte inteiro; `/:salaFaixaId/pdf` baixa
+a folha avulsa de uma sala. É a mesma aba **Relatorios** do painel.
+
+É o **único documento do sistema que sai impresso e volta escrito à mão**, e isso
+dita cada decisão abaixo.
+
+- **O recorte é a SALA (`SalaFaixa`)**, que já é exatamente o trio "sala +
+  horário + polo" — a faixa carrega polo, data e hora; a oferta acrescenta a
+  sala. Uma folha com a faixa inteira imprimiria sem erro nenhum, e o fiscal da
+  SALA 1 receberia uma lista com quem está sentado na SALA 2: chamaria nome de
+  quem não está ali e deixaria de conferir quem está. É o oposto do grupo do
+  D2L, onde **a sala não entra** porque o acesso ao quiz não depende dela.
+- **Uma linha por PESSOA.** A folha é assinada à mão: o mesmo RA duas vezes faria
+  o fiscal chamar a mesma pessoa duas vezes e sobrar uma linha em branco no fim,
+  parecendo falta de quem estava presente. A deduplicação é por `matrícula`.
+
+  Desde a regra 4b isto é quase só rede de segurança — um RA não consegue mais
+  marcar duas provas na mesma faixa —, e duas linhas na mesma sala só existem em
+  dado gravado **antes** dela. Vale manter: o relatório não pode depender de o
+  histórico estar limpo.
+
+  ⚠️ Nesses casos antigos `totalAlunos` fica **menor** que `ocupadas` em
+  `GET /agendamentos/resumo`: a sala tem duas cadeiras tomadas e a folha, uma
+  linha. A divergência é o sintoma do dado velho, não erro de contagem — o certo
+  é cancelar o agendamento duplicado, não voltar a imprimir duas linhas.
+- **Sala sem ninguém agendado não vira página.** Não haverá aplicação ali, e uma
+  folha em branco no meio da pilha só faz procurar o erro. Para ver a oferta
+  montada, cheia ou vazia, use `GET /agendamentos/resumo`.
+- **As colunas são `Nº · RA · Nome · Modalidade · Assinatura`.** A de assinatura
+  é uma célula **vazia com borda**: a própria linha da tabela é a linha em que se
+  assina — por isso a altura mínima da linha (`ALTURA_MINIMA`) é o espaço que uma
+  mão precisa, e não o tamanho da fonte. Nome longo quebra em duas linhas e a
+  linha cresce; cortá-lo tiraria justamente o campo pelo qual se confere quem
+  assinou. **Não há linha em branco no fim**: a folha é a relação de quem TEM
+  lugar ali, e uma linha vazia convida a escrever nela quem não deveria estar.
+- **A `Modalidade` da coluna vem do AGENDAMENTO** (fotografia), a do cabeçalho
+  vem da OFERTA. São iguais por construção — a alocação só aceita oferta da
+  modalidade do aluno —, e é essa redundância que faz a divergência aparecer no
+  papel se algum dia existir, em vez de ficar escondida.
+- **A ordem dentro da página é alfabética por nome** (`localeCompare` com
+  `pt-BR`, senão "ÁLVARO" cairia depois de todo o alfabeto). O fiscal procura
+  pela pessoa que está na frente dele, e o que ela sabe dizer é o próprio nome —
+  não a matrícula. Quem não tem nome no CSV vai para o fim, ordenado por RA.
+- **A ordem das páginas é dia → horário → polo → sala**: a pilha já sai da
+  impressora separável por campus, sem ninguém reordenar folha a folha.
+- **O cabeçalho se repete em toda página**, inclusive na continuação de uma sala
+  grande, marcado `(cont.)`. Folha solta que não diz de que sala, dia e horário
+  ela é não serve para nada — e as folhas são distribuídas uma a uma.
+- **Nome do arquivo:**
+  `Lista de presenca - 11-06-2026 09h00-12h00 - Campus Asa Sul - SALA 1 EAD.pdf`.
+  Aqui **o polo entra**, ao contrário do CSV de grupos: as folhas de dois campi
+  no mesmo dia e horário vão para lugares físicos diferentes, e sala com o mesmo
+  nome em dois polos é comum. Acentos caem pelo mesmo motivo de lá
+  (`relatorio/service/nome-de-arquivo.ts`).
+- **O logo é OPCIONAL.** `src/relatorio/assets/logo.png` é lido se existir e
+  ignorado se não — basta colocar o arquivo lá, nada mais muda
+  (`src/relatorio/assets/LEIA-ME.md`). Fazer o relatório inteiro falhar por causa
+  de uma imagem ausente seria trocar um documento imperfeito por documento
+  nenhum. O `nest build` copia `**/*.png` para o `dist` (`nest-cli.json`).
+- **Fonte Helvetica padrão do PDF**, com `WinAnsiEncoding`: cobre Latin-1 inteiro
+  e com ele todo acento do português ("VINÍCIUS", "ALARÇÃO", "Câmpus"), sem
+  embutir arquivo de fonte no repositório. Caractere fora do Latin-1 exigiria uma
+  TTF embutida.
+- **A listagem não devolve os alunos**, só a contagem — mesma razão do relatório
+  de grupos: milhares de nomes no navegador para exibir um número por linha.
+
+O desenho do PDF está isolado em `relatorio/service/pdf-lista-presenca.ts`
+(módulo puro, recebe dados e devolve `Buffer`); as consultas ficam em
+`lista-presenca.service.ts`. A separação é o que permite testar layout e
+paginação sem banco (`lista-presenca.spec.ts`) e o recorte com banco
+(`test/lista-presenca.e2e-spec.ts`).
 
 ## Agendamento compulsório (etapa 9)
 
@@ -1107,6 +1256,84 @@ nosso CSV e `IsActive: false` no Brightspace.
 O CSV é do formato da **secretaria** (`;` + BOM UTF-8), não do D2L. Ver "São DOIS
 CSVs, com formatos OPOSTOS".
 
+## O admin agenda por UM aluno (etapa 9b)
+
+`POST /agendamentos` — a outra ponta do compulsório: lá é o lote inteiro (recorte
+mínimo, o polo), aqui é **uma pessoa**, com o aluno na frente.
+
+É ela que **fecha a fila de trabalho do relatório de exceções**. Cada motivo
+dizia o que fazer (`SEM_VAGA` → abrir sala), mas depois de abrir a sala a única
+ação existente era redisparar o lote do polo todo: `PATCH /:id/remanejar` exige
+um agendamento que já exista e **não cria nenhum**.
+
+Dois destinos, os mesmos do remanejo e pelo mesmo motivo — "quem escolhe a sala"
+é uma pergunta só, e duas formas de respondê-la em formatos diferentes virariam
+duas telas incompatíveis:
+
+| Corpo | Quem escolhe a sala |
+|---|---|
+| `{ alunoId, faixaId }` | a alocação sequencial (menor `ordem` até lotar) |
+| `{ alunoId, salaFaixaId }` | o admin |
+
+**`alunoId` é o VÍNCULO, não a matrícula** — um RA com dois cursos faz duas
+provas, e o id diz de qual delas se trata.
+
+**Tudo fica registrado como ADMIN.** `HistoricoAgendamento` grava `CRIADO` com o
+e-mail (é a resposta para "eu nunca marquei essa prova", que aqui é verdade), e
+`alocadoManual: true` **sempre** — inclusive quando a alocação escolheu a sala,
+porque o que a coluna diz é "isto não saiu do portal do aluno".
+
+### De onde saem as disciplinas, sem launch e sem aluno na frente
+
+O portal descobre pelo JWT; o compulsório, pelo `identidadePorMatricula`. Aqui não
+há token nenhum — e `Agendamento.userIdD2L` é coluna obrigatória, então "criar sem
+disciplina" não existe como saída. Duas fontes, nesta ordem:
+
+1. **A Valence**, com `D2L_HABILITADO` — a lista de agora, que é a certa.
+2. **A reserva ANTERIOR da mesma pessoa no MESMO semestre, cancelada inclusive.**
+   Não é chute: é a fotografia que aquele agendamento gravou, com o `userIdD2L`
+   que veio do launch dele.
+
+A segunda cobre justamente o caso mais comum do balcão —
+`CANCELOU_E_NAO_REMARCOU`, o motivo que o compulsório deixa de fora de propósito
+— e funciona com a integração **desligada**, que é o default. `origemDasDisciplinas`
+(`BRIGHTSPACE` | `RESERVA_ANTERIOR`) diz qual foi, e `avisos` traz o motivo da
+queda. Sem nenhuma das duas, a rota **recusa** com 409.
+
+⚠️ **A busca da reserva anterior é por MATRÍCULA, com o vínculo só como
+desempate** — mesma razão pela qual o compulsório consulta a Valence uma vez por
+RA: turma não pertence a um curso, então a lista é da PESSOA. Para o segundo
+vínculo de quem tem dois, a reserva do outro curso é a única fonte que existe.
+
+### O que ela recusa, e o que ela só avisa
+
+| Situação | Resposta |
+|---|---|
+| Nenhum ou ambos os destinos | 400 |
+| Faixa/oferta de outro polo ou de outra modalidade | 400 (mesma checagem do remanejo) |
+| Vínculo, faixa ou oferta inexistente | 404 |
+| Aluno já com prova no semestre | 409 — "use o remanejo" |
+| A MESMA PESSOA já tem prova nesta faixa | 409 (regra 4b, o admin inclusive) |
+| Sala lotada | 409 |
+| `statusCurso` que bloqueia | 409, **liberável com `ignorarStatusCurso: true`** |
+| Sem disciplina de onde copiar | 409 |
+| **Faixa inativa, ou data já passada** | **avisa em `avisos`, não bloqueia** |
+
+As duas últimas linhas são as decisões que mais importam:
+
+- **`ignorarStatusCurso` existe porque não há "avisa e não bloqueia" possível
+  antes de gravar** — ou a prova entra, ou não. Recusar é o padrão (igual ao
+  portal); liberar é explícito, volta em `avisos` e vai para a auditoria. Sem a
+  saída, a secretaria ficaria travada no único caso em que precisa da válvula.
+- **Faixa inativa e data passada só avisam.** O portal recusa as duas, e com
+  razão: o aluno escolhendo sozinho um horário que já passou só pode ser engano.
+  Aqui quem escolhe é a secretaria, e os dois casos têm uso real — registrar quem
+  fez a prova sem estar na lista, ou usar uma faixa desativada de propósito para
+  sumir do portal. Recusar seria decidir no lugar dela; calar esconderia um erro
+  de digitação.
+
+Como o remanejo, **não depende do período estar aberto**.
+
 ## Ao implementar, priorize nesta ordem
 
 1. ✅ Prisma schema + migrations + Docker + seed do admin.
@@ -1121,6 +1348,9 @@ CSVs, com formatos OPOSTOS".
 9. ✅ Agendamento compulsório: o lote que agenda por quem não agendou, com
    simulação, acompanhamento e relatório de exceções. **Exige `D2L_HABILITADO`**
    — é a integração que sabe as disciplinas de quem nunca fez launch.
+9b. ✅ Agendamento administrativo de UM aluno (`POST /agendamentos`): o
+   atendimento de balcão que fecha a fila de exceções do compulsório. Funciona
+   **sem** `D2L_HABILITADO` quando o aluno tem reserva anterior no semestre.
 
 **Bloqueios externos:** nenhum aberto. O CSV real de turmas
 (`Curso;Código da Turma;Disciplina / Código EAD`, `;`, UTF-8) é quem diz **quais

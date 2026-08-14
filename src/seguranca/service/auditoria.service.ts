@@ -37,6 +37,11 @@ export type EventoSeguranca =
   // dia a prova de alguem aparecer no cadastro errado, e aqui que se descobre
   // quem mesclou o que.
   | 'VINCULOS_MESCLADOS'
+  // Um periodo de agendamento deixou de existir. Auditavel porque a linha
+  // apagada e o que define QUAL semestre o portal do aluno enxerga: apagar o
+  // mais recente entrega o portal ao anterior, e a mudanca nao aparece em
+  // lugar nenhum alem daqui.
+  | 'PERIODO_REMOVIDO'
   | 'D2L_AUTORIZACAO_OK'
   | 'D2L_AUTORIZACAO_FALHOU'
   | 'D2L_TOKEN_RENOVADO'

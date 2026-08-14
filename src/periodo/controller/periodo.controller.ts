@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
@@ -17,12 +18,14 @@ import {
   ApiParam,
   ApiTags,
 } from '@nestjs/swagger';
-import { SomenteAdmin } from '../../auth/roles.decorator';
+import { AdminLogado, SomenteAdmin } from '../../auth/roles.decorator';
+import type { AdminJwtPayload } from '../../auth/jwt/jwt.types';
 import { TAGS } from '../../config/swagger';
 import {
   AtualizarPeriodoDto,
   CriarPeriodoDto,
   PeriodoAdminDto,
+  RemocaoPeriodoDto,
 } from '../dto/periodo.dto';
 import { PeriodoService } from '../service/periodo.service';
 
@@ -99,5 +102,35 @@ export class PeriodoController {
     @Body() dto: AtualizarPeriodoDto,
   ) {
     return this.periodoService.atualizar(id, dto);
+  }
+
+  @Delete(':id')
+  @ApiOperation({
+    summary: 'Remove um periodo que ainda nao tem agendamento nenhum',
+    description:
+      'Serve para desfazer cadastro errado, e para o caso em que o semestre ' +
+      'seguinte foi criado cedo demais: vigente = **o cadastrado mais ' +
+      'recentemente**, entao a linha nova ROUBA o vigente do periodo em curso, ' +
+      'e nao ha como marcar outro no lugar.\n\n' +
+      '**Apagar o vigente entrega o portal ao periodo anterior** — em geral com ' +
+      'o prazo ja vencido. Quem assumiu volta em `vigenteAgora`; confira antes ' +
+      'de sair da tela.\n\n' +
+      'Periodo letivo com agendamento (**contando os cancelados**) e recusado ' +
+      'com 409: a linha some, as provas nao — elas ficariam sem a janela que as ' +
+      'identifica e sumiriam do portal do aluno. Para encerrar o prazo sem ' +
+      'perder o historico, use o PATCH.',
+  })
+  @ApiParam({ name: 'id', type: Number, example: 80 })
+  @ApiOkResponse({ type: RemocaoPeriodoDto })
+  @ApiNotFoundResponse({ description: 'Periodo nao encontrado' })
+  @ApiConflictResponse({
+    description:
+      'O periodo letivo ja tem agendamentos — encerre pelo PATCH em vez de apagar',
+  })
+  remover(
+    @Param('id', ParseIntPipe) id: number,
+    @AdminLogado() admin: AdminJwtPayload,
+  ) {
+    return this.periodoService.remover(id, admin.email);
   }
 }

@@ -128,6 +128,18 @@ export class FaixaDisponivelDto implements FaixaDisponivel {
       'Horario lotado continua na lista com `false`, para nao sumir sem explicacao.',
   })
   temVaga!: boolean;
+
+  @ApiProperty({
+    example: false,
+    description:
+      'A MESMA PESSOA ja tem prova neste horario, pelo **outro curso** dela. ' +
+      'Ha vaga, mas ela nao pode ocupar: sao duas provas diferentes e nao da ' +
+      'para fazer as duas ao mesmo tempo — a confirmacao devolveria 409. ' +
+      'Separado de `temVaga` de proposito: dizer "lotado" para um horario vazio ' +
+      'seria mentira. Sempre `false` para quem tem um vinculo so, que e o caso ' +
+      'de 99,97% dos alunos.',
+  })
+  conflitaComOutraProva!: boolean;
 }
 
 export class AgendamentoConfirmadoDto implements AgendamentoConfirmado {

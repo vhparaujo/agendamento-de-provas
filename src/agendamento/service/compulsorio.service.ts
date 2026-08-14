@@ -24,8 +24,9 @@ import { AUTOR_ADMIN, descreverOferta, registrarHistorico } from './historico';
 import {
   CONFIRMADO,
   escolherOfertaComLock,
+  exigirUmaProvaPorFaixa,
   OPCOES_DA_TRANSACAO,
-  travarVinculo,
+  travarAluno,
 } from './lock-de-vagas';
 
 /**
@@ -609,6 +610,18 @@ export class CompulsorioService {
     /** Ocupacao virtual da simulacao: sem ela, todos cairiam na mesma sala. */
     const ocupacaoSimulada = simulacao ? await this.ocupacaoAtual() : null;
 
+    /**
+     * Em que faixas cada RA ja tem prova — o mesmo que
+     * `exigirUmaProvaPorFaixa` confere no banco, aqui em memoria.
+     *
+     * So a simulacao precisa disto: na execucao real quem responde e a consulta
+     * sob lock. E preciso ser por MATRICULA, e nao por vinculo, porque a regra
+     * e sobre a pessoa — e a pessoa e justamente quem tem dois vinculos.
+     */
+    const faixasPorMatricula = ocupacaoSimulada
+      ? await this.faixasJaOcupadas(periodoLetivoId)
+      : null;
+
     let alocados = 0;
 
     for (const candidato of candidatos) {
@@ -624,9 +637,15 @@ export class CompulsorioService {
         continue;
       }
 
-      const coube: boolean | 'JA_AGENDOU' = ocupacaoSimulada
-        ? ocuparVagaSimulada(faixas, candidato.modalidadeId, ocupacaoSimulada)
-        : await this.alocarDeVerdade(candidato, faixas, periodoLetivoId);
+      const coube: boolean | 'JA_AGENDOU' =
+        ocupacaoSimulada && faixasPorMatricula
+          ? ocuparVagaSimulada(
+              faixas,
+              candidato.modalidadeId,
+              ocupacaoSimulada,
+              porMatricula(faixasPorMatricula, candidato.matricula),
+            )
+          : await this.alocarDeVerdade(candidato, faixas, periodoLetivoId);
 
       if (coube === 'JA_AGENDOU') {
         // Agendou pelo portal entre a montagem da lista e agora. Nao e excecao
@@ -672,7 +691,7 @@ export class CompulsorioService {
     for (const faixa of faixas) {
       try {
         const ja = await this.prisma.$transaction(async (tx) => {
-          await travarVinculo(tx, candidato.vinculoId);
+          await travarAluno(tx, candidato.matricula);
 
           // Reconferido DENTRO da transacao: entre a montagem da lista e agora,
           // o proprio aluno pode ter agendado pelo portal. Sem isto ele sairia
@@ -687,6 +706,16 @@ export class CompulsorioService {
           });
 
           if (existente) return true;
+
+          // Lanca `ConflictException` quando a MESMA PESSOA ja tem prova nesta
+          // faixa pelo outro curso — e o `catch` la embaixo trata igual a faixa
+          // cheia: tenta a proxima data. E assim que o lote acomoda os dois
+          // vinculos em horarios diferentes, sem tratamento especial.
+          await exigirUmaProvaPorFaixa(tx, {
+            matricula: candidato.matricula,
+            faixaId: faixa.id,
+            periodoLetivoId,
+          });
 
           const oferta = await escolherOfertaComLock(
             tx,
@@ -796,6 +825,32 @@ export class CompulsorioService {
     return porPolo;
   }
 
+  /**
+   * As faixas em que cada matricula ja tem prova confirmada — o ponto de partida
+   * da regra "uma prova por pessoa em cada horario" dentro da simulacao.
+   *
+   * Uma consulta so, e nao uma por candidato: sao milhares de alunos, e o lote
+   * ja gasta ~25 min em rede.
+   */
+  private async faixasJaOcupadas(
+    periodoLetivoId: string,
+  ): Promise<Map<string, Set<number>>> {
+    const agendamentos = await this.prisma.agendamento.findMany({
+      where: { periodoLetivoId, ...CONFIRMADO },
+      select: { matricula: true, salaFaixa: { select: { faixaId: true } } },
+    });
+
+    const porMatricula = new Map<string, Set<number>>();
+
+    for (const a of agendamentos) {
+      const faixas = porMatricula.get(a.matricula) ?? new Set<number>();
+      faixas.add(a.salaFaixa.faixaId);
+      porMatricula.set(a.matricula, faixas);
+    }
+
+    return porMatricula;
+  }
+
   /** Vagas e ocupacao atuais de cada oferta — o ponto de partida da simulacao. */
   private async ocupacaoAtual() {
     const ofertas = await this.prisma.salaFaixa.findMany({
@@ -846,4 +901,26 @@ export class CompulsorioService {
       })),
     });
   }
+}
+
+/**
+ * O conjunto de faixas daquela matricula, criando-o na primeira vez.
+ *
+ * Tem que ser o MESMO objeto entre as duas passagens do mesmo RA — e ele que
+ * `ocuparVagaSimulada` muta ao escolher a faixa, e e assim que o segundo vinculo
+ * enxerga o horario que o primeiro acabou de tomar. Devolver uma copia faria os
+ * dois caírem no mesmo horario, e a simulacao mentiria sobre o proprio lote.
+ */
+function porMatricula(
+  mapa: Map<string, Set<number>>,
+  matricula: string,
+): Set<number> {
+  const existente = mapa.get(matricula);
+
+  if (existente) return existente;
+
+  const novo = new Set<number>();
+  mapa.set(matricula, novo);
+
+  return novo;
 }

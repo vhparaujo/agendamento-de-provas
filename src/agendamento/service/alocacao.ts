@@ -93,15 +93,28 @@ export interface VagaSimulada {
  * justamente no caso em que nao cabe — que e a unica pergunta que ela existe
  * para responder.
  *
+ * **`faixasDaPessoa` e mutado pelo mesmo motivo, e responde a outra regra:** uma
+ * pessoa nao pode ter duas provas na mesma faixa, nem que sejam de dois cursos
+ * (`exigirUmaProvaPorFaixa`). O conjunto entra com as faixas que aquele RA JA
+ * tem no banco e sai com a que acabou de ser escolhida; sem ele, os dois
+ * vinculos do mesmo aluno cairiam no mesmo horario aqui e em horarios
+ * diferentes na execucao real — e a simulacao deixaria de prever o lote, que e
+ * a unica coisa que ela precisa fazer.
+ *
  * Nao ha equivalente `ComLock` aqui porque nada disto vai para o banco: a
  * execucao real usa `escolherOfertaComLock`, sob transacao.
  */
 export function ocuparVagaSimulada(
-  faixas: { ofertas: { id: number; modalidadeId: number }[] }[],
+  faixas: { id: number; ofertas: { id: number; modalidadeId: number }[] }[],
   modalidadeId: number,
   ocupacao: Map<number, VagaSimulada>,
+  faixasDaPessoa: Set<number>,
 ): boolean {
   for (const faixa of faixas) {
+    // A pessoa ja tem prova neste horario pelo outro curso: pula para a proxima
+    // data, igual ao que a execucao real faz ao pegar o ConflictException.
+    if (faixasDaPessoa.has(faixa.id)) continue;
+
     const daModalidade = faixa.ofertas
       .filter((o) => o.modalidadeId === modalidadeId)
       // O objeto VIVO do mapa, nunca uma copia — ver o paragrafo acima.
@@ -113,6 +126,7 @@ export function ocuparVagaSimulada(
 
     if (escolhida) {
       escolhida.ocupadas++;
+      faixasDaPessoa.add(faixa.id);
       return true;
     }
   }

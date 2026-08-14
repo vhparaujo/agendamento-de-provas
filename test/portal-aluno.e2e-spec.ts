@@ -550,16 +550,41 @@ describe('Portal do aluno: listar e agendar (e2e)', () => {
       expect(res.body.message).toMatch(/mais de um curso/i);
     });
 
-    it('agenda um curso e depois o outro, cada um com seu registro', async () => {
+    /**
+     * ⚠️ Ate 14/08/2026 este teste afirmava o CONTRARIO: os dois cursos no
+     * MESMO horario, e 201 nos dois. O cliente corrigiu a regra — sao duas
+     * provas diferentes e ninguem faz as duas ao mesmo tempo. Na pratica o
+     * aluno ocupava duas cadeiras, aparecia duas vezes na lista de presenca e
+     * so fazia uma das provas.
+     */
+    it('agenda um curso e depois o outro, cada um em SEU horario', async () => {
       const faixaA = await criarFaixa('2026-12-21', [
         { salaId: (await criarSala('P-E', 5, poloId)).id, vagas: 5, ordem: 1 },
       ]);
+      const faixaB = await criarFaixa('2026-12-22', [
+        { salaId: (await criarSala('P-F', 5, poloId)).id, vagas: 5, ordem: 1 },
+      ]);
 
-      for (const alunoId of [pedagogia, psicologia]) {
-        await comoAluno(api().post('/api/portal/agendamentos'), token)
-          .send({ faixaId: faixaA, alunoId })
-          .expect(201);
-      }
+      await comoAluno(api().post('/api/portal/agendamentos'), token)
+        .send({ faixaId: faixaA, alunoId: pedagogia })
+        .expect(201);
+
+      // Mesma pessoa, outro curso, MESMO horario: recusado mesmo com 4 vagas
+      // livres na sala. A recusa e sobre o aluno, nao sobre a sala.
+      const conflito = await comoAluno(
+        api().post('/api/portal/agendamentos'),
+        token,
+      )
+        .send({ faixaId: faixaA, alunoId: psicologia })
+        .expect(409);
+
+      expect(conflito.body.message).toMatch(
+        /ja tem prova marcada neste horario/i,
+      );
+
+      await comoAluno(api().post('/api/portal/agendamentos'), token)
+        .send({ faixaId: faixaB, alunoId: psicologia })
+        .expect(201);
 
       const res = await comoAluno(
         api().get('/api/portal/agendamentos'),
@@ -571,6 +596,30 @@ describe('Portal do aluno: listar e agendar (e2e)', () => {
         'PEDAGOGIA',
         'PSICOLOGIA',
       ]);
+    });
+
+    it('marca o horario ja tomado pelo outro curso em GET /portal/faixas', async () => {
+      // A tela precisa dizer POR QUE aquele horario nao serve, em vez de deixar
+      // o aluno descobrir no clique de confirmar.
+      const res = await comoAluno(api().get('/api/portal/faixas'), token)
+        .query({ alunoId: psicologia })
+        .expect(200);
+
+      const daPedagogia = res.body.find(
+        (f: { conflitaComOutraProva: boolean }) => f.conflitaComOutraProva,
+      );
+
+      expect(daPedagogia).toBeDefined();
+      // Tem vaga de sobra — o que falta e o aluno, nao a cadeira.
+      expect(daPedagogia.temVaga).toBe(true);
+
+      // O horario da prova DELE mesmo nao conta como conflito: para este
+      // vinculo, ele nao e impedimento nenhum.
+      const doPsicologia = res.body.filter(
+        (f: { conflitaComOutraProva: boolean }) => f.conflitaComOutraProva,
+      );
+
+      expect(doPsicologia).toHaveLength(1);
     });
   });
 

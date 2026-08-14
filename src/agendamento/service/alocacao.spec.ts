@@ -3,6 +3,7 @@ import {
   ocuparVagaSimulada,
   ordenarPorProximidade,
   totalDisponivel,
+  type VagaSimulada,
 } from './alocacao';
 
 const oferta = (
@@ -158,6 +159,19 @@ describe('ocuparVagaSimulada', () => {
   const EAD = 1;
   const PRESENCIAL = 2;
 
+  /**
+   * Uma PESSOA DIFERENTE a cada chamada — o caso normal, e o que os testes de
+   * enchimento simulam. Quem quiser repetir o mesmo RA passa o mesmo conjunto,
+   * que e o que carrega "esta pessoa ja tem prova nesta faixa" de uma chamada
+   * para a outra (ver o bloco "uma prova por pessoa em cada faixa").
+   */
+  const ocupar = (
+    faixas: Parameters<typeof ocuparVagaSimulada>[0],
+    modalidadeId: number,
+    ocupacao: Map<number, VagaSimulada>,
+    pessoa: Set<number> = new Set(),
+  ) => ocuparVagaSimulada(faixas, modalidadeId, ocupacao, pessoa);
+
   /** Faixas ja ordenadas, como `ordenarPorProximidade` as devolve. */
   const cenario = () => {
     const ocupacao = new Map([
@@ -169,13 +183,14 @@ describe('ocuparVagaSimulada', () => {
     const faixas = [
       // dia mais proximo: duas salas EaD
       {
+        id: 1,
         ofertas: [
           { id: 10, modalidadeId: EAD },
           { id: 11, modalidadeId: EAD },
         ],
       },
       // dia seguinte: uma sala EaD
-      { ofertas: [{ id: 20, modalidadeId: EAD }] },
+      { id: 2, ofertas: [{ id: 20, modalidadeId: EAD }] },
     ];
 
     return { ocupacao, faixas };
@@ -184,8 +199,8 @@ describe('ocuparVagaSimulada', () => {
   it('enche a sala de menor ordem antes de abrir a proxima', () => {
     const { ocupacao, faixas } = cenario();
 
-    expect(ocuparVagaSimulada(faixas, EAD, ocupacao)).toBe(true);
-    expect(ocuparVagaSimulada(faixas, EAD, ocupacao)).toBe(true);
+    expect(ocupar(faixas, EAD, ocupacao)).toBe(true);
+    expect(ocupar(faixas, EAD, ocupacao)).toBe(true);
 
     expect(ocupacao.get(10)?.ocupadas).toBe(2);
     expect(ocupacao.get(11)?.ocupadas).toBe(0);
@@ -196,7 +211,7 @@ describe('ocuparVagaSimulada', () => {
     // sala de 2 lugares aceitaria os quatro alunos.
     const { ocupacao, faixas } = cenario();
 
-    for (let i = 0; i < 4; i++) ocuparVagaSimulada(faixas, EAD, ocupacao);
+    for (let i = 0; i < 4; i++) ocupar(faixas, EAD, ocupacao);
 
     expect(ocupacao.get(10)?.ocupadas).toBe(2);
     expect(ocupacao.get(11)?.ocupadas).toBe(1);
@@ -207,11 +222,11 @@ describe('ocuparVagaSimulada', () => {
     const { ocupacao, faixas } = cenario();
 
     // 3 vagas no primeiro dia (2 + 1); a quarta cai no dia seguinte.
-    for (let i = 0; i < 3; i++) ocuparVagaSimulada(faixas, EAD, ocupacao);
+    for (let i = 0; i < 3; i++) ocupar(faixas, EAD, ocupacao);
 
     expect(ocupacao.get(20)?.ocupadas).toBe(0);
 
-    ocuparVagaSimulada(faixas, EAD, ocupacao);
+    ocupar(faixas, EAD, ocupacao);
 
     expect(ocupacao.get(20)?.ocupadas).toBe(1);
   });
@@ -219,25 +234,25 @@ describe('ocuparVagaSimulada', () => {
   it('devolve false quando tudo lotou — e o SEM_VAGA do relatorio', () => {
     const { ocupacao, faixas } = cenario();
 
-    for (let i = 0; i < 4; i++) ocuparVagaSimulada(faixas, EAD, ocupacao);
+    for (let i = 0; i < 4; i++) ocupar(faixas, EAD, ocupacao);
 
-    expect(ocuparVagaSimulada(faixas, EAD, ocupacao)).toBe(false);
+    expect(ocupar(faixas, EAD, ocupacao)).toBe(false);
   });
 
   it('nao poe o aluno numa sala de OUTRA modalidade', () => {
     // A prova tem outra duracao. Uma sala Presencial vazia nao serve para EaD.
     const ocupacao = new Map([[30, { vagas: 50, ocupadas: 0, ordem: 1 }]]);
-    const faixas = [{ ofertas: [{ id: 30, modalidadeId: PRESENCIAL }] }];
+    const faixas = [{ id: 1, ofertas: [{ id: 30, modalidadeId: PRESENCIAL }] }];
 
-    expect(ocuparVagaSimulada(faixas, EAD, ocupacao)).toBe(false);
+    expect(ocupar(faixas, EAD, ocupacao)).toBe(false);
     expect(ocupacao.get(30)?.ocupadas).toBe(0);
   });
 
   it('parte da ocupacao REAL: nao reoferece vaga de quem ja agendou', () => {
     const ocupacao = new Map([[10, { vagas: 2, ocupadas: 2, ordem: 1 }]]);
-    const faixas = [{ ofertas: [{ id: 10, modalidadeId: EAD }] }];
+    const faixas = [{ id: 1, ofertas: [{ id: 10, modalidadeId: EAD }] }];
 
-    expect(ocuparVagaSimulada(faixas, EAD, ocupacao)).toBe(false);
+    expect(ocupar(faixas, EAD, ocupacao)).toBe(false);
   });
 
   it('ignora oferta que sumiu do mapa em vez de quebrar', () => {
@@ -245,6 +260,7 @@ describe('ocuparVagaSimulada', () => {
     const ocupacao = new Map([[11, { vagas: 1, ocupadas: 0, ordem: 2 }]]);
     const faixas = [
       {
+        id: 1,
         ofertas: [
           { id: 99, modalidadeId: EAD },
           { id: 11, modalidadeId: EAD },
@@ -252,12 +268,72 @@ describe('ocuparVagaSimulada', () => {
       },
     ];
 
-    expect(ocuparVagaSimulada(faixas, EAD, ocupacao)).toBe(true);
+    expect(ocupar(faixas, EAD, ocupacao)).toBe(true);
     expect(ocupacao.get(11)?.ocupadas).toBe(1);
   });
 
   it('aceita polo sem faixa nenhuma', () => {
-    expect(ocuparVagaSimulada([], EAD, new Map())).toBe(false);
+    expect(ocupar([], EAD, new Map())).toBe(false);
+  });
+
+  /**
+   * ==========================================================================
+   * UMA PROVA POR PESSOA EM CADA FAIXA — a regra do RA com dois cursos
+   * ==========================================================================
+   * A execucao real pega o `ConflictException` de `exigirUmaProvaPorFaixa` e
+   * tenta a proxima data. A simulacao precisa fazer EXATAMENTE o mesmo, senao
+   * ela prometeria um resultado que o lote nao entrega — e prever o lote e a
+   * unica coisa que ela existe para fazer.
+   */
+  describe('uma prova por pessoa em cada faixa', () => {
+    it('poe o segundo vinculo do mesmo RA no DIA SEGUINTE, com vaga sobrando hoje', () => {
+      const { ocupacao, faixas } = cenario();
+
+      // O mesmo conjunto nas duas chamadas: e a MESMA pessoa, dois cursos.
+      const pessoa = new Set<number>();
+
+      expect(ocupar(faixas, EAD, ocupacao, pessoa)).toBe(true);
+      expect(ocupar(faixas, EAD, ocupacao, pessoa)).toBe(true);
+
+      // A faixa 1 ainda tinha 2 lugares livres, e mesmo assim a segunda prova
+      // foi para a faixa 2. Sem a regra, as duas cairiam na sala 10.
+      expect(ocupacao.get(10)?.ocupadas).toBe(1);
+      expect(ocupacao.get(11)?.ocupadas).toBe(0);
+      expect(ocupacao.get(20)?.ocupadas).toBe(1);
+
+      expect([...pessoa]).toEqual([1, 2]);
+    });
+
+    it('respeita a prova que a pessoa JA tem no banco', () => {
+      const { ocupacao, faixas } = cenario();
+
+      // Ela ja agendou a faixa 1 pelo portal, antes do lote.
+      expect(ocupar(faixas, EAD, ocupacao, new Set([1]))).toBe(true);
+
+      expect(ocupacao.get(10)?.ocupadas).toBe(0);
+      expect(ocupacao.get(20)?.ocupadas).toBe(1);
+    });
+
+    it('devolve false quando so sobram faixas em que a pessoa ja tem prova', () => {
+      const { ocupacao, faixas } = cenario();
+
+      // Sobra vaga em todas, mas as duas faixas ja sao dela: nao ha terceira
+      // data, e o lote reporta SEM_VAGA. E a informacao certa — falta DATA.
+      expect(ocupar(faixas, EAD, ocupacao, new Set([1, 2]))).toBe(false);
+
+      expect(ocupacao.get(10)?.ocupadas).toBe(0);
+      expect(ocupacao.get(20)?.ocupadas).toBe(0);
+    });
+
+    it('nao atrapalha duas PESSOAS diferentes na mesma faixa', () => {
+      const { ocupacao, faixas } = cenario();
+
+      expect(ocupar(faixas, EAD, ocupacao, new Set())).toBe(true);
+      expect(ocupar(faixas, EAD, ocupacao, new Set())).toBe(true);
+
+      // Duas pessoas, mesma sala. A regra e sobre o RA, nao sobre a sala.
+      expect(ocupacao.get(10)?.ocupadas).toBe(2);
+    });
   });
 });
 

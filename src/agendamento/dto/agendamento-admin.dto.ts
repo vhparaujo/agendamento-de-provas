@@ -1,9 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsInt, IsOptional, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, Min } from 'class-validator';
 import type {
   AgendamentoAdmin,
+  AgendamentoPeloAdmin,
   EventoDoHistorico,
   LinhaDoResumo,
+  OrigemDasDisciplinas,
   PaginaDeAgendamentos,
 } from '../service/agendamento-admin.service';
 
@@ -159,6 +161,91 @@ export class RemanejarDto {
   @IsInt()
   @Min(1)
   faixaId?: number;
+}
+
+/**
+ * O agendamento feito PELO ADMIN, em vez de pelo aluno.
+ *
+ * Os dois destinos sao os mesmos do remanejo — e de proposito: "o admin escolhe
+ * a sala ou deixa a alocacao escolher" e uma pergunta so, e duas formas de
+ * responde-la em dois formatos diferentes viraria duas telas que fazem a mesma
+ * coisa de jeitos incompativeis.
+ */
+export class AgendarPeloAdminDto {
+  @ApiProperty({
+    example: 3120,
+    description:
+      'O VINCULO (aluno + curso), de `GET /alunos`. Nao e a matricula: um RA ' +
+      'com dois cursos faz duas provas, e o id diz de qual delas se trata.',
+  })
+  @IsInt()
+  @Min(1)
+  alunoId!: number;
+
+  @ApiPropertyOptional({
+    example: 55,
+    description:
+      'Sala EXATA (id da SalaFaixa, de `GET /faixas/:id`). Use quando o admin ' +
+      'escolhe a sala. Exclusivo com `faixaId`.',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  salaFaixaId?: number;
+
+  @ApiPropertyOptional({
+    example: 14,
+    description:
+      'O horario, deixando a alocacao sequencial escolher a sala (enche a de ' +
+      'menor `ordem` ate lotar). Exclusivo com `salaFaixaId`.',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  faixaId?: number;
+
+  /**
+   * O `ativo` do vinculo diz "pode agendar" — e por padrao esta rota o respeita,
+   * como o portal. Este campo e a decisao explicita de agendar assim mesmo.
+   */
+  @ApiPropertyOptional({
+    example: false,
+    default: false,
+    description:
+      'Agenda mesmo com a situacao do curso bloqueando (Trancado, Cancelado…). ' +
+      'Sem ele a rota recusa com 409. A decisao fica registrada na auditoria e ' +
+      'volta em `avisos`.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  ignorarStatusCurso?: boolean;
+}
+
+export class AgendamentoPeloAdminDto implements AgendamentoPeloAdmin {
+  @ApiProperty({ type: AgendamentoAdminDto })
+  agendamento!: AgendamentoAdminDto;
+
+  @ApiProperty({
+    example: 'BRIGHTSPACE',
+    enum: ['BRIGHTSPACE', 'RESERVA_ANTERIOR'],
+    description:
+      'De onde saiu a lista de disciplinas que esta prova cobre. ' +
+      '`BRIGHTSPACE` = lidas agora na Valence. `RESERVA_ANTERIOR` = copiadas da ' +
+      'reserva anterior do aluno neste semestre, porque a integracao nao ' +
+      'respondeu (o motivo vem em `avisos`).',
+  })
+  origemDasDisciplinas!: OrigemDasDisciplinas;
+
+  @ApiProperty({
+    type: [String],
+    example: [
+      'A conta deste aluno esta DESATIVADA no Brightspace: do jeito que esta, ele nao conseguiria abrir a prova.',
+    ],
+    description:
+      'O que a secretaria precisa saber, sem que nada disso tenha impedido o ' +
+      'agendamento. Vazio quando nao ha ressalva.',
+  })
+  avisos!: string[];
 }
 
 export class MensagemDto {

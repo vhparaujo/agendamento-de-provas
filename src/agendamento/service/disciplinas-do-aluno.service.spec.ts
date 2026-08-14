@@ -60,6 +60,8 @@ describe('DisciplinasDoAlunoService', () => {
     ofertas?: { orgUnitId: string; codigo: string; titulo: string }[];
     cruzamento: DisciplinaAgendavel[];
     periodoLetivoId?: string | undefined;
+    /** A Valence recusa em vez de responder — token invalido, rede, 502. */
+    erroDaValence?: Error;
   }) => {
     const filtrarAgendaveis = jest
       .fn()
@@ -70,7 +72,9 @@ describe('DisciplinasDoAlunoService', () => {
       filtroAtivo: () => true,
     } as unknown as TurmaService;
 
-    const ofertasDoPeriodo = jest.fn().mockResolvedValue(opcoes.ofertas ?? []);
+    const ofertasDoPeriodo = opcoes.erroDaValence
+      ? jest.fn().mockRejectedValue(opcoes.erroDaValence)
+      : jest.fn().mockResolvedValue(opcoes.ofertas ?? []);
 
     const enrollments = {
       habilitado: () => opcoes.habilitado,
@@ -157,6 +161,69 @@ describe('DisciplinasDoAlunoService', () => {
       });
 
       expect(filtrarAgendaveis).toHaveBeenCalledWith([]);
+    });
+  });
+
+  /**
+   * `habilitado()` so olha o .env — ele nao sabe se ha refresh token gravado, se
+   * ele ainda vale, nem se o Brightspace esta de pe. Antes deste fallback, os
+   * tres viravam 503 na cara do aluno e o portal inteiro parava.
+   */
+  describe('com a Valence ligada mas FORA', () => {
+    const FORA = new Error(
+      'O refresh token gravado nao e mais valido (rotacionado, revogado ou expirado).',
+    );
+
+    it('cai para a turma do launch em vez de derrubar o agendamento', async () => {
+      const { service, filtrarAgendaveis } = montar({
+        habilitado: true,
+        erroDaValence: FORA,
+        cruzamento: [cruzada(HISTORIA)],
+      });
+
+      const r = await service.cruzar(aluno(['EDUCACAO FISICA']));
+
+      expect(filtrarAgendaveis).toHaveBeenCalledWith([HISTORIA]);
+      expect(r.agendaveis).toHaveLength(1);
+      expect(r.motivo).toBeUndefined();
+    });
+
+    /**
+     * Sem turma clicada nao ha de onde tirar a lista. O que NAO pode acontecer e
+     * devolver "nenhuma disciplina sua aparece no periodo letivo vigente": isso
+     * manda o aluno a secretaria, e a secretaria procurar defeito no CSV de
+     * turmas, por um problema que e da integracao.
+     */
+    it('sem turma clicada, o motivo diz que foi o Brightspace', async () => {
+      const { service } = montar({
+        habilitado: true,
+        erroDaValence: FORA,
+        cruzamento: [],
+      });
+
+      const r = await service.cruzar({
+        ...aluno(['EDUCACAO FISICA']),
+        contexto: undefined,
+      });
+
+      expect(r.agendaveis).toEqual([]);
+      expect(r.motivo).toMatch(/Brightspace/);
+      expect(r.motivo).not.toMatch(/periodo letivo vigente/);
+    });
+
+    /**
+     * O compulsorio nao tem turma clicada: o fallback seria lista vazia, e o
+     * lote registraria SEM_DISCIPLINA_AGENDAVEL — que manda conferir o CSV —
+     * quando a causa foi a rede. O erro sobe para virar FALHA_NA_INTEGRACAO.
+     */
+    it('o compulsorio NAO cai para o launch: deixa o erro subir', async () => {
+      const { service } = montar({
+        habilitado: true,
+        erroDaValence: FORA,
+        cruzamento: [],
+      });
+
+      await expect(service.cruzarPorUserId('76629')).rejects.toThrow(FORA);
     });
   });
 

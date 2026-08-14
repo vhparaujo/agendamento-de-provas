@@ -7,7 +7,11 @@ import {
   IsString,
   MaxLength,
 } from 'class-validator';
-import type { PeriodoAdmin } from '../service/periodo.service';
+import type {
+  PeriodoAdmin,
+  RemocaoPeriodo,
+  VigenteDepoisDaRemocao,
+} from '../service/periodo.service';
 
 const AJUDA_DATA =
   'ISO 8601 COM fuso (ex: 2026-08-18T23:59:00-03:00). Sem o fuso, a data e lida ' +
@@ -136,4 +140,30 @@ export class PeriodoAdminDto implements PeriodoAdmin {
 
   @ApiProperty({ type: String, format: 'date-time' })
   criadoEm!: Date;
+}
+
+export class VigenteDepoisDaRemocaoDto implements VigenteDepoisDaRemocao {
+  @ApiProperty({ example: 79 })
+  id!: number;
+
+  @ApiProperty({ example: '142286' })
+  periodoLetivoId!: string;
+
+  @ApiProperty({ nullable: true, example: '2026/2' })
+  descricao!: string | null;
+}
+
+export class RemocaoPeriodoDto implements RemocaoPeriodo {
+  @ApiProperty({ example: 'Periodo 80 (2026/1) removido' })
+  mensagem!: string;
+
+  @ApiProperty({
+    type: VigenteDepoisDaRemocaoDto,
+    nullable: true,
+    description:
+      'Quem passou a ser o vigente — o unico periodo que o portal do aluno ' +
+      'consulta. `null` quando nao sobrou nenhum, e ai o portal responde que o ' +
+      'agendamento nao foi configurado.',
+  })
+  vigenteAgora!: VigenteDepoisDaRemocaoDto | null;
 }

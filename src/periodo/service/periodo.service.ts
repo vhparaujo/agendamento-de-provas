@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { StatusAgendamento } from '../../generated/prisma/client';
+import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 
 export interface SituacaoPeriodo {
   aberto: boolean;
@@ -39,6 +40,19 @@ export interface PeriodoAdmin {
   criadoEm: Date;
 }
 
+/** Quem passou a ser o vigente depois de a linha sair do banco. */
+export interface VigenteDepoisDaRemocao {
+  id: number;
+  periodoLetivoId: string;
+  descricao: string | null;
+}
+
+export interface RemocaoPeriodo {
+  mensagem: string;
+  /** `null` quando nao sobrou periodo nenhum — o portal responde "fechado". */
+  vigenteAgora: VigenteDepoisDaRemocao | null;
+}
+
 /**
  * ============================================================================
  * A JANELA EM QUE SE PODE AGENDAR
@@ -56,7 +70,10 @@ export interface PeriodoAdmin {
  */
 @Injectable()
 export class PeriodoService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditoria: AuditoriaService,
+  ) {}
 
   /**
    * O periodo vigente e o cadastrado mais recentemente. Nao ha "o periodo ativo"
@@ -274,6 +291,81 @@ export class PeriodoService {
     });
 
     return this.buscar(id);
+  }
+
+  /**
+   * Apaga um periodo que nunca foi usado — o mesmo criterio de `DELETE /polos`.
+   *
+   * POR QUE ELE EXISTE: vigente = o cadastrado mais recentemente, e nao ha como
+   * marcar outro no lugar. Cadastrar o semestre seguinte com antecedencia, ou
+   * criar uma linha errada, ROUBA o vigente do periodo em curso — e a unica
+   * saida era mexer no banco a mao. Corrigir cadastro errado e o mesmo caso de
+   * uso do `DELETE /polos/:id`.
+   *
+   * POR QUE E TAO TRAVADO: apagar a linha nao apaga agendamento nenhum
+   * (`Agendamento.periodoLetivoId` e string, sem FK). As provas continuariam de
+   * pe, orfas de janela: o portal deixaria de reconhecer aquele semestre, e o
+   * aluno perderia de vista a prova que ja marcou — o oposto da regra 7, em que
+   * fechar o prazo tranca a escolha e nunca a consulta.
+   */
+  async remover(id: number, porAdmin: string): Promise<RemocaoPeriodo> {
+    return this.prisma.$transaction(async (tx) => {
+      const periodo = await tx.periodoAgendamento.findUnique({ where: { id } });
+
+      if (!periodo) throw new NotFoundException(`Periodo ${id} nao encontrado`);
+
+      /**
+       * Aqui a contagem inclui CANCELADO, ao contrario do `totalAgendamentos`
+       * da listagem (so CONFIRMADO). Sao perguntas diferentes: a tela mostra
+       * quantas vagas estao tomadas, e cancelado devolveu a vaga; esta responde
+       * "alguem ja usou este semestre?", e cancelamento e justamente o registro
+       * que precisa continuar explicavel — quem aparecer no dia sem estar na
+       * lista se explica por ele.
+       *
+       * A conta e por `periodoLetivoId`, entao duas linhas do mesmo semestre
+       * letivo travam uma a outra. E conservador de proposito: com o mesmo id
+       * de periodo letivo nos dois, nao ha como dizer a qual linha a prova
+       * pertence.
+       */
+      const agendamentos = await tx.agendamento.count({
+        where: { periodoLetivoId: periodo.periodoLetivoId },
+      });
+
+      if (agendamentos > 0) {
+        throw new ConflictException(
+          `O periodo letivo ${periodo.periodoLetivoId} ja tem ${agendamentos} ` +
+            'agendamento(s) (incluindo cancelados) e nao pode ser apagado — as ' +
+            'provas ficariam sem a janela que as identifica, e sumiriam do portal ' +
+            'do aluno. Para encerrar o prazo, use PATCH com dataFechamento no ' +
+            'passado ou aberto=false; a linha continua no historico.',
+        );
+      }
+
+      await tx.periodoAgendamento.delete({ where: { id } });
+
+      // Lido DEPOIS do delete, na mesma transacao: quem chamou precisa saber a
+      // quem o portal do aluno passou a responder. Apagar o mais recente
+      // devolve o portal ao semestre anterior — provavelmente com o prazo ja
+      // vencido —, e essa consequencia nao aparece em lugar nenhum se a
+      // resposta for so "removido".
+      const vigente = await tx.periodoAgendamento.findFirst({
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, periodoLetivoId: true, descricao: true },
+      });
+
+      this.auditoria.registrar('PERIODO_REMOVIDO', {
+        ator: porAdmin,
+        detalhe:
+          `periodo ${id} (letivo ${periodo.periodoLetivoId}` +
+          `${periodo.descricao ? `, "${periodo.descricao}"` : ''}) removido; ` +
+          `vigente agora: ${vigente ? `${vigente.id} (letivo ${vigente.periodoLetivoId})` : 'nenhum'}`,
+      });
+
+      return {
+        mensagem: `Periodo ${id} (${periodo.descricao || periodo.periodoLetivoId}) removido`,
+        vigenteAgora: vigente,
+      };
+    });
   }
 
   async buscar(id: number): Promise<PeriodoAdmin> {

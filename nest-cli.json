@@ -4,6 +4,8 @@
   "sourceRoot": "src",
   "compilerOptions": {
     "deleteOutDir": true,
+    "//assets": "O nest build so copia .ts compilado. Sem esta linha o logo da lista de presenca ficaria fora do dist/ e o PDF sairia sempre sem marca. Ver src/relatorio/service/pdf-lista-presenca.ts.",
+    "assets": ["**/*.png"],
     "plugins": [
       {
         "name": "@nestjs/swagger",

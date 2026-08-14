@@ -550,6 +550,149 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
     });
   });
 
+  /**
+   * ==========================================================================
+   * O RA COM DOIS CURSOS NAO FAZ AS DUAS PROVAS AO MESMO TEMPO
+   * ==========================================================================
+   * Regra do cliente, 14/08/2026. O portal recusa, e o REMANEJO tambem — mover
+   * o aluno para o horario da outra prova dele criaria em silencio exatamente
+   * o estado que a regra existe para evitar. Nao trava a secretaria: basta
+   * mover primeiro a outra prova, e o teste abaixo prova esse caminho.
+   */
+  describe('dois vinculos do mesmo RA no mesmo horario', () => {
+    const RA = `${PREFIXO}DOIS`;
+
+    let pedagogia: number;
+    let psicologia: number;
+    let daPedagogia: number;
+    let daPsicologia: number;
+    let faixaLivre: number;
+
+    beforeAll(async () => {
+      const criarVinculo = async (curso: string) =>
+        prisma.alunoImportado.create({
+          data: {
+            matricula: RA,
+            nome: 'Aluno de Dois Cursos',
+            curso,
+            statusCurso: 'Ativo',
+            ativo: true,
+            modalidadeId: ead.id,
+            poloId,
+          },
+        });
+
+      pedagogia = (await criarVinculo('PEDAGOGIA REMANEJO')).id;
+      psicologia = (await criarVinculo('PSICOLOGIA REMANEJO')).id;
+
+      // Duas faixas com folga, para que a recusa nunca possa ser confundida
+      // com falta de vaga.
+      const sala1 = await criarSala('REM-DOIS-1', 10);
+      const sala2 = await criarSala('REM-DOIS-2', 10);
+
+      const ocupada = await criarFaixa('2026-12-01', poloId, [
+        { salaId: sala1.id, modalidadeId: ead.id, vagas: 10, ordem: 1 },
+      ]);
+      const livre = await criarFaixa('2026-12-02', poloId, [
+        { salaId: sala2.id, modalidadeId: ead.id, vagas: 10, ordem: 1 },
+      ]);
+
+      faixaLivre = livre.faixaId;
+
+      const criarAgendamento = async (alunoId: number, salaFaixaId: number) =>
+        (
+          await prisma.agendamento.create({
+            data: {
+              alunoId,
+              salaFaixaId,
+              matricula: RA,
+              userIdD2L: 'd2l-dois-remanejo',
+              periodoLetivoId: PERIODO_LETIVO,
+              modalidadeId: ead.id,
+              poloId,
+            },
+            select: { id: true },
+          })
+        ).id;
+
+      // Cada curso no seu horario — o estado correto.
+      daPedagogia = await criarAgendamento(pedagogia, ocupada.ofertas[0]);
+      daPsicologia = await criarAgendamento(psicologia, livre.ofertas[0]);
+    });
+
+    it('RECUSA mover para o horario onde a MESMA PESSOA ja tem a outra prova', async () => {
+      const res = await comoAdmin(
+        api().patch(`/api/agendamentos/${daPsicologia}/remanejar`),
+      )
+        // A faixa da prova de PEDAGOGIA, com 9 vagas livres.
+        .send({ faixaId: (await faixaDe(daPedagogia)).faixaId })
+        .expect(409);
+
+      expect(res.body.message).toMatch(/ja tem prova marcada neste horario/i);
+      expect(res.body.message).toMatch(/PEDAGOGIA REMANEJO/);
+    });
+
+    it('nao confunde o agendamento com ELE MESMO ao remanejar de sala', async () => {
+      // Mover dentro da propria faixa: o `exceto` e o que impede a reserva de
+      // conflitar consigo mesma e devolver 409 sem motivo.
+      const outra = await criarSala('REM-DOIS-3', 10);
+
+      await prisma.salaFaixa.create({
+        data: {
+          salaId: outra.id,
+          faixaId: faixaLivre,
+          modalidadeId: ead.id,
+          vagas: 10,
+          ordem: 2,
+        },
+      });
+
+      await comoAdmin(
+        api().patch(`/api/agendamentos/${daPsicologia}/remanejar`),
+      )
+        .send({ faixaId: faixaLivre })
+        .expect(200);
+    });
+
+    it('libera depois que a outra prova sai da frente', async () => {
+      const alvo = (await faixaDe(daPedagogia)).faixaId;
+
+      // A secretaria move primeiro a de PEDAGOGIA para o horario livre...
+      await comoAdmin(api().patch(`/api/agendamentos/${daPedagogia}/remanejar`))
+        .send({ faixaId: faixaLivre })
+        .expect(409);
+
+      // ...e ate isso e recusado, porque PSICOLOGIA esta la. E o par completo:
+      // os dois horarios estao tomados um por cada curso, e a regra segura os
+      // dois lados. Um terceiro horario resolve.
+      const sala = await criarSala('REM-DOIS-4', 10);
+      const terceira = await criarFaixa('2026-12-03', poloId, [
+        { salaId: sala.id, modalidadeId: ead.id, vagas: 10, ordem: 1 },
+      ]);
+
+      await comoAdmin(api().patch(`/api/agendamentos/${daPedagogia}/remanejar`))
+        .send({ faixaId: terceira.faixaId })
+        .expect(200);
+
+      // Agora o horario antigo de PEDAGOGIA esta vazio e aceita PSICOLOGIA.
+      await comoAdmin(
+        api().patch(`/api/agendamentos/${daPsicologia}/remanejar`),
+      )
+        .send({ faixaId: alvo })
+        .expect(200);
+    });
+
+    /** A faixa em que um agendamento esta agora. */
+    async function faixaDe(agendamentoId: number) {
+      const { salaFaixa } = await prisma.agendamento.findUniqueOrThrow({
+        where: { id: agendamentoId },
+        select: { salaFaixa: { select: { faixaId: true } } },
+      });
+
+      return salaFaixa;
+    }
+  });
+
   describe('HISTORICO: quem alterou o agendamento', () => {
     it('registra o aluno quando foi o proprio aluno', async () => {
       const aluno = await criarAluno('HIST-A');
@@ -769,6 +912,265 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
     });
   });
 
+  /**
+   * ==========================================================================
+   * O ADMIN AGENDA POR UM ALUNO ESPECIFICO
+   * ==========================================================================
+   * A outra ponta do compulsorio: uma pessoa, no balcao, em vez do lote inteiro.
+   *
+   * Estes testes rodam com `D2L_HABILITADO=false` — o default —, entao todos
+   * passam pelo caminho da RESERVA_ANTERIOR. E de proposito: e o caminho que a
+   * secretaria mais usa (quem cancelou e nao remarcou) e o unico que funciona
+   * sem a Valence de pe.
+   */
+  describe('agendamento administrativo (POST /agendamentos)', () => {
+    let faixaAdmin: number;
+    let ofertaAdmin: number;
+
+    /**
+     * Faixa so deste bloco, com folga.
+     *
+     * A `faixaB` compartilhada tem 5 vagas e chega aqui ocupada pelos testes de
+     * cima — e uma reserva a menos do que o esperado transformaria "o admin
+     * agendou" em "409 sem motivo aparente", varias vezes, longe da causa.
+     */
+    let faixaOrigem: number;
+
+    beforeAll(async () => {
+      const sala = await criarSala('ADM-NOVO', 30);
+      const criada = await criarFaixa('2027-03-10', poloId, [
+        { salaId: sala.id, modalidadeId: ead.id, vagas: 30, ordem: 1 },
+      ]);
+
+      faixaAdmin = criada.faixaId;
+      ofertaAdmin = criada.ofertas[0];
+
+      const origem = await criarSala('ADM-ORIGEM', 30);
+      ({ faixaId: faixaOrigem } = await criarFaixa('2027-03-09', poloId, [
+        { salaId: origem.id, modalidadeId: ead.id, vagas: 30, ordem: 1 },
+      ]));
+    });
+
+    /** Agenda e cancela pelo portal: e assim que nasce a reserva anterior. */
+    async function alunoQueCancelou(sufixo: string) {
+      const aluno = await criarAluno(sufixo);
+      const ag = await agendar(aluno.token, faixaOrigem);
+
+      await como(
+        api().delete(`/api/portal/agendamentos/${ag.id}`),
+        aluno.token,
+      ).expect(200);
+
+      return aluno;
+    }
+
+    it('exige exatamente um destino', async () => {
+      const aluno = await alunoQueCancelou('POST-DEST');
+
+      await comoAdmin(api().post('/api/agendamentos'))
+        .send({ alunoId: aluno.alunoId })
+        .expect(400);
+
+      await comoAdmin(api().post('/api/agendamentos'))
+        .send({
+          alunoId: aluno.alunoId,
+          faixaId: faixaAdmin,
+          salaFaixaId: ofertaAdmin,
+        })
+        .expect(400);
+    });
+
+    it('404 para vinculo inexistente', async () => {
+      await comoAdmin(api().post('/api/agendamentos'))
+        .send({ alunoId: 99_999_999, faixaId: faixaAdmin })
+        .expect(404);
+    });
+
+    /**
+     * Sem a Valence e sem reserva anterior nao ha de onde tirar as disciplinas —
+     * e `userIdD2L` e coluna obrigatoria. Recusar com o motivo escrito e melhor
+     * que gravar uma prova que nao cobre disciplina nenhuma.
+     */
+    it('RECUSA quem nunca agendou, quando nao ha de onde tirar as disciplinas', async () => {
+      const aluno = await criarAluno('POST-SEMDISC');
+
+      const res = await comoAdmin(api().post('/api/agendamentos'))
+        .send({ alunoId: aluno.alunoId, faixaId: faixaAdmin })
+        .expect(409);
+
+      expect(res.body.message).toMatch(/reserva anterior/i);
+    });
+
+    it('agenda deixando a alocacao escolher a sala, como ADMIN e alocadoManual', async () => {
+      const aluno = await alunoQueCancelou('POST-AUTO');
+
+      const res = await comoAdmin(api().post('/api/agendamentos'))
+        .send({ alunoId: aluno.alunoId, faixaId: faixaAdmin })
+        .expect(201);
+
+      expect(res.body).toMatchObject({
+        origemDasDisciplinas: 'RESERVA_ANTERIOR',
+        agendamento: { sala: 'ADM-NOVO', alocadoManual: true },
+      });
+
+      // As disciplinas vieram junto — sem elas a prova nao libera nada no LMS.
+      expect(res.body.agendamento.disciplinas.length).toBeGreaterThan(0);
+
+      const historico = await comoAdmin(
+        api().get(`/api/agendamentos/${res.body.agendamento.id}/historico`),
+      ).expect(200);
+
+      expect(historico.body[0]).toMatchObject({
+        evento: 'CRIADO',
+        autorTipo: 'ADMIN',
+        autor: EMAIL,
+      });
+    });
+
+    it('agenda na SALA escolhida pelo admin', async () => {
+      const aluno = await alunoQueCancelou('POST-SALA');
+      const outra = await criarSala('ADM-ESCOLHIDA', 5);
+
+      const { ofertas } = await criarFaixa('2027-03-11', poloId, [
+        { salaId: outra.id, modalidadeId: ead.id, vagas: 5, ordem: 1 },
+      ]);
+
+      const res = await comoAdmin(api().post('/api/agendamentos'))
+        .send({ alunoId: aluno.alunoId, salaFaixaId: ofertas[0] })
+        .expect(201);
+
+      expect(res.body.agendamento.sala).toBe('ADM-ESCOLHIDA');
+    });
+
+    it('RECUSA polo e modalidade diferentes do aluno', async () => {
+      const aluno = await alunoQueCancelou('POST-INCOMP');
+
+      const doPolo = await comoAdmin(api().post('/api/agendamentos'))
+        .send({ alunoId: aluno.alunoId, faixaId: faixaOutroPolo })
+        .expect(400);
+      expect(doPolo.body.message).toMatch(/polo/i);
+
+      const daModalidade = await comoAdmin(api().post('/api/agendamentos'))
+        .send({ alunoId: aluno.alunoId, salaFaixaId: ofertaSemi })
+        .expect(400);
+      expect(daModalidade.body.message).toMatch(/modalidade/i);
+    });
+
+    it('RECUSA sala lotada', async () => {
+      const aluno = await alunoQueCancelou('POST-LOTADA');
+      const cheia = await criarSala('ADM-LOTADA', 1);
+
+      const { ofertas } = await criarFaixa('2027-03-12', poloId, [
+        { salaId: cheia.id, modalidadeId: ead.id, vagas: 1, ordem: 1 },
+      ]);
+
+      const outro = await alunoQueCancelou('POST-LOTADA-B');
+      await comoAdmin(api().post('/api/agendamentos'))
+        .send({ alunoId: outro.alunoId, salaFaixaId: ofertas[0] })
+        .expect(201);
+
+      const res = await comoAdmin(api().post('/api/agendamentos'))
+        .send({ alunoId: aluno.alunoId, salaFaixaId: ofertas[0] })
+        .expect(409);
+
+      expect(res.body.message).toMatch(/lugares ocupados/i);
+    });
+
+    it('RECUSA quem ja tem prova no semestre, mandando usar o remanejo', async () => {
+      const aluno = await alunoQueCancelou('POST-JATEM');
+
+      await comoAdmin(api().post('/api/agendamentos'))
+        .send({ alunoId: aluno.alunoId, faixaId: faixaAdmin })
+        .expect(201);
+
+      const res = await comoAdmin(api().post('/api/agendamentos'))
+        .send({ alunoId: aluno.alunoId, faixaId: faixaAdmin })
+        .expect(409);
+
+      expect(res.body.message).toMatch(/remanejo/i);
+    });
+
+    /**
+     * A situacao do curso bloqueia por padrao (como no portal) e libera com uma
+     * decisao EXPLICITA — que volta em `avisos` e vai para a auditoria. Sem a
+     * saida, a secretaria ficaria travada justamente no caso em que precisa da
+     * valvula de escape.
+     */
+    it('RECUSA statusCurso bloqueado, e agenda com ignorarStatusCurso avisando', async () => {
+      const aluno = await alunoQueCancelou('POST-TRANCADO');
+
+      await prisma.alunoImportado.update({
+        where: { id: aluno.alunoId },
+        data: { statusCurso: 'Trancado', ativo: false },
+      });
+
+      const recusa = await comoAdmin(api().post('/api/agendamentos'))
+        .send({ alunoId: aluno.alunoId, faixaId: faixaAdmin })
+        .expect(409);
+      expect(recusa.body.message).toMatch(/Trancado/);
+
+      const res = await comoAdmin(api().post('/api/agendamentos'))
+        .send({
+          alunoId: aluno.alunoId,
+          faixaId: faixaAdmin,
+          ignorarStatusCurso: true,
+        })
+        .expect(201);
+
+      expect(res.body.avisos.join(' ')).toMatch(/Trancado/);
+    });
+
+    it('funciona com o periodo FECHADO — e o caso de uso', async () => {
+      const aluno = await alunoQueCancelou('POST-FECHADO');
+
+      await prisma.periodoAgendamento.update({
+        where: { id: periodoId },
+        data: { aberto: false },
+      });
+
+      try {
+        await comoAdmin(api().post('/api/agendamentos'))
+          .send({ alunoId: aluno.alunoId, faixaId: faixaAdmin })
+          .expect(201);
+      } finally {
+        await prisma.periodoAgendamento.update({
+          where: { id: periodoId },
+          data: { aberto: true },
+        });
+      }
+    });
+
+    /** Regra 4b: uma prova por PESSOA em cada horario, o admin inclusive. */
+    it('RECUSA a segunda prova da MESMA PESSOA no mesmo horario', async () => {
+      const aluno = await alunoQueCancelou('POST-DOIS');
+
+      const outroCurso = await prisma.alunoImportado.create({
+        data: {
+          matricula: aluno.matricula,
+          nome: 'Aluno de Dois Cursos (POST)',
+          curso: 'SEGUNDO CURSO POST',
+          statusCurso: 'Ativo',
+          ativo: true,
+          modalidadeId: ead.id,
+          poloId,
+        },
+      });
+
+      await comoAdmin(api().post('/api/agendamentos'))
+        .send({ alunoId: aluno.alunoId, faixaId: faixaAdmin })
+        .expect(201);
+
+      // O segundo vinculo herda as disciplinas da reserva do primeiro (a busca
+      // e por MATRICULA), o que isola a recusa na regra do horario em vez de
+      // parar antes, em "sem disciplina de onde copiar".
+      const res = await comoAdmin(api().post('/api/agendamentos'))
+        .send({ alunoId: outroCurso.id, faixaId: faixaAdmin })
+        .expect(409);
+
+      expect(res.body.message).toMatch(/ja tem prova marcada neste horario/i);
+    });
+  });
+
   describe('protecao das rotas', () => {
     it('remanejo e cancelamento exigem admin', async () => {
       await api()
@@ -776,6 +1178,13 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
         .send({ faixaId: 1 })
         .expect(401);
       await api().delete('/api/agendamentos/1').expect(401);
+    });
+
+    it('o agendamento administrativo exige admin', async () => {
+      await api()
+        .post('/api/agendamentos')
+        .send({ alunoId: 1, faixaId: 1 })
+        .expect(401);
     });
 
     it('troca e cancelamento do portal exigem aluno', async () => {
