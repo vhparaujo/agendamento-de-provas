@@ -1,10 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import type {
   AlteracaoComAgendamento,
+  CandidataRenomeacao,
+  CursoRenomeado,
   LinhaRejeitada,
   Mudanca,
   ResultadoImportacaoAlunos,
 } from '../service/importacao-alunos.service';
+import { SEMELHANCA, type Semelhanca } from '../service/curso-renomeado';
 import type { ResultadoImportacaoTurmas } from '../service/importacao-turmas.service';
 
 export class LinhaRejeitadaDto implements LinhaRejeitada {
@@ -119,10 +122,93 @@ export class AlteracaoComAgendamentoDto implements AlteracaoComAgendamento {
   agendamentosConfirmados!: number;
 }
 
+/** Um vinculo antigo que parece ser o mesmo curso escrito de outro jeito. */
+export class CandidataRenomeacaoDto implements CandidataRenomeacao {
+  @ApiProperty({
+    example: 4821,
+    description:
+      'Id do vinculo ANTIGO — o que sera absorvido na mesclagem, e onde a ' +
+      'prova ja marcada esta presa.',
+  })
+  alunoId!: number;
+
+  @ApiProperty({
+    example: 'PSICOLOGIA',
+    description: 'A grafia anterior, como esta gravada no banco.',
+  })
+  curso!: string;
+
+  @ApiProperty({
+    enum: Object.values(SEMELHANCA),
+    example: SEMELHANCA.TOKENS_CONTIDOS,
+    description:
+      'Como a semelhanca foi estabelecida. "identico-normalizado" = so mudou ' +
+      'acento, caixa ou pontuacao; "tokens-contidos" = um nome e o outro com ' +
+      'palavras a mais. Nao ha comparacao por aproximacao.',
+  })
+  semelhanca!: Semelhanca;
+
+  @ApiProperty({ example: 'EaD' })
+  modalidade!: string;
+
+  @ApiProperty({ example: 'Taguatinga' })
+  polo!: string;
+
+  @ApiProperty({
+    example: 1,
+    description:
+      'Reservas confirmadas presas neste vinculo, em QUALQUER periodo letivo. ' +
+      'Sem recorte de semestre de proposito: a renomeacao chega na planilha do ' +
+      'semestre novo, e a prova orfa costuma ser a do anterior.',
+  })
+  agendamentosConfirmados!: number;
+}
+
+/**
+ * Uma linha que criou vinculo novo quando o RA ja tinha curso de grafia
+ * parecida — e aquela grafia sumiu deste arquivo.
+ *
+ * Nao bloqueia e nao mescla: dois vinculos no mesmo RA existem de verdade, e
+ * fundir cursos distintos misturaria as provas de dois cursos numa pessoa so.
+ */
+export class CursoRenomeadoDto implements CursoRenomeado {
+  @ApiProperty({
+    example: 512,
+    description: 'Numero da linha no arquivo (1 = primeira apos o cabecalho).',
+  })
+  linha!: number;
+
+  @ApiProperty({ example: 'UC25426847' })
+  matricula!: string;
+
+  @ApiProperty({ example: 'ANA PAULA SOUZA' })
+  nome!: string;
+
+  @ApiProperty({
+    example: 'Psicologia — Bacharelado',
+    description: 'A grafia nova, a que veio no arquivo e criou o vinculo.',
+  })
+  curso!: string;
+
+  @ApiProperty({
+    example: 9134,
+    description: 'Id do vinculo recem-criado — o destino da mesclagem.',
+  })
+  alunoId!: number;
+
+  @ApiProperty({
+    type: [CandidataRenomeacaoDto],
+    description:
+      'Mais de uma candidata significa ambiguidade: a secretaria escolhe, o ' +
+      'sistema nao chuta.',
+  })
+  candidatas!: CandidataRenomeacaoDto[];
+}
+
 /**
  * Alem dos numeros, a resposta destaca tudo que precisa de decisao humana:
- * linhas rejeitadas, status nunca vistos, polos que nao casaram e trocas que
- * mexeram em quem ja tem prova marcada.
+ * linhas rejeitadas, status nunca vistos, polos que nao casaram, trocas que
+ * mexeram em quem ja tem prova marcada e vinculos duplicados por grafia.
  */
 export class ResultadoImportacaoAlunosDto implements ResultadoImportacaoAlunos {
   @ApiProperty({ example: 7, description: 'Id do registro de auditoria.' })
@@ -176,6 +262,18 @@ export class ResultadoImportacaoAlunosDto implements ResultadoImportacaoAlunos {
       'decisao: remanejar a reserva ou cancela-la.',
   })
   alteracoesComAgendamento!: AlteracaoComAgendamentoDto[];
+
+  @ApiProperty({
+    type: [CursoRenomeadoDto],
+    description:
+      'Vinculos que NASCERAM DUPLICADOS porque a grafia do curso mudou na ' +
+      'planilha ("PSICOLOGIA" -> "Psicologia — Bacharelado"). A chave do ' +
+      'vinculo e [matricula, curso], entao o upsert nao encontrou a linha ' +
+      'antiga e criou outra; a prova ja marcada continua presa a antiga. ' +
+      'Cada item traz o vinculo novo e as candidatas a mesma pessoa — resolva ' +
+      'em POST /alunos/:id/mesclar.',
+  })
+  cursosRenomeados!: CursoRenomeadoDto[];
 }
 
 export class TurmaRejeitadaDto {

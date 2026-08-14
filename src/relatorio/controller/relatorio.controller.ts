@@ -21,7 +21,7 @@ import {
 import type { Response } from 'express';
 import { SomenteAdmin } from '../../auth/roles.decorator';
 import { TAGS } from '../../config/swagger';
-import { FaixaExportavelDto } from '../dto/faixa-exportavel.dto';
+import { GrupoExportavelDto } from '../dto/grupo-exportavel.dto';
 import { RelatorioService } from '../service/relatorio.service';
 
 /** Recorte compartilhado pelas tres rotas. */
@@ -56,37 +56,52 @@ export class RelatorioController {
 
   @Get('grupos-d2l')
   @ApiOperation({
-    summary: 'Lista as faixas exportaveis e quantos alunos cada uma tem',
+    summary:
+      'Lista os grupos exportaveis (horario x turma) e o tamanho de cada',
     description:
-      'Uma linha por **faixa de horario** — e a tabela da aba Relatorios. Cada ' +
-      'linha vira um arquivo no import de Grupos do Brightspace.\n\n' +
+      'Uma linha por **horario de prova E turma** — e a tabela da aba ' +
+      'Relatorios. Cada linha vira um arquivo no import de Grupos do ' +
+      'Brightspace.\n\n' +
+      'O par (faixa, turma) e o recorte porque o grupo vive DENTRO de uma ' +
+      'disciplina do D2L: um arquivo com a faixa inteira levaria para o grupo de ' +
+      'uma disciplina tambem quem nao a cursa, liberando a prova dela para essa ' +
+      'gente. O mesmo aluno aparece em varias linhas — uma por disciplina que a ' +
+      'prova dele cobre.\n\n' +
       '`totalAlunos` conta **matriculas distintas com prova confirmada**, ' +
       'somando todas as salas da faixa, e e exatamente o numero de linhas que o ' +
-      'arquivo tera. Faixa sem ninguem aparece com `0` (a informacao e util na ' +
-      'tela), mas fica de fora do zip.\n\n' +
+      'arquivo tera.\n\n' +
+      'As linhas nascem dos agendamentos: horario **sem ninguem agendado nao ' +
+      'aparece**, porque nao ha turma para listar. Ocupacao por horario e ' +
+      '`GET /agendamentos/resumo`.\n\n' +
       'O recorte e **um periodo letivo** — o de `periodoLetivoId` ou, sem ele, o ' +
       'vigente. Sem isso, prova do semestre passado entraria no grupo deste.',
   })
   @aplicarFiltros()
-  @ApiOkResponse({ type: [FaixaExportavelDto] })
+  @ApiOkResponse({ type: [GrupoExportavelDto] })
   listar(@Query() query: Record<string, string>) {
-    return this.service.listarFaixas(this.lerFiltro(query));
+    return this.service.listarGrupos(this.lerFiltro(query));
   }
 
   /**
-   * Declarada ANTES de `:faixaId`: o Nest casa as rotas na ordem em que sao
-   * declaradas, e `zip` seria engolido pelo parametro.
+   * Declarada ANTES da rota com parametros: o Nest casa as rotas na ordem em que
+   * sao declaradas.
    */
   @Get('grupos-d2l/zip')
   @ApiOperation({
-    summary: 'Baixa um zip com o CSV de todas as faixas do recorte',
+    summary: 'Baixa um zip com o CSV de todos os grupos do recorte',
     description:
-      'Um arquivo por faixa, nomeado `20-08-2026 08h30-11h30.csv`. Faixa **sem ' +
-      'aluno nenhum fica de fora** — um arquivo so de cabecalho nao tem o que ' +
-      'importar.\n\n' +
+      'Organizado em **uma pasta por turma**, com o horario no nome do ' +
+      'arquivo:\n\n' +
+      '```\n' +
+      'GSPS0I10227 - HISTORIA E CULTURA DO CORPO/\n' +
+      '    20-08-2026 08h30-11h30.csv\n' +
+      '    20-08-2026 14h00-17h00.csv\n' +
+      '```\n\n' +
+      'A pasta acompanha o trabalho real: abre-se a turma no Brightspace e ' +
+      'importam-se os horarios dela, um a um.\n\n' +
       'Duas faixas do mesmo dia e horario em polos diferentes gerariam o mesmo ' +
-      'nome (o polo nao entra no nome); a partir da segunda, o id da faixa entra ' +
-      'como desempate (`... #14.csv`).',
+      'caminho (o polo nao entra no nome); a partir da segunda, o id da faixa ' +
+      'entra como desempate (`... #14.csv`).',
   })
   @aplicarFiltros()
   @ApiProduces('application/zip')
@@ -99,7 +114,7 @@ export class RelatorioController {
     @Query() query: Record<string, string>,
     @Res({ passthrough: true }) res: Response,
   ): Promise<StreamableFile> {
-    const { nomeArquivo, conteudo } = await this.service.zipDasFaixas(
+    const { nomeArquivo, conteudo } = await this.service.zipDosGrupos(
       this.lerFiltro(query),
     );
 
@@ -111,38 +126,54 @@ export class RelatorioController {
     return new StreamableFile(conteudo as Buffer);
   }
 
-  @Get('grupos-d2l/:faixaId')
+  @Get('grupos-d2l/:faixaId/:orgUnitId')
   @ApiOperation({
-    summary: 'Baixa o CSV de uma faixa para o import de Grupos do Brightspace',
+    summary: 'Baixa o CSV de um grupo para o import de Grupos do Brightspace',
     description:
-      'Duas colunas: **`Nome de usuário`** com a matricula (RA) e ' +
+      'Os alunos de UMA turma (`orgUnitId`) em UM horario de prova ' +
+      '(`faixaId`). Duas colunas: **`Nome de usuário`** com a matricula (RA) e ' +
       '**`Código do Grupo`** VAZIA — o codigo e preenchido a mao depois de criar ' +
       'o grupo no D2L.\n\n' +
       'Entram apenas os agendamentos **confirmados** do periodo letivo do ' +
-      'recorte, e cada matricula aparece **uma unica vez**: o grupo no D2L e por ' +
-      'usuario, e um RA com dois vinculos na mesma faixa nao pode virar duas ' +
-      'linhas.\n\n' +
+      'recorte cuja prova cobre aquela disciplina, e cada matricula aparece ' +
+      '**uma unica vez**: o grupo no D2L e por usuario, e um RA com dois ' +
+      'vinculos na mesma faixa nao pode virar duas linhas.\n\n' +
       'Sai separado por **virgula** e **sem BOM** — ao contrario do CSV da ' +
       'secretaria (`;` + BOM), porque quem le este arquivo e o Brightspace, nao ' +
       'o Excel.\n\n' +
-      'O arquivo baixa como **`20-08-2026 08h30-11h30.csv`**.',
+      'Baixa como **`20-08-2026 08h30-11h30 - GSPS0I10227 - HISTORIA E ' +
+      'CULTURA.csv`**, sem acento (ver `nome-de-arquivo.ts`).\n\n' +
+      '`de`, `ate` e `poloId` sao **ignorados** aqui: quem pediu este grupo ja ' +
+      'escolheu a faixa, e um filtro esquecido na URL devolveria 404 em vez do ' +
+      'arquivo. `periodoLetivoId` continua valendo — e ele que separa os ' +
+      'semestres.',
   })
   @ApiParam({ name: 'faixaId', type: Number, example: 14 })
+  @ApiParam({
+    name: 'orgUnitId',
+    type: String,
+    example: '445566',
+    description: 'A disciplina no Brightspace, como veio no launch.',
+  })
   @aplicarFiltros()
   @ApiProduces('text/csv')
   @ApiOkResponse({
     description: 'Arquivo CSV',
     schema: { type: 'string', format: 'binary' },
   })
-  @ApiNotFoundResponse({ description: 'Faixa nao encontrada' })
+  @ApiNotFoundResponse({
+    description: 'Nenhum aluno confirmado nesta turma e neste horario',
+  })
   @Header('Content-Type', 'text/csv; charset=utf-8')
   async csv(
     @Param('faixaId', ParseIntPipe) faixaId: number,
+    @Param('orgUnitId') orgUnitId: string,
     @Query() query: Record<string, string>,
     @Res({ passthrough: true }) res: Response,
   ): Promise<string> {
-    const { nomeArquivo, conteudo } = await this.service.csvDaFaixa(
+    const { nomeArquivo, conteudo } = await this.service.csvDoGrupo(
       faixaId,
+      orgUnitId,
       this.lerFiltro(query),
     );
 

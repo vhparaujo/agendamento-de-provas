@@ -415,6 +415,73 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
       expect(linha.endsWith(';Não Agendado;')).toBe(true);
     });
 
+    /**
+     * A modalidade e o polo da linha saem do AGENDAMENTO, nao do vinculo.
+     *
+     * `aluno_importado` guarda so o estado atual e a importacao o sobrescreve.
+     * Lendo de la, uma prova feita como EaD passava a ser exibida como "Modular"
+     * assim que o aluno mudasse de curso — na mesma linha da data e da sala
+     * corretas, que continuam sendo as da prova de verdade.
+     */
+    it('mostra a modalidade DA EPOCA da prova, nao a de hoje', async () => {
+      const modular = await prisma.modalidade.findUniqueOrThrow({
+        where: { codigo: 'MODULAR' },
+      });
+
+      const antes = linhaDe(
+        (
+          await comoAdmin(
+            api().get(`/api/agendamentos/exportacao?poloId=${poloId}`),
+          ).expect(200)
+        ).text,
+        MATRICULA,
+      );
+
+      expect(antes).toContain(';EaD;');
+
+      // O aluno muda de curso: e exatamente o que uma reimportacao faz.
+      await prisma.alunoImportado.updateMany({
+        where: { matricula: MATRICULA },
+        data: { modalidadeId: modular.id },
+      });
+
+      const depois = linhaDe(
+        (
+          await comoAdmin(
+            api().get(`/api/agendamentos/exportacao?poloId=${poloId}`),
+          ).expect(200)
+        ).text,
+        MATRICULA,
+      );
+
+      // A prova continua sendo a mesma prova.
+      expect(depois).toContain(';EaD;');
+      expect(depois).toContain('12/11/2026');
+
+      // Quem NAO tem prova nao tem fotografia, e ai o estado atual e a resposta
+      // certa: vai agendar pela modalidade que tem hoje.
+      await prisma.alunoImportado.updateMany({
+        where: { matricula: SEM_PROVA },
+        data: { modalidadeId: modular.id },
+      });
+
+      const semProva = linhaDe(
+        (
+          await comoAdmin(
+            api().get(`/api/agendamentos/exportacao?poloId=${poloId}`),
+          ).expect(200)
+        ).text,
+        SEM_PROVA,
+      );
+
+      expect(semProva).toContain(`;${modular.nome};`);
+
+      await prisma.alunoImportado.updateMany({
+        where: { matricula: { in: [MATRICULA, SEM_PROVA] } },
+        data: { modalidadeId: ead.id },
+      });
+    });
+
     it('NEUTRALIZA formula do Excel vinda do nome importado', async () => {
       const res = await comoAdmin(
         api().get(`/api/agendamentos/exportacao?poloId=${poloId}`),

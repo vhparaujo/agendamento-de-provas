@@ -1,5 +1,15 @@
-import { Controller, Get, Param, ParseIntPipe, Query } from '@nestjs/common';
 import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseIntPipe,
+  Post,
+  Query,
+} from '@nestjs/common';
+import {
+  ApiBadRequestResponse,
+  ApiConflictResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
@@ -7,13 +17,19 @@ import {
   ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
-import { SomenteAdmin } from '../../auth/roles.decorator';
+import { AdminLogado, SomenteAdmin } from '../../auth/roles.decorator';
+import type { AdminJwtPayload } from '../../auth/jwt/jwt.types';
 import { TAGS } from '../../config/swagger';
 import {
   AlunoImportadoDetalheDto,
   PaginaDeAlunosDto,
 } from '../dto/aluno-admin.response.dto';
+import {
+  MesclarVinculosDto,
+  ResultadoMesclagemDto,
+} from '../dto/mesclar-vinculos.dto';
 import { AlunoAdminService } from '../service/aluno-admin.service';
+import { MesclagemVinculosService } from '../service/mesclagem-vinculos.service';
 
 /**
  * A consulta do admin sobre quem os CSVs trouxeram.
@@ -21,12 +37,21 @@ import { AlunoAdminService } from '../service/aluno-admin.service';
  * Somente leitura de proposito: a planilha e a fonte de verdade, e um ajuste
  * feito aqui seria apagado pelo proximo upload sem ninguem perceber. Para
  * corrigir um aluno, corrige-se o CSV e reimporta.
+ *
+ * A UNICA excecao e `POST /:id/mesclar`, e ela existe justamente porque
+ * reimportar NAO resolve o caso: quando a grafia do curso muda, a chave
+ * `[matricula, curso]` muda com ela, o upsert cria uma segunda linha e a
+ * primeira some do arquivo — e a importacao nunca apaga. Sem uma acao explicita,
+ * a duplicata fica no banco para sempre. Ver `MesclagemVinculosService`.
  */
 @ApiTags(TAGS.ALUNOS)
 @Controller('alunos')
 @SomenteAdmin()
 export class AlunoAdminController {
-  constructor(private readonly service: AlunoAdminService) {}
+  constructor(
+    private readonly service: AlunoAdminService,
+    private readonly mesclagem: MesclagemVinculosService,
+  ) {}
 
   @Get()
   @ApiOperation({
@@ -117,6 +142,52 @@ export class AlunoAdminController {
   @ApiNotFoundResponse({ description: 'Vinculo nao encontrado' })
   buscar(@Param('id', ParseIntPipe) id: number) {
     return this.service.buscar(id);
+  }
+
+  @Post(':id/mesclar')
+  @ApiOperation({
+    summary: 'Funde dois vinculos duplicados da mesma matricula',
+    description:
+      'Desfaz a duplicata criada quando a **grafia do curso muda na planilha** ' +
+      '("PSICOLOGIA" -> "Psicologia — Bacharelado"). Como a chave do vinculo e ' +
+      '`[matricula, curso]`, o upsert nao encontra a linha antiga e cria outra; ' +
+      'a prova ja marcada continua presa a antiga, o aluno sai como "Nao ' +
+      'Agendado" na exportacao mesmo tendo agendado, e o compulsorio o aloca de ' +
+      'novo — uma segunda vaga para a mesma pessoa.\n\n' +
+      'O `:id` da URL e o vinculo que **fica** (normalmente o novo, com a grafia ' +
+      'da planilha atual); `absorverId` e o que sera **apagado**. E a mesma ' +
+      'direcao do relatorio: `cursosRenomeados[].alunoId` na URL, ' +
+      '`candidatas[].alunoId` no corpo.\n\n' +
+      'Os agendamentos e as excecoes do compulsorio passam para o vinculo de ' +
+      'destino, tudo numa transacao. **E irreversivel**: o vinculo absorvido ' +
+      'deixa de existir.\n\n' +
+      'Recusa vinculos de matriculas diferentes (seria mover a prova de uma ' +
+      'pessoa para outra) e recusa quando os dois tem prova confirmada no mesmo ' +
+      'periodo letivo (a pessoa ficaria com duas reservas no semestre). ' +
+      'Divergencia de modalidade ou polo nao bloqueia: volta em `avisos`.',
+  })
+  @ApiParam({
+    name: 'id',
+    type: Number,
+    example: 9134,
+    description: 'Vinculo que FICA — o destino da mesclagem.',
+  })
+  @ApiOkResponse({ type: ResultadoMesclagemDto })
+  @ApiBadRequestResponse({
+    description: 'Mesmo vinculo nos dois lados, ou matriculas diferentes',
+  })
+  @ApiNotFoundResponse({ description: 'Um dos vinculos nao existe' })
+  @ApiConflictResponse({
+    description:
+      'Os dois vinculos tem prova confirmada no mesmo periodo letivo — ' +
+      'cancele uma antes',
+  })
+  mesclar(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: MesclarVinculosDto,
+    @AdminLogado() admin: AdminJwtPayload,
+  ) {
+    return this.mesclagem.mesclar(id, dto.absorverId, admin.email);
   }
 }
 

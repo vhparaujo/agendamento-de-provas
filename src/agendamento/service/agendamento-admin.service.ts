@@ -523,6 +523,10 @@ export class AgendamentoAdminService {
           where: daProva,
           select: {
             createdAt: true,
+            // A modalidade e o polo DA EPOCA da reserva, nao os de hoje — ver
+            // `dadosDoAluno` abaixo.
+            modalidade: { select: { nome: true } },
+            polo: { select: { nome: true } },
             salaFaixa: {
               select: {
                 sala: { select: { nome: true } },
@@ -545,30 +549,57 @@ export class AgendamentoAdminService {
     });
 
     const linhas = alunos.flatMap((aluno) => {
-      const dadosDoAluno = [
+      const identificacao = [
         aluno.matricula,
         aluno.nome,
         aluno.email,
         aluno.curso,
-        aluno.modalidade.nome,
-        aluno.polo.nome,
       ];
 
       if (aluno.agendamentos.length === 0) {
-        return [[...dadosDoAluno, null, null, null, null, NAO_AGENDADO, null]];
+        // Sem reserva nao ha fotografia, e o estado atual e a unica resposta —
+        // que aqui tambem e a certa: quem ainda precisa agendar vai agendar
+        // pela modalidade e pelo polo que tem HOJE.
+        return [
+          [
+            ...identificacao,
+            aluno.modalidade.nome,
+            aluno.polo.nome,
+            null,
+            null,
+            null,
+            null,
+            NAO_AGENDADO,
+            null,
+          ],
+        ];
       }
 
-      // A regra e um agendamento por vinculo no periodo; se algum dia houver
-      // mais de um, cada um vira uma linha em vez de sumir do arquivo.
-      return aluno.agendamentos.map(({ salaFaixa, createdAt }) => [
-        ...dadosDoAluno,
-        dataDaProva(salaFaixa.faixa.data),
-        salaFaixa.faixa.horaInicio,
-        salaFaixa.faixa.horaFim,
-        salaFaixa.sala.nome,
-        AGENDADO,
-        dataBr(createdAt, true),
-      ]);
+      /**
+       * Modalidade e polo saem do AGENDAMENTO, nao do vinculo.
+       *
+       * `AlunoImportado` guarda so o estado atual, e a importacao sobrescreve os
+       * dois campos. Lendo de la, uma prova de 2026/1 feita como EaD aparecia
+       * como "Modular" depois que o aluno mudou de curso — na mesma linha da
+       * data e da sala corretas, que sao as da prova de verdade. Duas colunas da
+       * mesma linha discordando sobre o mesmo fato.
+       *
+       * A regra e um agendamento por vinculo no periodo; se algum dia houver
+       * mais de um, cada um vira uma linha em vez de sumir do arquivo.
+       */
+      return aluno.agendamentos.map(
+        ({ salaFaixa, createdAt, modalidade, polo }) => [
+          ...identificacao,
+          modalidade.nome,
+          polo.nome,
+          dataDaProva(salaFaixa.faixa.data),
+          salaFaixa.faixa.horaInicio,
+          salaFaixa.faixa.horaFim,
+          salaFaixa.sala.nome,
+          AGENDADO,
+          dataBr(createdAt, true),
+        ],
+      );
     });
 
     return montarCsv(CABECALHOS_EXPORTACAO, linhas);

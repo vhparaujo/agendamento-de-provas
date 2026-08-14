@@ -701,6 +701,9 @@ export class CompulsorioService {
               matricula: candidato.matricula,
               userIdD2L: candidato.userIdD2L,
               periodoLetivoId,
+              // Fotografia do vinculo na data da reserva — ver o schema.
+              modalidadeId: candidato.modalidadeId,
+              poloId: candidato.poloId,
               // Foi a secretaria quem escolheu a sala, nao a alocacao a pedido
               // do aluno. Marcar evita que alguem leia o resultado do lote como
               // escolha dele.

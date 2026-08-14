@@ -88,30 +88,37 @@ mesma faixa, porém, a sala fica travada numa única modalidade (garantido pelo
 
 1. **Aluno não tem senha.** É reconhecido via LTI 1.3; a matrícula do launch é
    cruzada com o CSV. Nunca confie em dados auto-declarados pelo cliente.
-2. **O que o aluno vê** = faixas do polo dele, na modalidade dele, com vaga, com
+2. **Só aluno ATIVO agenda.** O `STATUS CURSO` do CSV precisa ser `Ativo` — e
+   nenhum outro valor serve. Desistente, Trancado, Cancelado, Formado, as
+   situações de transição (`Transf. Interna`, `Transf. de Curriculo`,
+   `Alter. de Habilitação`) e qualquer grafia desconhecida **bloqueiam**. A lista
+   está em [`src/enums/status-curso.enum.ts`](src/enums/status-curso.enum.ts),
+   ponto único de alteração; a checagem é por vínculo, não por RA. O status
+   **não** impede o login — ver [CSV de alunos](#csv-de-alunos).
+3. **O que o aluno vê** = faixas do polo dele, na modalidade dele, com vaga, com
    o período de agendamento aberto.
-3. **Disciplinas agendáveis** = disciplinas do aluno na Valence ∩ turmas reais
+4. **Disciplinas agendáveis** = disciplinas do aluno na Valence ∩ turmas reais
    (CSV) ∩ período letivo vigente. **Não são todas as disciplinas do aluno.**
-4. **Um agendamento cobre todas as disciplinas agendáveis de UM vínculo**, no
+5. **Um agendamento cobre todas as disciplinas agendáveis de UM vínculo**, no
    mesmo horário. Aluno com dois cursos faz dois agendamentos — as durações são
    diferentes, então caem em faixas diferentes.
-5. **Alocação de sala é sequencial**: preenche a sala de menor `ordem` até lotar,
+6. **Alocação de sala é sequencial**: preenche a sala de menor `ordem` até lotar,
    só então usa a próxima. A vaga é da SalaFaixa (`count(agendamentos) < vagas`).
-6. **Concorrência**: a checagem de vaga + criação do agendamento **deve** ocorrer
+7. **Concorrência**: a checagem de vaga + criação do agendamento **deve** ocorrer
    na mesma transação, serializada por SalaFaixa. Nunca conte fora da transação.
    Feito com `SELECT ... FOR UPDATE` sob READ COMMITTED — há teste que prova:
    remover o lock faz 5 alunos entrarem na mesma vaga.
-7. **Reagendamento tem dono.** O aluno só troca/cancela com o período **aberto**
+8. **Reagendamento tem dono.** O aluno só troca/cancela com o período **aberto**
    e só no período **vigente**. O admin remaneja a qualquer tempo (é a válvula de
    escape), marcando `alocadoManual = true`, mas nem ele muda polo ou modalidade.
    **Toda alteração grava quem a fez** — aluno ou administrador — na mesma
    transação da mudança.
-8. **O período fecha só por data/hora** (`dataFechamento`), nunca por esgotamento
+9. **O período fecha só por data/hora** (`dataFechamento`), nunca por esgotamento
    de vagas. A janela de agendamento e as datas das provas são linhas do tempo
    independentes.
-9. **Sync com D2L é assíncrono e tolerante a falha**: 404 (aluno não matriculado)
-   é estado **esperado** (`NAO_MATRICULADO`), não erro. *(fase adiada — a fila já
-   é gravada, mas ninguém a consome ainda)*
+10. **Sync com D2L é assíncrono e tolerante a falha**: 404 (aluno não matriculado)
+    é estado **esperado** (`NAO_MATRICULADO`), não erro. *(fase adiada — a fila já
+    é gravada, mas ninguém a consome ainda)*
 
 ---
 
@@ -318,8 +325,18 @@ perceber. Para corrigir um registro, corrige-se o CSV e reimporta.
 | `GET` | `/alunos` | Pesquisa os vínculos importados — paginada |
 | `GET` | `/alunos/cursos` | Cursos distintos, para o dropdown do filtro |
 | `GET` | `/alunos/:id` | O vínculo: origem, outros vínculos do mesmo RA e provas marcadas |
+| `POST` | `/alunos/:id/mesclar` | Funde o vínculo duplicado pela troca de grafia do curso |
 | `GET` | `/turmas` | Pesquisa as turmas/disciplinas do CSV — paginada |
 | `GET` | `/turmas/:id` | A turma: origem e quantos agendamentos a cobrem |
+
+**`POST /alunos/:id/mesclar` é a única escrita**, e é exceção justamente porque
+reimportar **não** resolve o caso dela: quando a grafia do curso muda, a linha
+antiga deixa de estar no arquivo e a importação nunca apaga — sem uma ação
+explícita, a duplicata fica no banco para sempre. O `:id` da URL é o vínculo que
+**fica** e `absorverId` (no corpo) é o que será **apagado**, na mesma direção do
+relatório de importação. Recusa matrículas diferentes (400) e recusa quando os
+dois têm prova confirmada no mesmo período letivo (409); divergência de
+modalidade ou polo não bloqueia e volta em `avisos`.
 
 **Cada item de `/alunos` é um vínculo (aluno + curso), não um aluno.** O mesmo RA
 em dois cursos aparece como duas linhas, com modalidades possivelmente diferentes
@@ -467,17 +484,19 @@ colunas da prova vazias e `Status = Não Agendado`.
 ### Relatórios — grupos para o Brightspace
 
 A aba **Relatorios** do painel. Gera o arquivo que o *Groups Import* do
-Brightspace consome, para criar um grupo por horário de prova (e depois liberar
-o quiz para o grupo).
+Brightspace consome, para criar um grupo por horário de prova **de cada turma**
+(e depois liberar o quiz para o grupo).
 
 Filtros comuns às três rotas: `poloId`, `periodoLetivoId`, `de`, `ate` (data da
-**prova**).
+**prova**). Na rota de um arquivo só, `poloId`/`de`/`ate` são ignorados — quem
+pediu aquele grupo já escolheu a faixa, e um filtro esquecido na URL devolveria
+404 em vez do arquivo.
 
 | Método | Rota | Descrição |
 |---|---|---|
-| `GET` | `/relatorios/grupos-d2l` | Lista as faixas do recorte com quantos alunos cada uma tem |
-| `GET` | `/relatorios/grupos-d2l/zip` | Zip com o CSV de todas as faixas |
-| `GET` | `/relatorios/grupos-d2l/:faixaId` | O CSV de uma faixa |
+| `GET` | `/relatorios/grupos-d2l` | Lista os grupos do recorte com quantos alunos cada um tem |
+| `GET` | `/relatorios/grupos-d2l/zip` | Zip com o CSV de todos, em uma pasta por turma |
+| `GET` | `/relatorios/grupos-d2l/:faixaId/:orgUnitId` | O CSV de uma turma num horário |
 
 O arquivo tem **duas colunas**: `Nome de usuário` com a matrícula (RA) e
 `Código do Grupo` **em branco** — o código é preenchido à mão depois de criar o
@@ -489,19 +508,39 @@ UC25426847,
 0009552430,
 ```
 
-- **Um arquivo por FAIXA**, não por sala: o grupo existe para liberar o quiz num
-  horário, e a sala em que a pessoa senta não muda o acesso.
-- **Cada matrícula aparece uma vez.** Um RA com dois vínculos na mesma modalidade
-  pode ter dois agendamentos na mesma faixa; o grupo é por *usuário*.
+- **Um arquivo por HORÁRIO E TURMA.** O grupo vive *dentro* de uma disciplina do
+  Brightspace (`orgUnitId`) e libera o quiz **dela**. Uma lista com a faixa
+  inteira importaria sem erro nenhum e daria acesso à prova de HISTÓRIA para quem
+  só cursa NUTRIÇÃO. O mesmo aluno sai em vários arquivos — um por disciplina que
+  a prova dele cobre.
+- **A sala não entra**: o grupo libera o quiz num horário, e a sala em que a
+  pessoa senta não muda o acesso. As salas da faixa entram na mesma lista.
+- **Cada matrícula aparece uma vez por arquivo.** Um RA com dois vínculos na
+  mesma modalidade pode ter dois agendamentos na mesma faixa cobrindo a mesma
+  disciplina; o grupo é por *usuário*.
 - **Só agendamentos `CONFIRMADO`**, no período letivo do recorte (ou o vigente).
-- Nome do arquivo: **`20-08-2026 08h30-11h30.csv`** — dia e horário, sem polo e
-  sem sala. Dentro do zip, duas faixas do mesmo horário em polos diferentes são
+- Nome do arquivo:
+  **`20-08-2026 08h30-11h30 - GSPS0I10227 - HISTORIA E CULTURA.csv`** — horário,
+  código da turma e disciplina, **sem acento** (só no nome; na tela e no conteúdo
+  o nome fica inteiro). O `codigoTurma` vem de `TurmaImportada`, achada pelo
+  `orgUnitId` que o launch ensinou; sem ele o nome cai em `orgUnit <id>`.
+- O **zip é organizado em uma pasta por turma**, com o horário no arquivo:
+
+  ```
+  GSPS0I10227 - HISTORIA E CULTURA DO CORPO/
+      20-08-2026 08h30-11h30.csv
+      20-08-2026 14h00-17h00.csv
+  ```
+
+  Duas faixas do mesmo horário em polos diferentes, na mesma turma, são
   desempatadas pelo id (`... #14.csv`).
-- Faixa **sem ninguém** aparece na listagem com `0`, mas fica **fora do zip**.
+- **Horário sem ninguém agendado não aparece**: as linhas nascem dos
+  agendamentos, e uma faixa não "tem" disciplinas — são os alunos que as trazem.
+  Ocupação por horário é `GET /agendamentos/resumo`.
 
 #### ⚠️ Este CSV é o oposto do outro
 
-| | `/agendamentos/exportacao` | `/relatorios/grupos-d2l/:faixaId` |
+| | `/agendamentos/exportacao` | `/relatorios/grupos-d2l/:faixaId/:orgUnitId` |
 |---|---|---|
 | Quem lê | Pessoa, no Excel pt-BR | O Brightspace |
 | Separador | `;` | `,` |
@@ -699,7 +738,7 @@ TurmaImportada ── ImportacaoCsv      Admin      PeriodoAgendamento
 | `AlunoImportado` | Um registro **por vínculo** (matrícula + curso) |
 | `TurmaImportada` | Turmas reais com prova, chaveadas por `codigoTurma + nomeDisciplina` |
 | `ImportacaoCsv` | Auditoria: tipo, arquivo, linhas, quem, quando |
-| `Agendamento` | A reserva, apontando para a `SalaFaixa` alocada |
+| `Agendamento` | A reserva, apontando para a `SalaFaixa` alocada. Guarda `modalidadeId` e `poloId` **do aluno na época** — ver abaixo |
 | `AgendamentoDisciplina` | As N disciplinas cobertas pela reserva |
 | `SyncD2L` | Fila de gravação do *special access* (PENDENTE/CONCLUIDO/FALHOU/NAO_MATRICULADO) |
 | `HistoricoAgendamento` | Quem alterou o agendamento: evento, autor (aluno/admin), de → para |
@@ -716,6 +755,17 @@ TurmaImportada ── ImportacaoCsv      Admin      PeriodoAgendamento
   vínculos.
 - `Agendamento @@index([salaFaixaId])` — usado na contagem de ocupação dentro da
   transação de alocação.
+
+**`Agendamento.modalidadeId` e `Agendamento.poloId` são fotografia**, não consulta
+ao vínculo. `AlunoImportado` é tabela de **estado atual**: cada importação
+sobrescreve modalidade e polo, e não há versão anterior. Sem essas colunas,
+exportar um semestre passado mostrava a modalidade de **hoje** ao lado da data e
+da sala corretas — duas colunas da mesma linha discordando sobre o mesmo fato.
+
+São redundantes com `salaFaixa` **por construção** (a alocação só aceita oferta da
+modalidade do aluno, e o portal recusa faixa de outro polo), e é essa redundância
+que tornou o *backfill* da migration exato em vez de aproximado: os dois valores
+já estavam gravados na reserva, só que indiretamente.
 
 ---
 
@@ -814,6 +864,26 @@ uma pessoa, basta um CSV com a linha dela — o `upsert` é por `[matricula, cur
 > errado), mas cada linha dessas pede decisão: remanejar ou cancelar a reserva.
 > A contagem considera só o **semestre vigente** — prova de semestre passado já
 > aconteceu, e avisar sobre ela seria o ruído que faz o aviso ser ignorado.
+
+> ⚠️ **`cursosRenomeados[]` — a grafia do curso mudou e o vínculo se duplicou.**
+> A chave é `[matricula, curso]`, então `PSICOLOGIA` virando
+> `Psicologia — Bacharelado` não é atualização: o `upsert` não encontra a linha
+> antiga e cria **outra**. A prova já marcada continua presa à primeira, e daí em
+> diante o aluno aparece duas vezes no atendimento, sai como **"Não Agendado" na
+> exportação mesmo tendo agendado**, e o compulsório o aloca de novo — uma
+> segunda vaga para a mesma pessoa.
+>
+> A comparação (`curso-renomeado.ts`) tem duas regras fechadas, ambas exatas
+> depois de normalizar: `identico-normalizado` (só acento, caixa ou pontuação) e
+> `tokens-contidos` (um nome é o outro com palavras a mais, comparado **por
+> token** e sem exigir ordem). Não há distância de edição — "ENGENHARIA CIVIL" e
+> "ENGENHARIA QUÍMICA" ficam a duas letras uma da outra e são cursos diferentes.
+>
+> Só é candidata a grafia que **sumiu da planilha**: se as duas aparecem no mesmo
+> upload, a fonte de verdade está dizendo que são dois vínculos.
+>
+> **Avisa e não mescla** — fundir dois cursos distintos misturaria as provas dos
+> dois numa pessoa só, e é irreversível. Resolve-se em `POST /alunos/:id/mesclar`.
 
 ### CSV de turmas
 
@@ -988,8 +1058,9 @@ src/
   periodo/        janela de agendamento (CRUD do admin + leitura do portal)
   polo/  sala/  sala-faixa/    estrutura física e ajuste da oferta
   relatorio/
-    service/      relatorio.service.ts (as faixas exportáveis e o zip)
+    service/      relatorio.service.ts (os grupos horário × turma e o zip)
                   csv-grupos-d2l.ts (o formato que o Groups Import aceita)
+                  nome-de-arquivo.ts (nome do arquivo e pasta dentro do zip)
   seguranca/      auditoria + filtro global de exceções
   turma/          cruzamento disciplinas ∩ turmas ∩ período
   generated/      client do Prisma (NÃO versionado)

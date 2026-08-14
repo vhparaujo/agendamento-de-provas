@@ -32,6 +32,11 @@ export type EventoSeguranca =
   | 'COMPULSORIO_INICIADO'
   | 'COMPULSORIO_CONCLUIDO'
   | 'COMPULSORIO_FALHOU'
+  // Duas linhas de aluno viraram uma, e a absorvida deixou de existir. Auditavel
+  // por ser IRREVERSIVEL e por mover prova de um vinculo para outro — se algum
+  // dia a prova de alguem aparecer no cadastro errado, e aqui que se descobre
+  // quem mesclou o que.
+  | 'VINCULOS_MESCLADOS'
   | 'D2L_AUTORIZACAO_OK'
   | 'D2L_AUTORIZACAO_FALHOU'
   | 'D2L_TOKEN_RENOVADO'

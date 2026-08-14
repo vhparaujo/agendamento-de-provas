@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import * as bcrypt from 'bcrypt';
 import request from 'supertest';
 import { App } from 'supertest/types';
+import { POLOS } from './../prisma/seed-polos';
 import { AppModule } from './../src/app.module';
 import { PrismaService } from './../src/database/prisma.service';
 
@@ -98,10 +99,13 @@ describe('Estrutura: polo, sala, faixa e oferta (e2e)', () => {
   }
 
   describe('polos', () => {
-    it('lista os 27 polos do seed com contagens', async () => {
+    it('lista os polos do seed com contagens', async () => {
       const res = await auth(api().get('/api/polos')).expect(200);
 
-      expect(res.body.length).toBeGreaterThanOrEqual(27);
+      // Contra `POLOS.length`, e nao contra um numero escrito aqui: a lista de
+      // polos muda quando um campus entra ou sai da oferta, e um numero fixo
+      // fazia este teste quebrar por estar desatualizado — nao por regressao.
+      expect(res.body.length).toBeGreaterThanOrEqual(POLOS.length);
       expect(res.body[0]).toHaveProperty('totalSalas');
       expect(res.body[0]).toHaveProperty('totalAlunos');
     });

@@ -385,9 +385,9 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
         aluno.token,
       ).expect(200);
 
-      const res = await comoAdmin(api().delete(`/api/faixas/${faixaId}`)).expect(
-        409,
-      );
+      const res = await comoAdmin(
+        api().delete(`/api/faixas/${faixaId}`),
+      ).expect(409);
 
       expect(res.body.message).toContain('CANCELADO');
       expect(res.body.message).toContain('ativo=false');

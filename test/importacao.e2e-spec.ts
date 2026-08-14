@@ -220,6 +220,7 @@ describe('Importacao de CSVs (e2e)', () => {
     let poloAId: number;
     let alunoId: number;
     let salaFaixaId: number;
+    let ead: { id: number; nome: string };
     // Nomes de exibicao vindos do seed ("EaD", "Modular / Hibrido") — o aviso
     // fala em nomes, nao em ids, entao o teste tambem.
     let nomeEad: string;
@@ -269,7 +270,7 @@ describe('Importacao de CSVs (e2e)', () => {
       poloAId = (await prisma.polo.create({ data: { nome: POLO_A } })).id;
       await prisma.polo.create({ data: { nome: POLO_B } });
 
-      const ead = await prisma.modalidade.findUniqueOrThrow({
+      ead = await prisma.modalidade.findUniqueOrThrow({
         where: { codigo: 'EAD' },
       });
 
@@ -339,6 +340,10 @@ describe('Importacao de CSVs (e2e)', () => {
           matricula: RA,
           userIdD2L: '77777',
           periodoLetivoId: PERIODO_VIGENTE,
+          // Fotografia do vinculo no momento da reserva: EaD no polo A, que e
+          // exatamente o que as reimportacoes deste bloco vao mudar por baixo.
+          modalidadeId: ead.id,
+          poloId: poloAId,
         },
       });
     }, 60_000);
@@ -425,6 +430,238 @@ describe('Importacao de CSVs (e2e)', () => {
         where: { matricula: RA },
         data: { status: 'CONFIRMADO' },
       });
+    });
+  });
+
+  /**
+   * O ciclo inteiro do curso renomeado: a planilha muda a grafia, o upsert cria
+   * um segundo vinculo, a importacao denuncia, a secretaria mescla e a prova
+   * volta para uma linha so.
+   */
+  describe('curso renomeado: deteccao e mesclagem', () => {
+    const RA = 'E2EGRAFIA01';
+    const CURSO_ANTIGO = 'PSICOLOGIA';
+    const CURSO_NOVO = 'Psicologia — Bacharelado';
+    const OUTRO_CURSO = 'ENFERMAGEM';
+    const POLO = 'Polo E2E Grafia';
+    const PERIODO = 'E2E-GRAFIA';
+
+    let poloId: number;
+    let salaFaixaId: number;
+    let modalidade: { id: number; nome: string };
+
+    const csv = (...cursos: string[]) =>
+      [
+        'RA;ALUNO;EMAIL INSTITUCIONAL;CURSO;STATUS CURSO;CAMPUS',
+        ...cursos.map((c) => `${RA};ANA PAULA SOUZA;;${c};Ativo;${POLO}`),
+      ].join('\r\n');
+
+    const subir = (...cursos: string[]) =>
+      request(app.getHttpServer())
+        .post('/api/importacao/alunos')
+        .set('Authorization', `Bearer ${token}`)
+        .field('modalidade', 'EAD')
+        .attach(
+          'arquivo',
+          Buffer.from(csv(...cursos), 'utf8'),
+          'alunos-grafia.csv',
+        );
+
+    async function limpar() {
+      await prisma.agendamento.deleteMany({ where: { matricula: RA } });
+
+      const polo = await prisma.polo.findUnique({ where: { nome: POLO } });
+
+      if (polo) {
+        await prisma.salaFaixa.deleteMany({
+          where: { faixa: { poloId: polo.id } },
+        });
+        await prisma.faixa.deleteMany({ where: { poloId: polo.id } });
+        await prisma.sala.deleteMany({ where: { poloId: polo.id } });
+        await prisma.alunoImportado.deleteMany({ where: { poloId: polo.id } });
+        await prisma.polo.delete({ where: { id: polo.id } });
+      }
+    }
+
+    beforeAll(async () => {
+      await limpar();
+
+      poloId = (await prisma.polo.create({ data: { nome: POLO } })).id;
+
+      modalidade = await prisma.modalidade.findUniqueOrThrow({
+        where: { codigo: 'EAD' },
+      });
+
+      const sala = await prisma.sala.create({
+        data: { poloId, nome: 'GRAFIA-101', capacidade: 5 },
+      });
+
+      const faixa = await prisma.faixa.create({
+        data: {
+          poloId,
+          data: new Date('2026-11-20'),
+          horaInicio: '08:30',
+          horaFim: '11:30',
+          salaFaixas: {
+            create: [
+              {
+                salaId: sala.id,
+                modalidadeId: modalidade.id,
+                vagas: 5,
+                ordem: 1,
+              },
+            ],
+          },
+        },
+        include: { salaFaixas: true },
+      });
+
+      salaFaixaId = faixa.salaFaixas[0].id;
+    }, 60_000);
+
+    afterAll(limpar);
+
+    it('a carga inicial nao acusa nada', async () => {
+      const res = await subir(CURSO_ANTIGO).expect(201);
+
+      expect(res.body.criados).toBe(1);
+      expect(res.body.cursosRenomeados).toEqual([]);
+    });
+
+    it('a mudanca de grafia CRIA um segundo vinculo e e denunciada', async () => {
+      // A prova fica presa ao vinculo antigo — e o que a mesclagem vai resgatar.
+      const antigo = await prisma.alunoImportado.findFirstOrThrow({
+        where: { matricula: RA, curso: CURSO_ANTIGO },
+      });
+
+      await prisma.agendamento.create({
+        data: {
+          alunoId: antigo.id,
+          salaFaixaId,
+          matricula: RA,
+          userIdD2L: '55555',
+          periodoLetivoId: PERIODO,
+          modalidadeId: modalidade.id,
+          poloId,
+        },
+      });
+
+      const res = await subir(CURSO_NOVO).expect(201);
+
+      expect(res.body.criados).toBe(1);
+      expect(res.body.cursosRenomeados).toHaveLength(1);
+
+      const aviso = res.body.cursosRenomeados[0];
+      expect(aviso.matricula).toBe(RA);
+      expect(aviso.curso).toBe(CURSO_NOVO);
+      expect(aviso.candidatas).toHaveLength(1);
+      expect(aviso.candidatas[0]).toMatchObject({
+        alunoId: antigo.id,
+        curso: CURSO_ANTIGO,
+        semelhanca: 'tokens-contidos',
+        agendamentosConfirmados: 1,
+      });
+    });
+
+    it('curso DIFERENTE no mesmo RA nao e confundido com renomeacao', async () => {
+      const res = await subir(CURSO_NOVO, OUTRO_CURSO).expect(201);
+
+      expect(res.body.cursosRenomeados).toEqual([]);
+    });
+
+    it('as duas grafias no MESMO arquivo sao dois vinculos, nao um renomeado', async () => {
+      const res = await subir(CURSO_ANTIGO, CURSO_NOVO).expect(201);
+
+      expect(res.body.cursosRenomeados).toEqual([]);
+    });
+
+    it('a mesclagem move a prova e apaga o vinculo antigo', async () => {
+      const [antigo, novo] = await Promise.all([
+        prisma.alunoImportado.findFirstOrThrow({
+          where: { matricula: RA, curso: CURSO_ANTIGO },
+        }),
+        prisma.alunoImportado.findFirstOrThrow({
+          where: { matricula: RA, curso: CURSO_NOVO },
+        }),
+      ]);
+
+      const res = await request(app.getHttpServer())
+        .post(`/api/alunos/${novo.id}/mesclar`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ absorverId: antigo.id })
+        .expect(201);
+
+      expect(res.body.agendamentosMovidos).toBe(1);
+      expect(res.body.avisos).toEqual([]);
+
+      // O vinculo antigo deixou de existir...
+      expect(
+        await prisma.alunoImportado.findUnique({ where: { id: antigo.id } }),
+      ).toBeNull();
+
+      // ...e a prova esta no que ficou.
+      const prova = await prisma.agendamento.findFirstOrThrow({
+        where: { matricula: RA },
+      });
+      expect(prova.alunoId).toBe(novo.id);
+    });
+
+    it('RECUSA mesclar vinculos de matriculas diferentes', async () => {
+      const novo = await prisma.alunoImportado.findFirstOrThrow({
+        where: { matricula: RA, curso: CURSO_NOVO },
+      });
+
+      const outraPessoa = await prisma.alunoImportado.create({
+        data: {
+          matricula: 'E2EGRAFIA99',
+          curso: CURSO_ANTIGO,
+          statusCurso: 'Ativo',
+          ativo: true,
+          modalidadeId: modalidade.id,
+          poloId,
+        },
+      });
+
+      await request(app.getHttpServer())
+        .post(`/api/alunos/${novo.id}/mesclar`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ absorverId: outraPessoa.id })
+        .expect(400);
+
+      // Nada foi apagado.
+      expect(
+        await prisma.alunoImportado.findUnique({
+          where: { id: outraPessoa.id },
+        }),
+      ).not.toBeNull();
+    });
+
+    it('RECUSA quando os dois tem prova confirmada no mesmo periodo', async () => {
+      const novo = await prisma.alunoImportado.findFirstOrThrow({
+        where: { matricula: RA, curso: CURSO_NOVO },
+      });
+
+      const outro = await prisma.alunoImportado.findFirstOrThrow({
+        where: { matricula: RA, curso: OUTRO_CURSO },
+      });
+
+      await prisma.agendamento.create({
+        data: {
+          alunoId: outro.id,
+          salaFaixaId,
+          matricula: RA,
+          userIdD2L: '55555',
+          periodoLetivoId: PERIODO,
+          modalidadeId: modalidade.id,
+          poloId,
+        },
+      });
+
+      await request(app.getHttpServer())
+        .post(`/api/alunos/${novo.id}/mesclar`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ absorverId: outro.id })
+        .expect(409);
     });
   });
 

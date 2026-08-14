@@ -214,6 +214,7 @@ export class AgendamentoService {
       matricula: vinculo.matricula,
       curso: vinculo.curso,
       modalidadeId: vinculo.modalidadeId,
+      poloId: vinculo.poloId,
       faixaId: faixa.id,
       userIdD2L: aluno.userIdD2L,
       periodoLetivoId: periodo.periodoLetivoId,
@@ -415,6 +416,8 @@ export class AgendamentoService {
     matricula: string;
     curso: string;
     modalidadeId: number;
+    /** Do VINCULO. Vai gravado na reserva como fotografia — ver o schema. */
+    poloId: number;
     faixaId: number;
     userIdD2L: string;
     periodoLetivoId: string;
@@ -452,6 +455,12 @@ export class AgendamentoService {
           matricula: dados.matricula,
           userIdD2L: dados.userIdD2L,
           periodoLetivoId: dados.periodoLetivoId,
+          // Do vinculo, nao da oferta: sao iguais por construcao (a alocacao so
+          // aceita oferta da modalidade do aluno, e o portal recusa faixa de
+          // outro polo), mas o que a coluna documenta e o ALUNO na data da
+          // reserva — a proxima importacao pode mudar os dois.
+          modalidadeId: dados.modalidadeId,
+          poloId: dados.poloId,
           disciplinas: {
             create: dados.disciplinas.map((d) => ({
               orgUnitId: d.orgUnitId,

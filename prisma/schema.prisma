@@ -88,8 +88,9 @@ model Modalidade {
   nome           String
   duracaoMinutos Int
 
-  alunos     AlunoImportado[]
-  salaFaixas SalaFaixa[]
+  alunos       AlunoImportado[]
+  salaFaixas   SalaFaixa[]
+  agendamentos Agendamento[] // fotografia da modalidade do aluno na reserva
 
   @@map("modalidade")
 }
@@ -108,9 +109,10 @@ model Polo {
   cidade String?
   ativo  Boolean @default(true)
 
-  salas  Sala[]
-  faixas Faixa[]
-  alunos AlunoImportado[]
+  salas        Sala[]
+  faixas       Faixa[]
+  alunos       AlunoImportado[]
+  agendamentos Agendamento[] // fotografia do polo do aluno na reserva
 
   @@map("polo")
 }
@@ -213,8 +215,11 @@ model AlunoImportado {
   // que a regra de elegibilidade possa mudar sem reimportar as planilhas.
   statusCurso  String
   // Derivado de statusCurso pela lista em src/enums/status-curso.enum.ts.
-  // "ativo" aqui significa PODE AGENDAR — nao e o mesmo que STATUS CURSO=="Ativo":
-  // Transf. Interna, Transf. de Curriculo e Alter. de Habilitacao tambem entram.
+  // "ativo" aqui significa PODE AGENDAR. Regra vigente (11/08/2026): SO "Ativo"
+  // agenda — qualquer outro status (Desistente, Trancado, Cancelado, Formado,
+  // Transf. Interna, Transf. de Curriculo, Alter. de Habilitacao, ou grafia
+  // desconhecida) grava ativo=false. Continua sendo campo DERIVADO e nao copia
+  // da string: a regra ja mudou uma vez e o enum e o unico ponto de alteracao.
   ativo        Boolean @default(true)
   modalidadeId Int
   poloId       Int
@@ -324,6 +329,22 @@ enum TipoImportacao {
 // Ocupacao = count(Agendamento WHERE salaFaixaId = X) vs SalaFaixa.vagas.
 // Alocacao sequencial + concorrencia tratadas em transacao no service.
 
+// MODALIDADE E POLO SAO FOTOGRAFIA, nao consulta ao vinculo (13/08/2026).
+//
+// `AlunoImportado` e tabela de ESTADO ATUAL: cada importacao sobrescreve
+// modalidade e polo do vinculo, e nao ha versao anterior. Sem estas duas
+// colunas, exportar o semestre PASSADO mostrava a modalidade/polo de HOJE — o
+// aluno que era EaD em 2026/1 e virou Modular em 2026/2 aparecia como Modular na
+// lista de uma prova que fez como EaD, ao lado de data e sala corretas. Duas
+// colunas da mesma linha discordando entre si.
+//
+// Sao FKs e nao texto (ao contrario de HistoricoAgendamento.de/para, que e frase
+// pronta): aqui os valores tambem sao filtro de relatorio, e `Polo.nome` ja e
+// imutavel por decisao — nao ha renome para congelar, so reatribuicao do aluno.
+//
+// Redundantes com `salaFaixa` POR CONSTRUCAO: a alocacao so aceita oferta da
+// modalidade do aluno, e o portal recusa faixa de outro polo. E essa redundancia
+// que torna o backfill exato — ver a migration.
 model Agendamento {
   id              Int               @id @default(autoincrement())
   alunoId         Int
@@ -331,6 +352,8 @@ model Agendamento {
   matricula       String // desnormalizado p/ exportacao
   userIdD2L       String // id numerico Valence vindo do launch LTI
   periodoLetivoId String
+  modalidadeId    Int // do ALUNO, no momento da reserva
+  poloId          Int // do ALUNO, no momento da reserva
   status          StatusAgendamento @default(CONFIRMADO)
   alocadoManual   Boolean           @default(false) // admin remanejou
   createdAt       DateTime          @default(now())
@@ -338,6 +361,8 @@ model Agendamento {
 
   aluno       AlunoImportado          @relation(fields: [alunoId], references: [id])
   salaFaixa   SalaFaixa               @relation(fields: [salaFaixaId], references: [id])
+  modalidade  Modalidade              @relation(fields: [modalidadeId], references: [id])
+  polo        Polo                    @relation(fields: [poloId], references: [id])
   disciplinas AgendamentoDisciplina[]
   syncs       SyncD2L[]
   historico   HistoricoAgendamento[]
@@ -345,6 +370,8 @@ model Agendamento {
   @@index([alunoId])
   @@index([salaFaixaId]) // usado na contagem de ocupacao
   @@index([matricula])
+  @@index([modalidadeId])
+  @@index([poloId])
   @@map("agendamento")
 }
 
