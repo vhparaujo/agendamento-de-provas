@@ -23,6 +23,7 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
     "seed": "prisma db seed",
+    "seed:teste": "tsx scripts/seed-teste-estrutura.ts",
     "db:up": "docker compose up -d mysql",
     "db:down": "docker compose down",
     "db:reset": "prisma migrate reset",
