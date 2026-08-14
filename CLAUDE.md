@@ -840,7 +840,43 @@ compartilhado pelas duas portas de entrada):
 | Janela ≥ duração da modalidade | Faixa de 1h30 com sala EaD (3h) é oferta impossível |
 | `vagas` ≤ capacidade da sala | Mais alunos do que lugares |
 | Sala entra 1× por faixa | Dentro da faixa ela fica travada numa modalidade |
+| Sala sem prova sobreposta no mesmo dia | Duas provas na mesma porta ao mesmo tempo (abaixo) |
 | `ordem` única por faixa + modalidade | É a sequência de preenchimento da alocação |
+
+### ⚠️ A mesma sala não recebe duas provas ao mesmo tempo (14/08/2026)
+
+O unique de `SalaFaixa` é `[salaId, faixaId]` — **por faixa, não por horário**.
+Ele impede a sala de entrar duas vezes na *mesma* faixa, e só isso. Nada impedia
+o par abaixo, com as duas ofertas passando em todas as outras validações:
+
+```
+17/08  09:00-12:00  Sala 1  EAD     ← faixas diferentes,
+17/08  10:30-12:00  Sala 1  SEMI    ← a mesma porta às 10:30
+```
+
+O sintoma só apareceria no dia: duas listas de presença para a mesma sala, com
+alunos de modalidades e durações diferentes disputando as cadeiras.
+
+A regra vive em `exigirSalaLivreNoHorario` (`sala-faixa.validacao.ts`, pura) e é
+chamada nas **três** portas que podem criar o choque — `POST /faixas`,
+`POST /faixas/:id/salas` e `PATCH /faixas/:id`. A terceira é a menos óbvia e a
+mais perigosa: **mover a faixa no calendário arrasta todas as salas dela junto**,
+e o admin acha que só mexeu no relógio. Ela só reconfere quando `data`,
+`horaInicio` ou `horaFim` realmente mudam — um PATCH de `ativo` não cria
+sobreposição nenhuma, e recusá-lo por causa de dado antigo deixaria o admin sem
+conseguir nem tirar do ar a faixa problemática.
+
+| Decisão | Por quê |
+|---|---|
+| Intervalo **semiaberto**: 08:30-10:00 e 10:00-11:30 não se sobrepõem | A sala vaga quando a prova acaba. Exigir folga de virada seria inventar regra que a universidade não pediu — quem quiser folga cadastra a faixa seguinte mais tarde |
+| Faixa concorrente **inativa e sem confirmado NÃO ocupa** a sala | Sumiu do portal, não ganha aluno novo, e não há ninguém para aparecer no dia. Bloquear prenderia a sala para sempre: faixa com agendamento **CANCELADO** não pode ser apagada (`FaixaService.remover`) |
+| Faixa inativa **com** confirmado **ocupa** | Desativar não cancela prova nenhuma (regra 7), e o admin pode agendar de propósito numa faixa desativada. Aquelas pessoas vão estar na sala |
+| A consulta é por `sala + data`, sem filtrar polo | `Sala.poloId` é imutável e `validarOferta` já exige que a sala seja do polo da faixa — toda concorrente é do mesmo campus por construção |
+| Checagem **fora** da transação | Mesmo risco que o `duplicada` de `criar` já aceita: dois admins montando faixas no mesmo segundo ainda passariam. São poucas pessoas, e o caminho crítico de concorrência é a alocação de vaga, que tem `FOR UPDATE` |
+
+**Não impede dado antigo.** A regra vale na escrita; sobreposição já gravada
+continua no banco. Para auditar, cruze `sala_faixa` consigo mesma por
+`faixa.data` comparando as janelas.
 
 **Campos deliberadamente imutáveis** — mudá-los quebraria dado já gravado:
 `Polo.nome` (chave de casamento com o CSV), `Sala.poloId` (sala não se muda de

@@ -9,6 +9,7 @@ import { PrismaService } from '../../database/prisma.service';
 import { Prisma, StatusAgendamento } from '../../generated/prisma/client';
 import {
   exigirEncontrado,
+  exigirSalaLivreNoHorario,
   janelaDaFaixa,
   validarOferta,
 } from './sala-faixa.validacao';
@@ -113,6 +114,12 @@ export class FaixaService {
       dados.salas,
     );
 
+    await this.exigirSalasLivres(
+      data,
+      dados,
+      ofertas.map((o) => o.salaId),
+    );
+
     const faixa = await this.prisma.$transaction(async (tx) => {
       const criada = await tx.faixa.create({
         data: {
@@ -207,6 +214,30 @@ export class FaixaService {
       );
     }
 
+    // Mover a faixa no calendario arrasta TODAS as salas dela junto — e um
+    // horario que nao chocava com nada pode passar a chocar. E o caminho menos
+    // obvio para criar duas provas na mesma sala, porque o admin acha que so
+    // mexeu no relogio.
+    //
+    // So confere quando data/hora realmente mudam: um PATCH de `ativo` nao cria
+    // sobreposicao nenhuma, e recusa-lo por causa de dado antigo deixaria o
+    // admin sem conseguir nem desativar a faixa problematica.
+    const mudouOQuando =
+      (dados.data !== undefined &&
+        paraData(dados.data).getTime() !== faixa.data.getTime()) ||
+      (dados.horaInicio !== undefined &&
+        dados.horaInicio !== faixa.horaInicio) ||
+      (dados.horaFim !== undefined && dados.horaFim !== faixa.horaFim);
+
+    if (mudouOQuando) {
+      await this.exigirSalasLivres(
+        dados.data ? paraData(dados.data) : faixa.data,
+        { horaInicio, horaFim },
+        faixa.salaFaixas.map((sf) => sf.salaId),
+        id,
+      );
+    }
+
     await this.prisma.faixa.update({
       where: { id },
       data: {
@@ -244,6 +275,8 @@ export class FaixaService {
       [entrada],
       faixa.salaFaixas,
     );
+
+    await this.exigirSalasLivres(faixa.data, faixa, [oferta.salaId], faixaId);
 
     await this.prisma.salaFaixa.create({ data: { ...oferta, faixaId } });
 
@@ -294,6 +327,63 @@ export class FaixaService {
     ]);
 
     return { mensagem: `Faixa ${id} removida` };
+  }
+
+  /**
+   * Recusa colocar uma sala num horario em que ela ja tem prova no mesmo dia.
+   * Regra e criterio de "ocupa de verdade" em exigirSalaLivreNoHorario.
+   *
+   * O recorte da consulta e `sala + data`, sem filtrar polo: `Sala.poloId` e
+   * imutavel e `validarOferta` ja garante que a sala e do polo da faixa, entao
+   * toda faixa que disputa esta sala e do mesmo campus por construcao.
+   *
+   * Como o `duplicada` de `criar`, a checagem e feita FORA da transacao: dois
+   * admins montando faixas que se cruzam no mesmo segundo ainda passariam. E o
+   * mesmo risco que o projeto ja aceita nas rotas administrativas — sao poucas
+   * pessoas, e o custo de serializar o cadastro nao se paga. O caminho critico
+   * de concorrencia e a alocacao de vaga, que tem FOR UPDATE.
+   */
+  private async exigirSalasLivres(
+    data: Date,
+    janela: { horaInicio: string; horaFim: string },
+    salaIds: number[],
+    faixaIdIgnorada?: number,
+  ): Promise<void> {
+    if (salaIds.length === 0) return;
+
+    const concorrentes = await this.prisma.salaFaixa.findMany({
+      where: {
+        salaId: { in: salaIds },
+        faixa: {
+          data,
+          id: faixaIdIgnorada ? { not: faixaIdIgnorada } : undefined,
+        },
+      },
+      include: {
+        sala: { select: { nome: true } },
+        faixa: {
+          select: { id: true, horaInicio: true, horaFim: true, ativo: true },
+        },
+        _count: {
+          select: {
+            agendamentos: { where: { status: StatusAgendamento.CONFIRMADO } },
+          },
+        },
+      },
+    });
+
+    exigirSalaLivreNoHorario(
+      janela,
+      concorrentes.map((c) => ({
+        faixaId: c.faixa.id,
+        horaInicio: c.faixa.horaInicio,
+        horaFim: c.faixa.horaFim,
+        faixaAtiva: c.faixa.ativo,
+        salaId: c.salaId,
+        salaNome: c.sala.nome,
+        confirmados: c._count.agendamentos,
+      })),
+    );
   }
 
   /**

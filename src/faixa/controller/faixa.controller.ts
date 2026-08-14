@@ -109,6 +109,8 @@ export class FaixaController {
       '- a janela precisa comportar a prova (faixa de 1h30 nao recebe sala EaD de 3h);\n' +
       '- `vagas` nao passa da capacidade da sala;\n' +
       '- a mesma sala entra uma unica vez por faixa;\n' +
+      '- a sala nao pode ter outra prova no mesmo dia em horario que se ' +
+      'sobreponha, mesmo que em outra faixa;\n' +
       '- `ordem` e unica dentro de faixa + modalidade.',
   })
   @ApiCreatedResponse({ type: FaixaDetalheDto })
@@ -121,7 +123,8 @@ export class FaixaController {
   })
   @ApiConflictResponse({
     description:
-      'Faixa identica ja existe no polo, ou ordem repetida na modalidade',
+      'Faixa identica ja existe no polo, ordem repetida na modalidade, ou ' +
+      'sala ja ocupada por outra faixa que se sobrepoe no relogio',
   })
   criar(@Body() dto: CriarFaixaDto) {
     return this.faixaService.criar(dto);
@@ -132,7 +135,10 @@ export class FaixaController {
     summary: 'Ajusta data, horario ou situacao da faixa',
     description:
       'Encurtar a janela e recusado quando ja existe oferta cuja prova nao caberia ' +
-      'mais — do contrario a faixa viraria uma oferta impossivel sem ninguem notar.',
+      'mais — do contrario a faixa viraria uma oferta impossivel sem ninguem notar.\n\n' +
+      'Mudar data ou horario arrasta TODAS as salas da faixa junto, entao a ' +
+      'sobreposicao com outras faixas e reconferida: um horario que nao chocava ' +
+      'pode passar a chocar. Um PATCH so de `ativo` nao dispara essa checagem.',
   })
   @ApiParam({ name: 'id', type: Number, example: 14 })
   @ApiOkResponse({ type: FaixaDetalheDto })
@@ -140,6 +146,10 @@ export class FaixaController {
     description: 'Horario invertido, ou prova ofertada nao cabe mais',
   })
   @ApiNotFoundResponse({ description: 'Faixa nao encontrada' })
+  @ApiConflictResponse({
+    description:
+      'O novo horario poria alguma sala da faixa em duas provas ao mesmo tempo',
+  })
   atualizar(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: AtualizarFaixaDto,
@@ -163,7 +173,9 @@ export class FaixaController {
     description: 'Faixa, sala ou modalidade nao encontrada',
   })
   @ApiConflictResponse({
-    description: 'Sala ja esta nesta faixa, ou ordem repetida',
+    description:
+      'Sala ja esta nesta faixa, ordem repetida, ou a sala ja tem prova em ' +
+      'outra faixa que se sobrepoe no relogio',
   })
   adicionarSala(
     @Param('id', ParseIntPipe) id: number,

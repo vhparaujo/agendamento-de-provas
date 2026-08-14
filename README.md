@@ -380,6 +380,20 @@ por dentro da faixa.
 | `POST` | `/faixas/:id/salas` | Adiciona sala a uma faixa existente |
 | `GET` `PATCH` `DELETE` | `/sala-faixas/:id` | Ajusta vagas e ordem; modalidade é imutável |
 
+**Uma sala não recebe duas provas ao mesmo tempo.** O `@@unique([salaId, faixaId])`
+é por *faixa*, não por *horário*: ele impede a sala de entrar duas vezes na mesma
+faixa, mas nada impedia `09:00-12:00 EAD` e `10:30-12:00 SEMI` na mesma sala e no
+mesmo dia — duas ofertas válidas, e duas listas de presença para a mesma porta,
+descobertas só no dia da prova. As três rotas que podem criar o choque
+(`POST /faixas`, `POST /faixas/:id/salas` e `PATCH /faixas/:id`) respondem **409**.
+
+Detalhes que importam: o intervalo é **semiaberto** (08:30-10:00 e 10:00-11:30
+convivem — a sala vaga quando a prova acaba); uma faixa concorrente **inativa e
+sem ninguém confirmado não ocupa** a sala, mas inativa **com** confirmado ocupa,
+porque desativar não cancela prova nenhuma; e o `PATCH` só reconfere quando
+`data`/`horaInicio`/`horaFim` mudam de fato — mover a faixa arrasta todas as
+salas dela junto, e é o caminho menos óbvio para criar o choque.
+
 ### Período de agendamento
 
 Exigem JWT de admin. A janela em que se pode agendar — **não confundir com as
@@ -881,7 +895,9 @@ TurmaImportada ── ImportacaoCsv      Admin      PeriodoAgendamento
 **Índices que importam para a regra**
 
 - `SalaFaixa @@unique([salaId, faixaId])` — uma sala entra uma única vez por
-  faixa, logo numa única modalidade.
+  faixa, logo numa única modalidade. ⚠️ É por **faixa**, não por **horário**: não
+  impede a mesma sala em duas faixas que se cruzam no relógio. Isso é regra de
+  aplicação (`exigirSalaLivreNoHorario`), não de banco.
 - `SalaFaixa @@unique([faixaId, modalidadeId, ordem])` — a ordem de preenchimento
   é única e não ambígua.
 - `AlunoImportado @@unique([matricula, curso])` — chave de idempotência da

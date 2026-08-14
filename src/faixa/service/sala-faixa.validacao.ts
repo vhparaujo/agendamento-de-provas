@@ -1,5 +1,9 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { duracaoEmMinutos } from '../../components/horario.util';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
+import { duracaoEmMinutos, paraMinutos } from '../../components/horario.util';
 
 export interface SalaParaValidar {
   id: number;
@@ -71,6 +75,96 @@ export function validarOferta(
         `nao da para ofertar ${vagas} vagas.`,
     );
   }
+}
+
+/**
+ * Uma oferta que JA existe e disputa a mesma sala fisica no mesmo dia.
+ * `faixaAtiva` e `confirmados` decidem se ela de fato ocupa a sala — ver
+ * exigirSalaLivreNoHorario.
+ */
+export interface OfertaConcorrente {
+  faixaId: number;
+  horaInicio: string;
+  horaFim: string;
+  faixaAtiva: boolean;
+  salaId: number;
+  salaNome: string;
+  confirmados: number;
+}
+
+/**
+ * Duas janelas do MESMO dia se cruzam no relogio.
+ *
+ * Intervalo semiaberto: 08:30-10:00 e 10:00-11:30 NAO se sobrepoem. A sala vaga
+ * no instante em que a prova anterior acaba, e exigir um intervalo de virada
+ * seria inventar uma regra que a universidade nao pediu — quem quiser folga
+ * entre as provas cadastra a faixa seguinte mais tarde, como ja faz hoje.
+ */
+export function seSobrepoem(
+  a: { horaInicio: string; horaFim: string },
+  b: { horaInicio: string; horaFim: string },
+): boolean {
+  return (
+    paraMinutos(a.horaInicio) < paraMinutos(b.horaFim) &&
+    paraMinutos(b.horaInicio) < paraMinutos(a.horaFim)
+  );
+}
+
+/**
+ * ============================================================================
+ * A MESMA SALA NAO RECEBE DUAS PROVAS AO MESMO TEMPO
+ * ============================================================================
+ * O unique de SalaFaixa e `[salaId, faixaId]` — por FAIXA, nao por HORARIO.
+ * Ele impede a sala de entrar duas vezes na mesma faixa, e so. Nada no banco
+ * impedia isto:
+ *
+ *   17/08  09:00-12:00  Sala 1  EAD      <- duas faixas diferentes,
+ *   17/08  10:30-12:00  Sala 1  SEMI     <- as duas validas, a mesma porta
+ *
+ * Sao duas ofertas internamente coerentes, cada uma com sua modalidade, e o
+ * sintoma so apareceria no dia: duas listas de presenca para a mesma sala, com
+ * alunos de modalidades e duracoes diferentes disputando as cadeiras.
+ *
+ * QUANDO UMA FAIXA CONCORRENTE **NAO** OCUPA A SALA: quando esta inativa E nao
+ * tem ninguem confirmado. Faixa inativa sumiu do portal, entao nao ganha aluno
+ * novo; sem confirmado, nao ha ninguem para aparecer no dia. Bloquear tambem
+ * esse caso deixaria o admin sem saida, porque faixa com agendamento CANCELADO
+ * nao pode ser apagada (FaixaService.remover) e prenderia a sala para sempre.
+ *
+ * Faixa inativa COM confirmado continua ocupando: desativar nao cancela prova
+ * nenhuma (regra 7), e o admin pode agendar de proposito numa faixa desativada.
+ * Aquelas pessoas vao estar na sala.
+ */
+export function exigirSalaLivreNoHorario(
+  janela: { horaInicio: string; horaFim: string },
+  concorrentes: OfertaConcorrente[],
+): void {
+  const choques = concorrentes
+    .filter((c) => c.faixaAtiva || c.confirmados > 0)
+    .filter((c) => seSobrepoem(janela, c))
+    // Ordem estavel: a mensagem nao pode mudar a cada chamada com os mesmos
+    // dados, senao o teste do front vira loteria.
+    .sort(
+      (a, b) =>
+        a.salaNome.localeCompare(b.salaNome, 'pt-BR') ||
+        paraMinutos(a.horaInicio) - paraMinutos(b.horaInicio),
+    );
+
+  if (choques.length === 0) return;
+
+  const [primeiro] = choques;
+  const outrasSalas = new Set(choques.map((c) => c.salaId)).size - 1;
+
+  throw new ConflictException(
+    `A sala "${primeiro.salaNome}" ja tem prova das ${primeiro.horaInicio} as ` +
+      `${primeiro.horaFim} neste dia (faixa ${primeiro.faixaId}), que se ` +
+      `sobrepoe a ${janela.horaInicio}-${janela.horaFim}. ` +
+      'Uma sala nao pode receber duas provas ao mesmo tempo.' +
+      (outrasSalas > 0
+        ? ` Outra(s) ${outrasSalas} sala(s) desta faixa tem o mesmo problema.`
+        : '') +
+      ' Use outra sala ou mude o horario.',
+  );
 }
 
 /** Janela da faixa, ja recusando fim antes do inicio. */

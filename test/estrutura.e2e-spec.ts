@@ -476,6 +476,162 @@ describe('Estrutura: polo, sala, faixa e oferta (e2e)', () => {
     });
   });
 
+  /**
+   * O unique de SalaFaixa e [salaId, faixaId] — por FAIXA, nao por HORARIO.
+   * Sem estas travas, duas faixas que se cruzam no relogio podiam ficar com a
+   * mesma sala, cada oferta valida por si, e o choque so aparecia no dia da
+   * prova: duas turmas de modalidades diferentes na mesma porta.
+   */
+  describe('a mesma sala nao recebe duas provas ao mesmo tempo', () => {
+    const DIA = '2026-09-11';
+    let manhaId: number;
+    let tardeId: number;
+
+    it('cria a faixa da manha ocupando a sala das 08:30 as 10:00', async () => {
+      const res = await auth(api().post('/api/faixas'))
+        .send({
+          poloId,
+          data: DIA,
+          horaInicio: '08:30',
+          horaFim: '10:00',
+          salas: [{ salaId: salaGrandeId, modalidadeId: modular.id }],
+        })
+        .expect(201);
+
+      manhaId = res.body.id;
+    });
+
+    it('RECUSA faixa nova com a mesma sala em horario sobreposto', async () => {
+      const res = await auth(api().post('/api/faixas'))
+        .send({
+          poloId,
+          data: DIA,
+          horaInicio: '09:00',
+          horaFim: '12:00', // cruza a faixa da manha
+          salas: [{ salaId: salaGrandeId, modalidadeId: ead.id }],
+        })
+        .expect(409);
+
+      expect(res.body.message).toMatch(/nao pode receber duas provas/);
+      expect(res.body.message).toMatch(new RegExp(`faixa ${manhaId}`));
+    });
+
+    it('ACEITA a sala numa faixa que comeca onde a outra acaba', async () => {
+      // intervalo semiaberto: nao exigimos folga de virada entre as provas
+      const res = await auth(api().post('/api/faixas'))
+        .send({
+          poloId,
+          data: DIA,
+          horaInicio: '10:00',
+          horaFim: '11:30',
+          salas: [{ salaId: salaGrandeId, modalidadeId: modular.id }],
+        })
+        .expect(201);
+
+      await auth(api().delete(`/api/faixas/${res.body.id}`)).expect(200);
+    });
+
+    it('ACEITA a mesma sala no mesmo horario em OUTRO dia', async () => {
+      const res = await auth(api().post('/api/faixas'))
+        .send({
+          poloId,
+          data: '2026-09-12',
+          horaInicio: '08:30',
+          horaFim: '10:00',
+          salas: [{ salaId: salaGrandeId, modalidadeId: modular.id }],
+        })
+        .expect(201);
+
+      await auth(api().delete(`/api/faixas/${res.body.id}`)).expect(200);
+    });
+
+    it('RECUSA ADICIONAR a sala a uma faixa que se sobrepoe', async () => {
+      const outra = await auth(api().post('/api/faixas'))
+        .send({
+          poloId,
+          data: DIA,
+          horaInicio: '09:30',
+          horaFim: '11:00',
+          salas: [{ salaId: salaPequenaId, modalidadeId: modular.id }],
+        })
+        .expect(201);
+
+      const res = await auth(api().post(`/api/faixas/${outra.body.id}/salas`))
+        .send({ salaId: salaGrandeId, modalidadeId: modular.id })
+        .expect(409);
+
+      expect(res.body.message).toMatch(/nao pode receber duas provas/);
+
+      await auth(api().delete(`/api/faixas/${outra.body.id}`)).expect(200);
+    });
+
+    it('cria a faixa da tarde, livre de conflito', async () => {
+      const res = await auth(api().post('/api/faixas'))
+        .send({
+          poloId,
+          data: DIA,
+          horaInicio: '14:00',
+          horaFim: '15:30',
+          salas: [{ salaId: salaGrandeId, modalidadeId: modular.id }],
+        })
+        .expect(201);
+
+      tardeId = res.body.id;
+    });
+
+    it('RECUSA MOVER a faixa para cima de outra que usa a mesma sala', async () => {
+      // o caminho menos obvio: o admin acha que so mexeu no relogio, e arrasta
+      // todas as salas da faixa junto
+      const res = await auth(api().patch(`/api/faixas/${tardeId}`))
+        .send({ horaInicio: '09:00', horaFim: '10:30' })
+        .expect(409);
+
+      expect(res.body.message).toMatch(/nao pode receber duas provas/);
+    });
+
+    it('RECUSA MOVER a faixa para o DIA da outra, no mesmo horario', async () => {
+      await auth(api().patch(`/api/faixas/${tardeId}`))
+        .send({ data: DIA, horaInicio: '08:30', horaFim: '10:00' })
+        .expect(409);
+    });
+
+    it('ACEITA mover para um horario livre', async () => {
+      const res = await auth(api().patch(`/api/faixas/${tardeId}`))
+        .send({ horaInicio: '16:00', horaFim: '17:30' })
+        .expect(200);
+
+      expect(res.body.horaInicio).toBe('16:00');
+    });
+
+    it('ACEITA desativar a faixa sem reconferir sobreposicao', async () => {
+      // PATCH de `ativo` nao cria choque nenhum; recusa-lo por causa de dado
+      // antigo deixaria o admin sem conseguir nem tirar a faixa do ar
+      await auth(api().patch(`/api/faixas/${tardeId}`))
+        .send({ ativo: false })
+        .expect(200);
+    });
+
+    it('a sala fica LIVRE quando a faixa concorrente esta inativa e vazia', async () => {
+      await auth(api().patch(`/api/faixas/${manhaId}`))
+        .send({ ativo: false })
+        .expect(200);
+
+      const res = await auth(api().post('/api/faixas'))
+        .send({
+          poloId,
+          data: DIA,
+          horaInicio: '09:00',
+          horaFim: '12:00', // o mesmo horario recusado no inicio deste bloco
+          salas: [{ salaId: salaGrandeId, modalidadeId: ead.id }],
+        })
+        .expect(201);
+
+      await auth(api().delete(`/api/faixas/${res.body.id}`)).expect(200);
+      await auth(api().delete(`/api/faixas/${tardeId}`)).expect(200);
+      await auth(api().delete(`/api/faixas/${manhaId}`)).expect(200);
+    });
+  });
+
   describe('ajuste da oferta (SalaFaixa)', () => {
     let ofertaId: number;
 
