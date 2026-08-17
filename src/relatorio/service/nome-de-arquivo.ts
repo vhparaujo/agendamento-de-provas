@@ -147,13 +147,25 @@ export function nomeDaListaDePresenca(
 /**
  * O caminho dentro do zip: uma pasta por turma, o horario como nome do arquivo.
  *
- * Duas faixas do MESMO dia e horario em polos diferentes sao o caso normal de
- * operacao (o polo nao entra em nenhum dos dois nomes, por decisao do cliente) e
- * cairiam no mesmo caminho — dentro de um zip o segundo arquivo sobrescreve o
- * primeiro em silencio. Da segunda em diante, o id da faixa desempata.
+ * Ate 17/08/2026 o desempate aqui era o `faixaId`, e disparava no caso NORMAL de
+ * operacao: duas faixas do mesmo dia e horario em polos diferentes cairiam no
+ * mesmo caminho, porque o polo nao entra no nome. Isso deixou de acontecer
+ * quando o grupo passou a ser a JANELA (dia + horario) em vez da faixa — os dois
+ * polos agora sao um arquivo so, que e o que o Brightspace precisa. Ver o
+ * cabecalho de `relatorio.service.ts`.
+ *
+ * O desempate continua porque a colisao continua POSSIVEL, so que por outro
+ * motivo: `sanear` corta cada segmento em 60 caracteres, e duas disciplinas do
+ * mesmo codigo de turma cujos nomes so diferem depois do 60o caractere geram a
+ * mesma pasta. Dentro de um zip o segundo arquivo sobrescreve o primeiro em
+ * silencio, e ninguem descobre ate conferir o numero de arquivos.
+ *
+ * O que desempata agora e o `orgUnitId`, nao o `faixaId`: e ele que realmente
+ * difere entre os dois grupos, e ele nao muda de um download para o outro (a
+ * ordem das faixas mudaria).
  */
 export function caminhoNoZip(
-  grupo: FaixaDoArquivo & TurmaDoArquivo & { faixaId: number },
+  grupo: FaixaDoArquivo & TurmaDoArquivo,
   usados: Set<string>,
 ): string {
   const pasta = identificacaoDaTurma(grupo);
@@ -164,5 +176,5 @@ export function caminhoNoZip(
     return caminho;
   }
 
-  return `${pasta}/${horarioDaProva(grupo)} #${grupo.faixaId}.csv`;
+  return `${pasta}/${horarioDaProva(grupo)} #${sanear(grupo.orgUnitId)}.csv`;
 }

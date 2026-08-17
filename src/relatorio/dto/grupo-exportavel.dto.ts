@@ -3,7 +3,14 @@ import { GrupoExportavel } from '../service/relatorio.service';
 
 /** Uma linha da aba Relatorios: um horario de prova de UMA turma. */
 export class GrupoExportavelDto implements GrupoExportavel {
-  @ApiProperty({ example: 14 })
+  @ApiProperty({
+    example: 14,
+    description:
+      'Uma das faixas que servem esta janela — a de menor id —, usada como ' +
+      '**handle** na rota de download. Nao e o recorte do grupo: quando dois ' +
+      'campi aplicam a mesma prova no mesmo dia e horario, as duas faixas ' +
+      'devolvem o mesmo arquivo, com os alunos dos dois.',
+  })
   faixaId!: number;
 
   @ApiProperty({
@@ -14,12 +21,6 @@ export class GrupoExportavelDto implements GrupoExportavel {
   })
   orgUnitId!: string;
 
-  @ApiProperty({ example: 6 })
-  poloId!: number;
-
-  @ApiProperty({ example: 'Câmpus Taguatinga' })
-  polo!: string;
-
   @ApiProperty({ type: String, format: 'date', example: '2026-08-20' })
   data!: Date;
 
@@ -28,6 +29,18 @@ export class GrupoExportavelDto implements GrupoExportavel {
 
   @ApiProperty({ example: '11:30' })
   horaFim!: string;
+
+  @ApiProperty({
+    type: [String],
+    example: ['Câmpus Asa Norte', 'Câmpus Taguatinga'],
+    description:
+      'Os campi que aplicam esta prova, em ordem alfabetica — quase sempre um ' +
+      'so. E **informativo**: o grupo libera o quiz num horario, e onde a ' +
+      'pessoa senta nao muda o acesso, entao o arquivo leva os alunos de todos ' +
+      'eles. Filtrar por `poloId` estreita quais linhas aparecem aqui, nunca ' +
+      'quem entra no arquivo.',
+  })
+  polos!: string[];
 
   @ApiProperty({
     type: String,
@@ -50,9 +63,9 @@ export class GrupoExportavelDto implements GrupoExportavel {
   @ApiProperty({
     example: 52,
     description:
-      'Matriculas DISTINTAS com prova confirmada neste horario **e** nesta ' +
-      'turma, somando todas as salas da faixa. E a quantidade de linhas que o ' +
-      'arquivo tera.',
+      'Matriculas DISTINTAS com prova confirmada nesta janela **e** nesta ' +
+      'turma, somando todas as salas de todos os polos que aplicam a prova ' +
+      'neste dia e horario. E a quantidade de linhas que o arquivo tera.',
   })
   totalAlunos!: number;
 

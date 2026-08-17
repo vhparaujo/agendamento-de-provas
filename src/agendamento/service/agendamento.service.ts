@@ -361,51 +361,14 @@ export class AgendamentoService {
     return this.buscar(agendamentoId);
   }
 
-  /**
-   * Cancela a propria prova. Nao apaga: vira CANCELADO, e a vaga volta a contar
-   * como livre (toda contagem filtra CONFIRMADO). O registro sobrevive porque
-   * "esse aluno chegou a marcar e desmarcou" e informacao que a secretaria
-   * precisa quando alguem aparece no dia sem estar na lista.
+  /*
+   * NAO existe `cancelar` pelo aluno (removido em 17/08/2026, junto com
+   * `DELETE /portal/agendamentos/:id`). Cancelar devolve a vaga e deixa a pessoa
+   * SEM prova; num periodo lotando, a vaga sai em segundos e quem so queria
+   * mudar de dia fica de fora. O aluno troca de horario (atomico, nunca o deixa
+   * sem nada); desmarcar e da secretaria, em `AgendamentoAdminService.cancelar`,
+   * que grava o e-mail de quem cancelou no historico.
    */
-  async cancelar(
-    aluno: AlunoJwtPayload,
-    agendamentoId: number,
-  ): Promise<{ mensagem: string }> {
-    const atual = await this.exigirAgendamentoDoAluno(aluno, agendamentoId);
-
-    // Fora do prazo o aluno nao desmarca sozinho: liberar a vaga depois do
-    // fechamento deixaria um lugar vago que mais ninguem consegue ocupar.
-    await this.periodo.exigirAberto();
-
-    await this.prisma.$transaction(async (tx) => {
-      const de = await descreverOferta(tx, atual.salaFaixaId);
-
-      await tx.agendamento.update({
-        where: { id: agendamentoId },
-        data: { status: StatusAgendamento.CANCELADO },
-      });
-
-      // A fila de liberacao perde o sentido: nao ha prova para liberar.
-      await tx.syncD2L.deleteMany({ where: { agendamentoId } });
-
-      await registrarHistorico(tx, {
-        agendamentoId,
-        evento: EventoAgendamento.CANCELADO,
-        autor: AUTOR_ALUNO(atual.matricula),
-        de,
-      });
-    });
-
-    this.auditoria.registrar('AGENDAMENTO_CANCELADO', {
-      ator: atual.matricula,
-      detalhe: `agendamento ${agendamentoId} cancelado pelo aluno`,
-    });
-
-    return {
-      mensagem:
-        'Agendamento cancelado. A vaga voltou a ficar disponivel — escolha outro horario enquanto o prazo estiver aberto.',
-    };
-  }
 
   /**
    * A prova que ele tem marcada AGORA — um por curso, quando houver dois.

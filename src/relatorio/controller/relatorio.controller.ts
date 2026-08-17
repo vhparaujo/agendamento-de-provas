@@ -70,14 +70,24 @@ export class RelatorioController {
       'Uma linha por **horario de prova E turma** — e a tabela da aba ' +
       'Relatorios. Cada linha vira um arquivo no import de Grupos do ' +
       'Brightspace.\n\n' +
-      'O par (faixa, turma) e o recorte porque o grupo vive DENTRO de uma ' +
-      'disciplina do D2L: um arquivo com a faixa inteira levaria para o grupo de ' +
-      'uma disciplina tambem quem nao a cursa, liberando a prova dela para essa ' +
-      'gente. O mesmo aluno aparece em varias linhas — uma por disciplina que a ' +
-      'prova dele cobre.\n\n' +
+      'O par (janela, turma) e o recorte porque o grupo vive DENTRO de uma ' +
+      'disciplina do D2L: um arquivo com o horario inteiro levaria para o grupo ' +
+      'de uma disciplina tambem quem nao a cursa, liberando a prova dela para ' +
+      'essa gente. O mesmo aluno aparece em varias linhas — uma por disciplina ' +
+      'que a prova dele cobre.\n\n' +
+      '**Janela = dia + hora de inicio + hora de fim, e nao a faixa.** O grupo ' +
+      'libera o quiz num intervalo de tempo, e onde a pessoa senta nao muda o ' +
+      'acesso — nem a sala, nem o CAMPUS. Dois polos que aplicam a mesma prova ' +
+      'no mesmo dia e horario sao **uma linha so**, com os dois nomes em ' +
+      '`polos`; dois grupos ali seriam dois imports identicos, cada um com ' +
+      'metade da turma.\n\n' +
+      '⚠️ Por isso **`poloId` estreita esta lista, nunca o conteudo do ' +
+      'arquivo**: ele escolhe quais janelas aparecem, e o CSV daquela janela ' +
+      'sai sempre com todos os campi. Filtrar o conteudo produziria um arquivo ' +
+      'incompleto com nome de arquivo completo.\n\n' +
       '`totalAlunos` conta **matriculas distintas com prova confirmada**, ' +
-      'somando todas as salas da faixa, e e exatamente o numero de linhas que o ' +
-      'arquivo tera.\n\n' +
+      'somando todas as salas de todos os polos da janela, e e exatamente o ' +
+      'numero de linhas que o arquivo tera.\n\n' +
       'As linhas nascem dos agendamentos: horario **sem ninguem agendado nao ' +
       'aparece**, porque nao ha turma para listar. Ocupacao por horario e ' +
       '`GET /agendamentos/resumo`.\n\n' +
@@ -107,9 +117,10 @@ export class RelatorioController {
       '```\n\n' +
       'A pasta acompanha o trabalho real: abre-se a turma no Brightspace e ' +
       'importam-se os horarios dela, um a um.\n\n' +
-      'Duas faixas do mesmo dia e horario em polos diferentes gerariam o mesmo ' +
-      'caminho (o polo nao entra no nome); a partir da segunda, o id da faixa ' +
-      'entra como desempate (`... #14.csv`).',
+      'Um arquivo por **janela e turma**: dois polos que aplicam a mesma prova ' +
+      'no mesmo dia e horario saem juntos, num arquivo so. O sufixo ' +
+      '`#<orgUnitId>` so aparece no caso raro de duas disciplinas gerarem a ' +
+      'mesma pasta depois do corte de 60 caracteres do nome.',
   })
   @aplicarFiltros()
   @ApiProduces('application/zip')
@@ -138,25 +149,37 @@ export class RelatorioController {
   @ApiOperation({
     summary: 'Baixa o CSV de um grupo para o import de Grupos do Brightspace',
     description:
-      'Os alunos de UMA turma (`orgUnitId`) em UM horario de prova ' +
-      '(`faixaId`). Duas colunas: **`Nome de usuário`** com a matricula (RA) e ' +
-      '**`Código do Grupo`** VAZIA — o codigo e preenchido a mao depois de criar ' +
-      'o grupo no D2L.\n\n' +
+      'Os alunos de UMA turma (`orgUnitId`) em UM horario de prova. Duas ' +
+      'colunas: **`Nome de usuário`** com a matricula (RA) e **`Código do ' +
+      'Grupo`** VAZIA — o codigo e preenchido a mao depois de criar o grupo no ' +
+      'D2L.\n\n' +
+      '⚠️ **`faixaId` e um handle da JANELA, nao o recorte.** O arquivo leva ' +
+      'quem faz aquela prova naquele dia e horario em **qualquer campus** — o ' +
+      'acesso ao quiz nao depende de onde a pessoa senta. Duas faixas irmas ' +
+      '(mesmo dia e horario, polos diferentes) devolvem o mesmo arquivo, com o ' +
+      'mesmo nome, de proposito.\n\n' +
       'Entram apenas os agendamentos **confirmados** do periodo letivo do ' +
       'recorte cuja prova cobre aquela disciplina, e cada matricula aparece ' +
       '**uma unica vez**: o grupo no D2L e por usuario, e um RA com dois ' +
-      'vinculos na mesma faixa nao pode virar duas linhas.\n\n' +
+      'vinculos na mesma janela nao pode virar duas linhas.\n\n' +
       'Sai separado por **virgula** e **sem BOM** — ao contrario do CSV da ' +
       'secretaria (`;` + BOM), porque quem le este arquivo e o Brightspace, nao ' +
       'o Excel.\n\n' +
       'Baixa como **`20-08-2026 08h30-11h30 - GSPS0I10227 - HISTORIA E ' +
       'CULTURA.csv`**, sem acento (ver `nome-de-arquivo.ts`).\n\n' +
       '`de`, `ate` e `poloId` sao **ignorados** aqui: quem pediu este grupo ja ' +
-      'escolheu a faixa, e um filtro esquecido na URL devolveria 404 em vez do ' +
-      'arquivo. `periodoLetivoId` continua valendo — e ele que separa os ' +
-      'semestres.',
+      'escolheu a janela, e um filtro esquecido na URL devolveria 404 — ou, ' +
+      'pior, um arquivo sem os alunos do outro campus. `periodoLetivoId` ' +
+      'continua valendo — e ele que separa os semestres.',
   })
-  @ApiParam({ name: 'faixaId', type: Number, example: 14 })
+  @ApiParam({
+    name: 'faixaId',
+    type: Number,
+    example: 14,
+    description:
+      'Qualquer faixa da janela desejada — e ela que identifica o dia e o ' +
+      'horario. O arquivo nao se limita ao polo dessa faixa.',
+  })
   @ApiParam({
     name: 'orgUnitId',
     type: String,

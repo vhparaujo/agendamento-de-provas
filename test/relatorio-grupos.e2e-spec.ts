@@ -8,13 +8,18 @@ import { AppModule } from './../src/app.module';
 import { PrismaService } from './../src/database/prisma.service';
 
 /**
- * Exportacao dos grupos do Brightspace: um CSV por HORARIO E TURMA, so com as
- * matriculas de quem tem prova confirmada naquela disciplina.
+ * Exportacao dos grupos do Brightspace: um CSV por JANELA (dia + horario) E
+ * TURMA, so com as matriculas de quem tem prova confirmada naquela disciplina.
  *
- * O par (faixa, turma) e o que esta sob teste aqui. Um arquivo com a faixa
- * inteira nao daria erro em lugar nenhum — ele importaria, e colocaria no grupo
- * de HISTORIA gente que so faz NUTRICAO, liberando a prova de HISTORIA para
- * essas pessoas. So se descobre no dia da prova.
+ * O par (janela, turma) e o que esta sob teste aqui, e ele erra para os dois
+ * lados sem dar erro em lugar nenhum:
+ *
+ * - **Largo demais** (a janela inteira, sem a turma): o arquivo importa, e
+ *   coloca no grupo de HISTORIA gente que so faz NUTRICAO — acesso a prova de
+ *   uma materia que a pessoa nem cursa.
+ * - **Estreito demais** (a FAIXA, que carrega o polo): a mesma prova em dois
+ *   campi vira dois grupos identicos, e um filtro de polo produz um arquivo com
+ *   metade da turma. Quem ficou de fora descobre no dia, com o quiz trancado.
  *
  * Os agendamentos sao criados direto no banco, e nao pelo portal: o que esta sob
  * teste e o RECORTE e o FORMATO do arquivo, e passar pelo fluxo de agendar so
@@ -55,6 +60,7 @@ describe('Relatorio de grupos para o D2L (e2e)', () => {
   const NOME_HISTORIA = `12-11-2026 08h30-11h30 - ${PASTA_HISTORIA}.csv`;
 
   let ead: { id: number };
+  let poloAId: number;
   let faixaCheiaId: number;
   let faixaVaziaId: number;
   let faixaOutroPoloId: number;
@@ -109,6 +115,8 @@ describe('Relatorio de grupos para o D2L (e2e)', () => {
 
     const poloA = await criarPolo(POLO_A);
     const poloB = await criarPolo(POLO_B);
+
+    poloAId = poloA;
 
     // Faixa cheia: duas salas, para provar que a lista junta as salas da faixa.
     const cheia = await criarFaixa(poloA, ['GRP-101', 'GRP-102']);
@@ -294,15 +302,19 @@ describe('Relatorio de grupos para o D2L (e2e)', () => {
     ate: DATA_PROVA,
   };
 
-  async function listar(): Promise<any[]> {
+  async function listar(extra: Record<string, unknown> = {}): Promise<any[]> {
     const res = await comoAdmin(api().get('/api/relatorios/grupos-d2l'))
-      .query(recorte)
+      .query({ ...recorte, ...extra })
       .expect(200);
 
     return res.body;
   }
 
-  const naFaixaCheia = (linhas: any[], orgUnitId: string) =>
+  /**
+   * A linha da janela de 08h30. O `faixaId` devolvido e a MENOR das faixas
+   * irmas, e `criarFaixa` cria a do polo A primeiro.
+   */
+  const naJanela = (linhas: any[], orgUnitId: string) =>
     linhas.find(
       (l: any) => l.faixaId === faixaCheiaId && l.orgUnitId === orgUnitId,
     );
@@ -314,47 +326,60 @@ describe('Relatorio de grupos para o D2L (e2e)', () => {
       await api().get('/api/relatorios/grupos-d2l').expect(401);
     });
 
-    it('quebra a mesma faixa em uma linha por turma', async () => {
+    it('quebra a mesma janela em uma linha por turma', async () => {
       const linhas = await listar();
 
-      const daFaixa = linhas.filter((l: any) => l.faixaId === faixaCheiaId);
+      const daJanela = linhas.filter((l: any) => l.faixaId === faixaCheiaId);
 
       // HISTORIA, NUTRICAO e a turma fora do CSV.
-      expect(daFaixa.map((l: any) => l.orgUnitId).sort()).toEqual([
+      expect(daJanela.map((l: any) => l.orgUnitId).sort()).toEqual([
         HISTORIA.orgUnitId,
         NUTRICAO.orgUnitId,
         SEM_CSV.orgUnitId,
       ]);
     });
 
+    it('junta os dois polos numa linha so — o campus nao muda o acesso', async () => {
+      const linhas = await listar();
+
+      // As duas faixas irmas (mesmo dia e horario, polos diferentes) cobrem
+      // HISTORIA. Duas linhas aqui virariam dois grupos identicos no D2L.
+      const deHistoria = linhas.filter(
+        (l: any) => l.orgUnitId === HISTORIA.orgUnitId,
+      );
+
+      expect(deHistoria).toHaveLength(1);
+      expect(deHistoria[0].polos).toEqual([POLO_A, POLO_B]);
+    });
+
     it('conta so quem cursa aquela disciplina', async () => {
       const linhas = await listar();
 
-      // HISTORIA: 001 (dois vinculos, uma linha so). Fora: 002 (nao cursa),
-      // 003 (cancelado) e 004 (outro periodo letivo).
-      expect(naFaixaCheia(linhas, HISTORIA.orgUnitId).totalAlunos).toBe(1);
+      // HISTORIA: 001 (dois vinculos, uma linha so) e 005 (do outro polo).
+      // Fora: 002 (nao cursa), 003 (cancelado) e 004 (outro periodo letivo).
+      expect(naJanela(linhas, HISTORIA.orgUnitId).totalAlunos).toBe(2);
 
-      // NUTRICAO: 001 e 002.
-      expect(naFaixaCheia(linhas, NUTRICAO.orgUnitId).totalAlunos).toBe(2);
+      // NUTRICAO so tem gente no polo A: 001 e 002.
+      expect(naJanela(linhas, NUTRICAO.orgUnitId).totalAlunos).toBe(2);
+      expect(naJanela(linhas, NUTRICAO.orgUnitId).polos).toEqual([POLO_A]);
     });
 
     it('traz codigo e disciplina do CSV de turmas', async () => {
-      const linha = naFaixaCheia(await listar(), HISTORIA.orgUnitId);
+      const linha = naJanela(await listar(), HISTORIA.orgUnitId);
 
       expect(linha.codigoTurma).toBe(HISTORIA.codigoTurma);
       expect(linha.nomeDisciplina).toBe(HISTORIA.nomeDisciplina);
-      expect(linha.polo).toBe(POLO_A);
     });
 
     it('cai no orgUnitId quando a turma nao esta no CSV', async () => {
-      const linha = naFaixaCheia(await listar(), SEM_CSV.orgUnitId);
+      const linha = naJanela(await listar(), SEM_CSV.orgUnitId);
 
       expect(linha.codigoTurma).toBeNull();
       expect(linha.nomeArquivo).toContain(`orgUnit ${SEM_CSV.orgUnitId}`);
     });
 
     it('nomeia o arquivo com horario, turma e disciplina, sem acento', async () => {
-      const linha = naFaixaCheia(await listar(), HISTORIA.orgUnitId);
+      const linha = naJanela(await listar(), HISTORIA.orgUnitId);
 
       expect(linha.nomeArquivo).toBe(NOME_HISTORIA);
       // ASCII puro: e o que dispensa o `filename*=UTF-8''` do RFC 5987.
@@ -370,7 +395,7 @@ describe('Relatorio de grupos para o D2L (e2e)', () => {
     });
 
     it('nao devolve as matriculas — a tela so precisa da contagem', async () => {
-      const linha = naFaixaCheia(await listar(), HISTORIA.orgUnitId);
+      const linha = naJanela(await listar(), HISTORIA.orgUnitId);
 
       expect(linha.matriculas).toBeUndefined();
     });
@@ -407,9 +432,56 @@ describe('Relatorio de grupos para o D2L (e2e)', () => {
 
       const linhas = res.text.trim().split('\r\n').slice(1);
 
-      // 001 tem DOIS agendamentos nesta faixa cobrindo HISTORIA (dois vinculos)
-      // e mesmo assim sai uma vez: o grupo no D2L e por usuario.
-      expect(linhas).toEqual([`${PREFIXO_MATRICULA}001,`]);
+      // 001 tem DOIS agendamentos nesta janela cobrindo HISTORIA (dois vinculos)
+      // e mesmo assim sai uma vez: o grupo no D2L e por usuario. 005 entra
+      // porque faz a mesma prova no mesmo horario, no outro campus.
+      expect(linhas).toEqual([
+        `${PREFIXO_MATRICULA}001,`,
+        `${PREFIXO_MATRICULA}005,`,
+      ]);
+    });
+
+    it('as duas faixas irmas devolvem o MESMO arquivo', async () => {
+      // O `faixaId` da URL e um handle da janela, nao o recorte. Se cada uma
+      // devolvesse a sua metade, a secretaria criaria dois grupos identicos no
+      // D2L — e um deles com metade da turma.
+      const peloPoloA = await baixar(faixaCheiaId, HISTORIA.orgUnitId).expect(
+        200,
+      );
+      const peloPoloB = await baixar(
+        faixaOutroPoloId,
+        HISTORIA.orgUnitId,
+      ).expect(200);
+
+      expect(peloPoloB.text).toBe(peloPoloA.text);
+      expect(peloPoloB.headers['content-disposition']).toBe(
+        peloPoloA.headers['content-disposition'],
+      );
+    });
+
+    it('poloId nao trunca o arquivo — so estreita a listagem', async () => {
+      // O filtro de campus escolhe QUAIS janelas aparecem na tela. Se ele
+      // valesse tambem para o conteudo, este arquivo sairia sem o 005 e com
+      // nome de arquivo de turma inteira: o import passaria sem erro nenhum, e
+      // o aluno do polo B acharia o quiz trancado no dia.
+      const res = await comoAdmin(
+        api().get(
+          `/api/relatorios/grupos-d2l/${faixaCheiaId}/${HISTORIA.orgUnitId}`,
+        ),
+      )
+        .query({ ...recorte, poloId: poloAId })
+        .expect(200);
+
+      expect(res.text).toContain(`${PREFIXO_MATRICULA}005`);
+
+      // E a contagem da tela tem que concordar com o arquivo, mesmo filtrada.
+      const linha = naJanela(
+        await listar({ poloId: poloAId }),
+        HISTORIA.orgUnitId,
+      );
+
+      expect(linha.totalAlunos).toBe(2);
+      expect(linha.polos).toEqual([POLO_A, POLO_B]);
     });
 
     it('quem faz outra disciplina no mesmo horario nao entra', async () => {
@@ -470,10 +542,10 @@ describe('Relatorio de grupos para o D2L (e2e)', () => {
       );
     });
 
-    it('desempata pelo id quando duas faixas caem no mesmo caminho', async () => {
-      // As duas faixas sao do mesmo dia e horario, mesma turma, polos
-      // diferentes; sem o desempate a segunda sobrescreveria a primeira em
-      // silencio.
+    it('dois polos no mesmo horario viram UM arquivo, sem sufixo', async () => {
+      // Ate 17/08/2026 saiam dois arquivos aqui, desempatados por `#faixaId`.
+      // Eram dois grupos identicos no D2L, com o mesmo special access, cada um
+      // com metade da turma — e o `#` era so o sintoma disso no nome.
       const { zip } = await baixarZip();
 
       // `.endsWith('.csv')` porque o zip tambem lista a propria pasta.
@@ -481,12 +553,19 @@ describe('Relatorio de grupos para o D2L (e2e)', () => {
         (n) => n.startsWith(`${PASTA_HISTORIA}/`) && n.endsWith('.csv'),
       );
 
-      expect(daTurma).toHaveLength(2);
-      expect(
-        daTurma.some((n) =>
-          [faixaCheiaId, faixaOutroPoloId].some((id) => n.includes(`#${id}`)),
-        ),
-      ).toBe(true);
+      expect(daTurma).toEqual([`${PASTA_HISTORIA}/12-11-2026 08h30-11h30.csv`]);
+      expect(daTurma[0]).not.toContain('#');
+    });
+
+    it('o arquivo unico leva os alunos dos DOIS polos', async () => {
+      const { zip } = await baixarZip();
+
+      const conteudo = await zip
+        .file(`${PASTA_HISTORIA}/12-11-2026 08h30-11h30.csv`)!
+        .async('string');
+
+      expect(conteudo).toContain(`${PREFIXO_MATRICULA}001`);
+      expect(conteudo).toContain(`${PREFIXO_MATRICULA}005`);
     });
 
     it('o conteudo de cada arquivo e o mesmo CSV da rota individual', async () => {

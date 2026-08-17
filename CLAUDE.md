@@ -305,6 +305,7 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `POST /agendamentos/compulsorio` · `GET /:id` · `/:id/relatorio` | admin | Agenda por quem não agendou; acompanha o lote e baixa o CSV de exceções |
 | `POST /agendamentos` | admin | Agenda a prova de **um** aluno, escolhendo a sala ou deixando a alocação escolher |
 | `PATCH /portal/agendamentos/:id` · `DELETE` | aluno | Trocar de horário (atômico) e cancelar |
+| `GET /portal/agendamentos/:id/declaracao` | aluno | Declaração de agendamento em PDF — **só depois de o prazo encerrar** |
 | `GET /agendamentos/:id/historico` | admin | Quem alterou: aluno ou administrador |
 | `GET /d2l/callback` | — | Callback OAuth da Valence: troca o `code` e grava o refresh token |
 
@@ -1028,7 +1029,7 @@ perguntas diferentes e recortam a mesma base de jeitos incompatíveis:
 | Formato | CSV, 12 colunas | CSV, 2 colunas (`Nome de usuário`, `Código do Grupo` **vazia**) | PDF A4, 5 colunas |
 | Uma linha é | um vínculo | um **usuário** (RA distinto) | uma **pessoa** (RA distinto) |
 | Separador · BOM | `;` · **sim** | `,` · **não** | — |
-| Recorte | um período letivo | uma **faixa + uma turma** + um período letivo | uma **sala + uma faixa** + um período letivo |
+| Recorte | um período letivo | uma **janela + uma turma** + um período letivo | uma **sala + uma faixa** + um período letivo |
 
 **O primeiro conta diferente dos outros dois, e não está errado.** Ele lista
 *vínculos*, então o RA de dois cursos aparece duas vezes — é a lista de quem a
@@ -1051,16 +1052,18 @@ lugar só, `relatorio/service/csv-grupos-d2l.ts`.
 um tem; `/:faixaId/:orgUnitId` baixa o CSV de um; `/zip` baixa todos de uma vez.
 É a aba **Relatorios** do painel.
 
-- **O recorte é o PAR (faixa, turma).** O grupo não existe solto: ele vive
+- **O recorte é o PAR (janela, turma).** O grupo não existe solto: ele vive
   *dentro* de uma disciplina do Brightspace (`orgUnitId`), e é ele que libera o
-  quiz **daquela** disciplina. Um arquivo com a faixa inteira importaria sem erro
-  nenhum e colocaria no grupo de HISTÓRIA quem só cursa NUTRIÇÃO — gente com
+  quiz **daquela** disciplina. Um arquivo com o horário inteiro importaria sem
+  erro nenhum e colocaria no grupo de HISTÓRIA quem só cursa NUTRIÇÃO — gente com
   acesso a uma prova que não faz, descoberto no dia. Por isso o mesmo aluno
   aparece em vários arquivos: um por disciplina que a prova dele cobre.
-- **A sala não entra.** O grupo libera o quiz num horário; em qual sala a pessoa
-  senta não muda o acesso. As salas da faixa entram na mesma lista.
+- **Nem a sala nem o POLO entram.** O grupo libera o quiz numa *janela de tempo*;
+  onde a pessoa senta — que cadeira, que campus — não muda o acesso. As salas e
+  os polos daquele dia e horário entram na mesma lista. Ver "A janela, não a
+  faixa", abaixo.
 - **Uma matrícula aparece UMA vez por arquivo.** Um RA com dois vínculos na mesma
-  modalidade pode ter dois agendamentos na mesma faixa, os dois cobrindo a mesma
+  modalidade pode ter dois agendamentos na mesma janela, os dois cobrindo a mesma
   disciplina — o grupo é por *usuário*, e a linha repetida faria o import
   reclamar ou duplicar. `totalAlunos` conta matrículas **distintas**, para bater
   com o número de linhas do arquivo.
@@ -1089,16 +1092,56 @@ um tem; `/:faixaId/:orgUnitId` baixa o CSV de um; `/zip` baixa todos de uma vez.
       20-08-2026 14h00-17h00.csv
   ```
 
-- **Sem o polo no nome, a colisão é o caso normal**: duas faixas do mesmo dia e
-  horário em polos diferentes, na mesma turma, geram o mesmo caminho. A partir da
-  segunda o id da faixa entra como desempate (`... #14.csv`) — sem isso a segunda
-  sobrescreveria a primeira em silêncio.
+- **O sufixo `#<orgUnitId>` é raro e não é sobre polo.** Ele só aparece quando
+  duas disciplinas do mesmo código de turma geram a **mesma pasta** depois do
+  corte de 60 caracteres do `sanear` — aí a segunda sobrescreveria a primeira
+  dentro do zip, em silêncio. Até 17/08/2026 o desempate era `#<faixaId>` e
+  disparava no caso normal (dois campi); ver abaixo.
 - **Horário sem ninguém agendado não aparece.** As linhas nascem dos
   agendamentos: uma faixa não "tem" disciplinas, são os alunos que as trazem.
   Ocupação por horário é `GET /agendamentos/resumo`, a tela feita para isso.
 - **A listagem não devolve as matrículas**, só a contagem: mandar dezenas de
   milhares de RAs para o navegador exibir um número seria desperdício. O CSV é
   gerado pela rota do arquivo, pelo mesmo caminho de código.
+
+### ⚠️ A JANELA, não a faixa (17/08/2026)
+
+Até esta data o recorte era o par (`faixaId`, `orgUnitId`) — e `Faixa` carrega
+`poloId`. **O polo entrou no recorte de carona**, sem ninguém decidir isso: duas
+faixas do mesmo dia e horário em campi diferentes viravam dois grupos, na mesma
+disciplina, com exatamente o mesmo special access.
+
+O que o Brightspace precisa saber é **quando** a prova abre e em **qual**
+disciplina. Onde a pessoa senta não é uma das duas — é o mesmo argumento que já
+tirava a *sala* do recorte, só que um nível acima. Por isso o grupo passou a ser
+a **janela** (`data + horaInicio + horaFim`) cruzada com a turma, e as faixas de
+todos os polos daquela janela entram no mesmo arquivo.
+
+O que isso conserta, na prática:
+
+| Antes | Agora |
+|---|---|
+| Dois grupos idênticos a criar à mão no D2L, um por campus | Um grupo, um import |
+| `#<faixaId>` no nome, disparando no caso **normal** de operação | Um arquivo só; o `#` vira caso raro (colisão de nome truncado) |
+| RA com dois vínculos em campi diferentes na mesma janela saía em dois arquivos da mesma disciplina | O `Set` de matrículas o traz uma vez |
+
+**A regra que sustenta isso: o filtro `poloId` estreita a LISTAGEM, nunca o
+CONTEÚDO.** `montarGrupos` usa o filtro só para escolher **quais janelas**
+aparecem, e depois relê os alunos daquelas janelas **sem ele**
+(`inscricoesDasJanelas`). Aplicar o polo nas duas pontas produziria um CSV com
+metade da turma e nome de arquivo de turma inteira: o import passaria sem erro
+nenhum, e quem ficou de fora descobriria no dia, com o quiz trancado. Não
+"otimize" as duas consultas numa só — é essa separação que o teste
+`poloId nao trunca o arquivo` protege.
+
+Duas consequências no contrato, ambas testadas:
+
+- **`faixaId` virou um *handle*, não o recorte.** Na listagem é a menor faixa da
+  janela (para não mudar entre carregamentos); na rota
+  `/:faixaId/:orgUnitId` serve só para dizer de que janela se trata. Duas faixas
+  irmãs devolvem **o mesmo arquivo, com o mesmo nome**, de propósito.
+- **`polo: string` virou `polos: string[]`.** É informativo, em ordem
+  alfabética, e quase sempre tem um elemento só. A tela junta com ` · `.
 
 O front usa o `nomeArquivo` que vem do backend: resposta em blob não expõe o
 `Content-Disposition`, e montar o nome no cliente deixaria a regra em dois
@@ -1178,6 +1221,88 @@ O desenho do PDF está isolado em `relatorio/service/pdf-lista-presenca.ts`
 `lista-presenca.service.ts`. A separação é o que permite testar layout e
 paginação sem banco (`lista-presenca.spec.ts`) e o recorte com banco
 (`test/lista-presenca.e2e-spec.ts`).
+
+## Declaração de agendamento: o único documento que o ALUNO baixa
+
+`GET /portal/agendamentos/:id/declaracao` — uma folha A4 declarando que ele está
+matriculado sob aquele RA e marcou a prova presencial para tal dia e hora. É o
+papel que se leva ao trabalho para justificar a ausência.
+
+Os três documentos da seção anterior são baixados pela **secretaria**; este é o
+único que sai pela mão do aluno, no portal, e por isso as regras dele são outras.
+
+### ⚠️ SÓ DEPOIS DE O PRAZO ENCERRAR (regra do cliente)
+
+Enquanto o período está aberto, o aluno ainda troca de horário e cancela (regra
+7). Uma declaração emitida ali afirma um dia e uma hora que **o próprio portador
+pode mudar cinco minutos depois** — e quem recebeu o papel (empregador, escola)
+não tem como conferir. Depois do fechamento só a secretaria remaneja, e o que o
+documento diz para de se mover sozinho.
+
+A porta é `PeriodoService.exigirEncerrado()`, **o espelho de `exigirAberto()`**.
+As duas leem o mesmo estado de propósito: uma noção própria de "prazo acabou" na
+declaração divergiria da do agendamento na primeira vez que alguém mexesse numa
+delas.
+
+**`encerrado` NÃO é `!aberto`.** `aberto: false` esconde três estados, e só dois
+são encerramento:
+
+| Estado | `aberto` | `encerrado` | Emite declaração? |
+|---|:---:|:---:|:---:|
+| Prazo correndo | `true` | `false` | não — ele ainda pode trocar |
+| Sem período cadastrado | `false` | `false` | não — não há semestre |
+| Cadastrado, ainda não abriu | `false` | `false` | não — não há o que declarar |
+| Prazo vencido (`dataFechamento`) | `false` | `true` | **sim** |
+| Fechado à mão pelo admin (`aberto=false`) | `false` | `true` | **sim** — encerramento antecipado |
+
+`encerrado` é campo de `SituacaoPeriodo`, devolvido por `GET /portal/periodo`, e
+é ele que o portal lê para mostrar o botão. Ler `!aberto` na tela mostraria um
+botão que só produz 403 num banco recém-migrado.
+
+### O resto das regras
+
+- **O recorte da consulta é o mesmo de `GET /portal/agendamentos`**: matrícula do
+  token, vínculo do token, período letivo vigente, `CONFIRMADO`. A declaração
+  existe para o que a tela lista. Sem o filtro por matrícula, trocar o número na
+  URL imprimiria a prova de outra pessoa **com o nome dela**.
+- **404 único** para "não existe", "não é sua" e "cancelada": distinguir os três
+  diria a quem sonda a URL quais agendamentos existem, e nenhum dos três tem ação
+  diferente para o aluno.
+- **Uma declaração por PROVA, não por pessoa.** Quem tem dois cursos faz duas
+  provas, em dias diferentes, e cada uma justifica uma ausência diferente — o
+  portal oferece o botão nas duas.
+- **Sem nome no cadastro, 409.** `AlunoImportado.nome` é opcional, e a queda óbvia
+  (usar a matrícula) produziria *"Declaramos que UC26425318 está matriculado(a)
+  sob o RA UC26425318"* — um documento que não nomeia ninguém, entregue a um
+  empregador. Recusar é acionável: a secretaria corrige o CSV e reimporta.
+- **A data é lida em UTC.** `Faixa.data` é `@db.Date` (meia-noite UTC); ler as
+  partes no fuso local recuaria um dia em Brasília, e a declaração diria 11 de
+  junho para uma prova do dia 12 — impressa e assinada. Mesmo motivo de
+  `dataDaProva` e `hojeUtc`. Há teste que trava isso.
+- **Os meses são uma lista no código**, não `toLocaleDateString('pt-BR')`: o texto
+  vai impresso, e não pode mudar de grafia porque a imagem do Node subiu de versão
+  ou veio sem os dados completos do ICU.
+- **O layout é o da "Declaração de Prova" do sistema anterior** (Avalia/Grupo A),
+  reproduzido de propósito — é o papel que a secretaria e os alunos reconhecem. As
+  coordenadas em `pdf-declaracao.ts` saem do PDF original.
+- **O QR code e as duas linhas de validação ficaram de fora**, por decisão do
+  cliente: apontavam para o `ValidacaoCertificados` do fornecedor antigo, que não
+  existe deste lado. QR que leva a lugar nenhum é pior que nenhum QR, porque
+  convida a conferir. O espaço está livre se um dia houver validação própria.
+- **O logo vai versionado** (`src/agendamento/assets/logo-catolica.png`), ao
+  contrário do da lista de presença, porque o cliente pediu a marca. A leitura
+  continua tolerante à ausência: derrubar o download por causa de um `.png` faltando
+  trocaria um papel imperfeito por papel nenhum.
+- **`Content-Type` e `Content-Disposition` vão no `StreamableFile`**, não num
+  `@Header` da rota. `@Header('Content-Type', 'application/pdf')` — o jeito das
+  rotas de relatório — marcaria também o 403 de prazo aberto e o 404 de prova
+  alheia, que são JSON. Aqui isso importa: as recusas são frequentes e esperadas.
+
+O desenho está isolado em `agendamento/service/pdf-declaracao.ts` (módulo puro,
+com `textoDaDeclaracao` exportado para o teste ler a frase sem abrir o PDF); as
+regras ficam em `declaracao.service.ts`. Testes em `pdf-declaracao.spec.ts`
+(frase, meses, fuso) e no bloco `declaracao de agendamento` de
+`test/portal-aluno.e2e-spec.ts` (prazo, prova alheia, cancelada).
 
 ## Agendamento compulsório (etapa 9)
 

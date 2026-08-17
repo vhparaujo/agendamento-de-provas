@@ -27,14 +27,6 @@ export class AgendarDto {
   alunoId?: number;
 }
 
-export class MensagemPortalDto {
-  @ApiProperty({
-    example:
-      'Agendamento cancelado. A vaga voltou a ficar disponivel — escolha outro horario enquanto o prazo estiver aberto.',
-  })
-  mensagem!: string;
-}
-
 export class TrocarHorarioDto {
   @ApiProperty({
     example: 21,
@@ -217,6 +209,15 @@ export class DisciplinasAgendaveisDto implements DisciplinasDoVinculo {
 export class SituacaoPeriodoDto implements SituacaoPeriodo {
   @ApiProperty({ example: true })
   aberto!: boolean;
+
+  @ApiProperty({
+    example: false,
+    description:
+      'O prazo ACABOU — nao e `!aberto`. "Nao configurado" e "ainda nao abriu" ' +
+      'tambem sao `aberto: false` e nao sao encerrados. E o campo que libera o ' +
+      'botao da declaracao de agendamento na tela.',
+  })
+  encerrado!: boolean;
 
   @ApiPropertyOptional({
     example: '103',

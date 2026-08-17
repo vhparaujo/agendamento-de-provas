@@ -696,6 +696,211 @@ describe('Portal do aluno: listar e agendar (e2e)', () => {
     });
   });
 
+  /**
+   * ==========================================================================
+   * A DECLARACAO DE AGENDAMENTO
+   * ==========================================================================
+   * Regra do cliente: ela so existe DEPOIS de o prazo encerrar. Com o prazo
+   * aberto o aluno ainda troca de horario e cancela (regra 7), e o papel
+   * afirmaria uma data que ele mesmo pode mudar cinco minutos depois — quem o
+   * recebeu (empregador, escola) nao teria como conferir.
+   *
+   * Este bloco mexe na `dataFechamento` do periodo e a devolve no fim: ele roda
+   * depois dos que dependem do prazo aberto, mas o `afterAll` existe para nao
+   * criar ordem implicita com o que vier a ser escrito abaixo.
+   */
+  describe('declaracao de agendamento', () => {
+    let declaranteToken: string;
+    let agendamentoId: number;
+    let faixaDeclaracaoId: number;
+
+    const PRAZO_ORIGINAL = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+    beforeAll(async () => {
+      // Faixa e sala proprias: as do topo ja foram lotadas pelos testes de
+      // alocacao sequencial, e um 409 de vaga aqui pareceria falha da
+      // declaracao.
+      const sala = await criarSala('P-DECL', 2, poloId);
+
+      faixaDeclaracaoId = await criarFaixa('2026-12-20', [
+        { salaId: sala.id, vagas: 2, ordem: 1 },
+      ]);
+
+      const aluno = await criarAluno({ sufixo: 'DECL' });
+
+      declaranteToken = aluno.token;
+
+      const confirmado = await comoAluno(
+        api().post('/api/portal/agendamentos'),
+        declaranteToken,
+      )
+        .send({ faixaId: faixaDeclaracaoId })
+        .expect(201);
+
+      agendamentoId = confirmado.body.id;
+    });
+
+    afterAll(async () => {
+      await prisma.periodoAgendamento.update({
+        where: { id: periodoId },
+        data: { aberto: true, dataFechamento: PRAZO_ORIGINAL },
+      });
+    });
+
+    const declaracao = () =>
+      comoAluno(
+        api().get(`/api/portal/agendamentos/${agendamentoId}/declaracao`),
+        declaranteToken,
+      );
+
+    async function encerrarPrazo() {
+      await prisma.periodoAgendamento.update({
+        where: { id: periodoId },
+        data: {
+          aberto: true,
+          dataFechamento: new Date(Date.now() - 60 * 60 * 1000),
+        },
+      });
+    }
+
+    async function reabrirPrazo() {
+      await prisma.periodoAgendamento.update({
+        where: { id: periodoId },
+        data: { aberto: true, dataFechamento: PRAZO_ORIGINAL },
+      });
+    }
+
+    it('403 enquanto o prazo de agendamento esta aberto', async () => {
+      await reabrirPrazo();
+
+      const res = await declaracao().expect(403);
+
+      expect(res.body.message).toMatch(/prazo de agendamento/i);
+    });
+
+    /**
+     * `encerrado` NAO e `!aberto`: "ainda nao abriu" tambem responde
+     * `aberto: false`, e ali nao ha agendamento nenhum a declarar. Se a tela (ou
+     * o service) lesse a negacao de `aberto`, este caso passaria a emitir
+     * declaracao antes de o agendamento sequer comecar.
+     */
+    it('nao considera encerrado o prazo que ainda nem abriu', async () => {
+      await prisma.periodoAgendamento.update({
+        where: { id: periodoId },
+        data: {
+          aberto: true,
+          dataAbertura: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          dataFechamento: PRAZO_ORIGINAL,
+        },
+      });
+
+      const situacao = await comoAluno(
+        api().get('/api/portal/periodo'),
+        declaranteToken,
+      ).expect(200);
+
+      expect(situacao.body).toMatchObject({ aberto: false, encerrado: false });
+
+      await declaracao().expect(403);
+
+      await prisma.periodoAgendamento.update({
+        where: { id: periodoId },
+        data: { dataAbertura: null },
+      });
+    });
+
+    it('devolve o PDF depois de o prazo encerrar', async () => {
+      await encerrarPrazo();
+
+      const situacao = await comoAluno(
+        api().get('/api/portal/periodo'),
+        declaranteToken,
+      ).expect(200);
+
+      expect(situacao.body).toMatchObject({ aberto: false, encerrado: true });
+
+      const res = await declaracao()
+        .buffer()
+        .parse((r, cb) => {
+          const pedacos: Buffer[] = [];
+          r.on('data', (p: Buffer) => pedacos.push(p));
+          r.on('end', () => cb(null, Buffer.concat(pedacos)));
+        })
+        .expect(200)
+        .expect('Content-Type', /application\/pdf/);
+
+      expect((res.body as Buffer).subarray(0, 5).toString('latin1')).toBe(
+        '%PDF-',
+      );
+      expect(res.headers['content-disposition']).toContain(
+        'Declaracao de agendamento - E2EPDECL.pdf',
+      );
+    });
+
+    /**
+     * Sem o filtro por matricula, trocar o numero na URL imprimiria a prova de
+     * outra pessoa COM O NOME DELA — o vazamento mais direto que esta rota
+     * poderia ter.
+     */
+    it('404 na prova de outra pessoa', async () => {
+      await encerrarPrazo();
+
+      const intruso = await criarAluno({ sufixo: 'DECLX' });
+
+      await comoAluno(
+        api().get(`/api/portal/agendamentos/${agendamentoId}/declaracao`),
+        intruso.token,
+      ).expect(404);
+    });
+
+    /**
+     * Cancelado nao reserva cadeira nenhuma no dia, entao nao ha o que
+     * declarar. Cancelar exige o prazo ABERTO (regra 7), dai a reabertura no
+     * meio do caso.
+     */
+    /**
+     * Cancelado nao reserva cadeira nenhuma no dia, entao nao ha o que
+     * declarar — e o papel afirmaria uma prova que a pessoa nao vai fazer.
+     *
+     * O cancelamento e feito direto no banco porque o aluno nao cancela mais
+     * pelo portal (decisao de 17/08/2026): quem desmarca e a secretaria, por
+     * `DELETE /agendamentos/:id`. O que este caso prova e o filtro `CONFIRMADO`
+     * do service, e nao a rota que gravou o status.
+     */
+    it('404 depois de a prova ser cancelada', async () => {
+      await reabrirPrazo();
+
+      const aluno = await criarAluno({ sufixo: 'DECLC' });
+
+      const confirmado = await comoAluno(
+        api().post('/api/portal/agendamentos'),
+        aluno.token,
+      )
+        .send({ faixaId: faixaDeclaracaoId })
+        .expect(201);
+
+      await prisma.agendamento.update({
+        where: { id: confirmado.body.id },
+        data: { status: 'CANCELADO' },
+      });
+
+      await encerrarPrazo();
+
+      await comoAluno(
+        api().get(`/api/portal/agendamentos/${confirmado.body.id}/declaracao`),
+        aluno.token,
+      ).expect(404);
+    });
+
+    it('recusa sem token', async () => {
+      await encerrarPrazo();
+
+      await api()
+        .get(`/api/portal/agendamentos/${agendamentoId}/declaracao`)
+        .expect(401);
+    });
+  });
+
   describe('o admin ve a ocupacao que a alocacao produziu', () => {
     it('a faixa aparece com as salas cheias e nao pode ser apagada', async () => {
       const faixa = await prisma.faixa.findUniqueOrThrow({

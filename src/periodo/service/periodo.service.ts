@@ -11,6 +11,16 @@ import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 
 export interface SituacaoPeriodo {
   aberto: boolean;
+  /**
+   * O prazo ACABOU — nao e o mesmo que `!aberto`.
+   *
+   * `aberto: false` cobre tres estados diferentes: ninguem configurou o
+   * semestre, ele existe mas ainda nao abriu, e ele ja encerrou. So o terceiro
+   * libera a declaracao de agendamento, e por isso ele precisa de um campo
+   * proprio — a tela nao tem como distinguir os tres lendo o `motivo`, que e
+   * texto para o aluno ler, nao para o codigo comparar.
+   */
+  encerrado: boolean;
   /** Id do periodo letivo no Brightspace. Vai gravado em cada agendamento. */
   periodoLetivoId?: string;
   descricao?: string | null;
@@ -91,6 +101,10 @@ export class PeriodoService {
     if (!periodo) {
       return {
         aberto: false,
+        // Sem semestre configurado nao ha prazo NENHUM, entao nao ha prazo
+        // encerrado: quem nunca abriu tambem nunca fechou. Marcar `encerrado`
+        // aqui liberaria a declaracao num banco recem-migrado.
+        encerrado: false,
         motivo:
           'O periodo de agendamento ainda nao foi configurado. Procure a secretaria academica.',
       };
@@ -98,16 +112,27 @@ export class PeriodoService {
 
     const base: SituacaoPeriodo = {
       aberto: false,
+      encerrado: false,
       periodoLetivoId: periodo.periodoLetivoId,
       descricao: periodo.descricao,
       dataAbertura: periodo.dataAbertura,
       dataFechamento: periodo.dataFechamento,
     };
 
+    // Fechado a mao pelo admin ANTES da data prevista. Conta como encerrado: e
+    // o encerramento antecipado, e a partir dali ninguem mais escolhe horario —
+    // que e a condicao que a declaracao precisa.
     if (!periodo.aberto) {
-      return { ...base, motivo: 'O periodo de agendamento esta fechado.' };
+      return {
+        ...base,
+        encerrado: true,
+        motivo: 'O periodo de agendamento esta fechado.',
+      };
     }
 
+    // O unico `!aberto` que NAO e encerrado: o semestre existe, o prazo ainda
+    // vai comecar. Declarar um agendamento que ninguem pode ter feito seria
+    // declarar coisa nenhuma.
     if (periodo.dataAbertura && agora < periodo.dataAbertura) {
       return {
         ...base,
@@ -118,6 +143,7 @@ export class PeriodoService {
     if (agora > periodo.dataFechamento) {
       return {
         ...base,
+        encerrado: true,
         motivo: `O prazo de agendamento encerrou em ${formatar(periodo.dataFechamento)}.`,
       };
     }
@@ -154,6 +180,40 @@ export class PeriodoService {
 
     if (!situacao.aberto) {
       throw new ForbiddenException(situacao.motivo);
+    }
+
+    return {
+      periodoLetivoId: situacao.periodoLetivoId!,
+      dataFechamento: situacao.dataFechamento!,
+    };
+  }
+
+  /**
+   * O OPOSTO de `exigirAberto`: so passa depois que o prazo acabou.
+   *
+   * Existe para a DECLARACAO DE AGENDAMENTO. Enquanto o prazo corre, o aluno
+   * ainda pode trocar de horario e cancelar (regra 7) — um papel assinado
+   * dizendo "dia 12 as 15:00" pode estar desatualizado no minuto seguinte, e
+   * quem o recebeu nao tem como saber. Depois do fechamento a escolha esta
+   * travada para o aluno, e o que o documento afirma para de se mover.
+   *
+   * Fica aqui, e nao no service da declaracao, pela mesma razao que
+   * `exigirAberto`: as duas portas do prazo tem que ler o MESMO estado. Duas
+   * leituras separadas divergem na primeira vez que alguem mexer em uma delas.
+   */
+  async exigirEncerrado(agora: Date = new Date()): Promise<PeriodoVigente> {
+    const situacao = await this.situacaoAtual(agora);
+
+    if (!situacao.encerrado) {
+      throw new ForbiddenException(
+        situacao.aberto
+          ? 'A declaracao fica disponivel quando o prazo de agendamento ' +
+              `encerrar, em ${formatar(situacao.dataFechamento!)}. Ate la voce ` +
+              'ainda pode trocar de horario, e o documento diria uma data que ' +
+              'pode mudar.'
+          : (situacao.motivo ??
+              'O periodo de agendamento ainda nao encerrou. Procure a secretaria academica.'),
+      );
     }
 
     return {

@@ -8,10 +8,15 @@ import { AuthService } from './../src/auth/service/auth.service';
 import { PrismaService } from './../src/database/prisma.service';
 
 /**
- * Troca e cancelamento pelo aluno, remanejo e cancelamento pelo admin.
+ * Troca pelo aluno, remanejo e cancelamento pelo admin.
  *
  * O que estes testes protegem: a vaga tem de ser devolvida quando alguem sai, e
  * a troca nao pode deixar o aluno sem horario nenhum.
+ *
+ * **O aluno nao cancela** (17/08/2026): a troca e a unica alteracao dele, e
+ * `DELETE /portal/agendamentos/:id` nao existe mais. Todo cancelamento daqui
+ * para baixo passa por `DELETE /agendamentos/:id`, do admin — inclusive quando o
+ * teste so precisa de um agendamento CANCELADO como cenario.
  */
 describe('Remanejo, troca e cancelamento (e2e)', () => {
   let app: INestApplication<App>;
@@ -317,23 +322,49 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
       )
         .send({ faixaId: faixaB })
         .expect(403);
-
-      await como(
-        api().delete(`/api/portal/agendamentos/${agendamentoId}`),
-        intruso.token,
-      ).expect(403);
     });
   });
 
-  describe('o aluno cancela', () => {
-    it('cancela, devolve a vaga e permite marcar de novo', async () => {
-      const aluno = await criarAluno('CANCELA');
+  describe('o aluno NAO cancela', () => {
+    /**
+     * A trava da decisao de 17/08/2026. Tirar o botao da tela e deixar o
+     * endpoint de pe manteria a regra valendo em um lugar so: com o token do
+     * aluno na mao, um DELETE ainda devolveria a vaga dele.
+     *
+     * 404 e o que o roteador do Nest responde para rota inexistente — e e a
+     * afirmacao que este caso quer: nao existe cancelamento pelo portal.
+     */
+    it('a rota de cancelamento do portal nao existe mais', async () => {
+      const aluno = await criarAluno('SEMCANCEL');
       const ag = await agendar(aluno.token, faixaB);
 
       await como(
         api().delete(`/api/portal/agendamentos/${ag.id}`),
         aluno.token,
+      ).expect(404);
+
+      // e a prova continua de pe, no mesmo lugar
+      const registro = await prisma.agendamento.findUniqueOrThrow({
+        where: { id: ag.id },
+      });
+      expect(registro.status).toBe('CONFIRMADO');
+
+      const meus = await como(
+        api().get('/api/portal/agendamentos'),
+        aluno.token,
       ).expect(200);
+      expect(meus.body).toHaveLength(1);
+    });
+
+    /**
+     * O aluno perdeu o cancelamento, e a vaga continua tendo de voltar quando
+     * alguem sai — agora pela unica porta que restou, a da secretaria.
+     */
+    it('o cancelamento do admin devolve a vaga, e o aluno pode marcar de novo', async () => {
+      const aluno = await criarAluno('CANCELA');
+      const ag = await agendar(aluno.token, faixaB);
+
+      await comoAdmin(api().delete(`/api/agendamentos/${ag.id}`)).expect(200);
 
       // some da lista do aluno
       const meus = await como(
@@ -352,20 +383,6 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
       await agendar(aluno.token, faixaB);
     });
 
-    it('recusa cancelar duas vezes', async () => {
-      const aluno = await criarAluno('CANCELA2');
-      const ag = await agendar(aluno.token, faixaB);
-
-      await como(
-        api().delete(`/api/portal/agendamentos/${ag.id}`),
-        aluno.token,
-      ).expect(200);
-      await como(
-        api().delete(`/api/portal/agendamentos/${ag.id}`),
-        aluno.token,
-      ).expect(409);
-    });
-
     /**
      * A duvida que isto trava: "cancelei todo mundo, por que a faixa nao apaga?".
      * Cancelado continua no banco (e a FK para SalaFaixa e Restrict), entao a
@@ -380,10 +397,7 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
       ]);
 
       const ag = await agendar(aluno.token, faixaId);
-      await como(
-        api().delete(`/api/portal/agendamentos/${ag.id}`),
-        aluno.token,
-      ).expect(200);
+      await comoAdmin(api().delete(`/api/agendamentos/${ag.id}`)).expect(200);
 
       const res = await comoAdmin(
         api().delete(`/api/faixas/${faixaId}`),
@@ -398,7 +412,7 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
         .expect(200);
     });
 
-    it('fora do prazo o aluno nao cancela nem troca sozinho', async () => {
+    it('fora do prazo o aluno nao troca sozinho', async () => {
       const aluno = await criarAluno('PRAZO');
       const ag = await agendar(aluno.token, faixaB);
 
@@ -407,10 +421,6 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
         data: { aberto: false },
       });
 
-      await como(
-        api().delete(`/api/portal/agendamentos/${ag.id}`),
-        aluno.token,
-      ).expect(403);
       await como(api().patch(`/api/portal/agendamentos/${ag.id}`), aluno.token)
         .send({ faixaId: faixaA })
         .expect(403);
@@ -786,30 +796,20 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
       ]);
     });
 
-    it('registra o cancelamento com o autor certo', async () => {
-      const doAluno = await criarAluno('HIST-D');
-      const ag1 = await agendar(doAluno.token, faixaB);
-      await como(
-        api().delete(`/api/portal/agendamentos/${ag1.id}`),
-        doAluno.token,
-      ).expect(200);
+    /**
+     * Todo CANCELADO e de ADMIN desde 17/08/2026 — nao ha mais como o aluno
+     * cancelar. E exatamente o que a secretaria precisa poder mostrar no balcao:
+     * "cancelaram minha prova" tem um e-mail com nome e sobrenome do outro lado.
+     */
+    it('registra o cancelamento com o e-mail de quem cancelou', async () => {
+      const aluno = await criarAluno('HIST-E');
+      const ag = await agendar(aluno.token, faixaB);
+      await comoAdmin(api().delete(`/api/agendamentos/${ag.id}`)).expect(200);
 
-      const h1 = await comoAdmin(
-        api().get(`/api/agendamentos/${ag1.id}/historico`),
+      const h = await comoAdmin(
+        api().get(`/api/agendamentos/${ag.id}/historico`),
       ).expect(200);
-      expect(h1.body[0]).toMatchObject({
-        evento: 'CANCELADO',
-        autorTipo: 'ALUNO',
-      });
-
-      const doAdmin = await criarAluno('HIST-E');
-      const ag2 = await agendar(doAdmin.token, faixaB);
-      await comoAdmin(api().delete(`/api/agendamentos/${ag2.id}`)).expect(200);
-
-      const h2 = await comoAdmin(
-        api().get(`/api/agendamentos/${ag2.id}/historico`),
-      ).expect(200);
-      expect(h2.body[0]).toMatchObject({
+      expect(h.body[0]).toMatchObject({
         evento: 'CANCELADO',
         autorTipo: 'ADMIN',
         autor: EMAIL,
@@ -834,7 +834,7 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
   });
 
   describe('o aluno so enxerga o periodo VIGENTE', () => {
-    it('nao lista nem deixa cancelar prova de periodo anterior', async () => {
+    it('nao lista nem deixa trocar prova de periodo anterior', async () => {
       const sala = await criarSala('PER-ANTIGO', 3);
       const { faixaId } = await criarFaixa('2026-12-01', poloId, [
         { salaId: sala.id, modalidadeId: ead.id, vagas: 3, ordem: 1 },
@@ -860,12 +860,7 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
         ).expect(200);
         expect(meus.body).toHaveLength(0);
 
-        // e ele nao consegue cancelar nem trocar uma prova que ja aconteceu
-        await como(
-          api().delete(`/api/portal/agendamentos/${ag.id}`),
-          aluno.token,
-        ).expect(404);
-
+        // e ele nao consegue trocar o horario de uma prova que ja aconteceu
         await como(
           api().patch(`/api/portal/agendamentos/${ag.id}`),
           aluno.token,
@@ -951,15 +946,19 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
       ]));
     });
 
-    /** Agenda e cancela pelo portal: e assim que nasce a reserva anterior. */
+    /**
+     * Agenda pelo portal e a secretaria cancela: e assim que nasce a reserva
+     * anterior de onde esta rota copia as disciplinas.
+     *
+     * O cancelamento e do ADMIN porque e o unico que existe (17/08/2026) — o que
+     * nao muda o cenario: a fotografia das disciplinas fica no agendamento
+     * cancelado do mesmo jeito, independentemente de quem apertou o botao.
+     */
     async function alunoQueCancelou(sufixo: string) {
       const aluno = await criarAluno(sufixo);
       const ag = await agendar(aluno.token, faixaOrigem);
 
-      await como(
-        api().delete(`/api/portal/agendamentos/${ag.id}`),
-        aluno.token,
-      ).expect(200);
+      await comoAdmin(api().delete(`/api/agendamentos/${ag.id}`)).expect(200);
 
       return aluno;
     }
@@ -1187,12 +1186,11 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
         .expect(401);
     });
 
-    it('troca e cancelamento do portal exigem aluno', async () => {
+    it('a troca do portal exige aluno', async () => {
       await api()
         .patch('/api/portal/agendamentos/1')
         .send({ faixaId: 1 })
         .expect(401);
-      await api().delete('/api/portal/agendamentos/1').expect(401);
     });
   });
 });

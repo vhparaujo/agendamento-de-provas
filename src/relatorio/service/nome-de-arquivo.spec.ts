@@ -14,7 +14,6 @@ import {
  */
 describe('nome dos arquivos de grupo', () => {
   const FAIXA = {
-    faixaId: 14,
     data: new Date('2026-08-20T00:00:00.000Z'),
     horaInicio: '08:30',
     horaFim: '11:30',
@@ -104,16 +103,38 @@ describe('nome dos arquivos de grupo', () => {
       );
     });
 
-    it('desempata pelo id quando duas faixas caem no mesmo caminho', () => {
-      // Mesmo dia, mesmo horario, mesma turma, polos diferentes: o polo nao entra
-      // no nome, entao o segundo arquivo sobrescreveria o primeiro em silencio.
+    it('desempata pelo orgUnitId quando duas turmas caem na mesma pasta', () => {
+      // `sanear` corta cada segmento em 60 caracteres: duas disciplinas do mesmo
+      // codigo de turma que so diferem depois do 60o produzem a MESMA pasta, e o
+      // segundo arquivo sobrescreveria o primeiro dentro do zip, em silencio.
+      const longo = 'PRATICAS PROFISSIONAIS SUPERVISIONADAS EM FISIOTERAPIA NO';
       const usados = new Set<string>();
 
-      const primeiro = caminhoNoZip({ ...FAIXA, ...TURMA }, usados);
-      const segundo = caminhoNoZip({ ...FAIXA, ...TURMA, faixaId: 15 }, usados);
+      const primeiro = caminhoNoZip(
+        { ...FAIXA, ...TURMA, nomeDisciplina: `${longo} AMBITO HOSPITALAR` },
+        usados,
+      );
+      const segundo = caminhoNoZip(
+        {
+          ...FAIXA,
+          ...TURMA,
+          orgUnitId: '778899',
+          nomeDisciplina: `${longo} AMBITO AMBULATORIAL`,
+        },
+        usados,
+      );
 
       expect(segundo).not.toBe(primeiro);
-      expect(segundo).toContain('#15');
+      expect(segundo).toContain('#778899');
+    });
+
+    it('NAO desempata dois polos — eles sao um grupo so', () => {
+      // O recorte do grupo e a janela (dia + horario), nao a faixa: duas faixas
+      // do mesmo dia e horario em campi diferentes chegam aqui como UMA linha,
+      // e o `#faixaId` que existia ate 17/08/2026 nao tem mais o que desempatar.
+      expect(caminhoNoZip({ ...FAIXA, ...TURMA }, new Set())).not.toContain(
+        '#',
+      );
     });
 
     it('mantem os horarios da mesma turma na mesma pasta', () => {
@@ -124,7 +145,6 @@ describe('nome dos arquivos de grupo', () => {
         {
           ...FAIXA,
           ...TURMA,
-          faixaId: 16,
           horaInicio: '14:00',
           horaFim: '17:00',
         },

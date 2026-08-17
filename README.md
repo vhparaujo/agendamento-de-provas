@@ -590,14 +590,17 @@ UC25426847,
 ```
 
 - **Um arquivo por HORÁRIO E TURMA.** O grupo vive *dentro* de uma disciplina do
-  Brightspace (`orgUnitId`) e libera o quiz **dela**. Uma lista com a faixa
-  inteira importaria sem erro nenhum e daria acesso à prova de HISTÓRIA para quem
+  Brightspace (`orgUnitId`) e libera o quiz **dela**. Uma lista com o horário
+  inteiro importaria sem erro nenhum e daria acesso à prova de HISTÓRIA para quem
   só cursa NUTRIÇÃO. O mesmo aluno sai em vários arquivos — um por disciplina que
   a prova dele cobre.
-- **A sala não entra**: o grupo libera o quiz num horário, e a sala em que a
-  pessoa senta não muda o acesso. As salas da faixa entram na mesma lista.
+- **Nem a sala nem o polo entram**: o grupo libera o quiz numa janela de tempo, e
+  onde a pessoa senta — que cadeira, que campus — não muda o acesso. A mesma
+  prova aplicada em dois polos no mesmo dia e horário sai num **arquivo só**.
+  Por isso `poloId` estreita a *listagem* e nunca o *conteúdo* do arquivo:
+  filtrado, ele continua saindo com os alunos de todos os campi.
 - **Cada matrícula aparece uma vez por arquivo.** Um RA com dois vínculos na
-  mesma modalidade pode ter dois agendamentos na mesma faixa cobrindo a mesma
+  mesma modalidade pode ter dois agendamentos na mesma janela cobrindo a mesma
   disciplina; o grupo é por *usuário*.
 - **Só agendamentos `CONFIRMADO`**, no período letivo do recorte (ou o vigente).
 - Nome do arquivo:
@@ -613,8 +616,9 @@ UC25426847,
       20-08-2026 14h00-17h00.csv
   ```
 
-  Duas faixas do mesmo horário em polos diferentes, na mesma turma, são
-  desempatadas pelo id (`... #14.csv`).
+  O sufixo `#<orgUnitId>` só aparece no caso raro de duas disciplinas gerarem a
+  mesma pasta depois do corte de 60 caracteres do nome. Dois polos no mesmo
+  horário **não** produzem dois arquivos — são um grupo só.
 - **Horário sem ninguém agendado não aparece**: as linhas nascem dos
   agendamentos, e uma faixa não "tem" disciplinas — são os alunos que as trazem.
   Ocupação por horário é `GET /agendamentos/resumo`.
@@ -755,6 +759,7 @@ quem tem um só pode omitir.
 | `GET` | `/portal/faixas` | Horários que ele pode escolher — **sem sala**, com o total de vagas livres |
 | `POST` | `/portal/agendamentos` | Confirma a prova; a sala vem da alocação sequencial |
 | `GET` | `/portal/agendamentos` | O que esta matrícula já marcou (um por curso) |
+| `GET` | `/portal/agendamentos/:id/declaracao` | **Declaração de agendamento em PDF** — só depois de o prazo encerrar |
 | `PATCH` | `/portal/agendamentos/:id` | **Troca de horário** — atômica: sem vaga no novo, mantém o antigo |
 | `DELETE` | `/portal/agendamentos/:id` | Cancela a própria prova |
 
@@ -765,6 +770,40 @@ ninguém consegue ocupar.
 O aluno enxerga **apenas o período vigente**: provas de semestres anteriores não
 aparecem nem podem ser alteradas. Mas fechar o prazo **não esconde** a prova dele
 — ele continua vendo onde e quando é. Fechar tranca a escolha, não a consulta.
+
+#### A declaração de agendamento
+
+`GET /portal/agendamentos/:id/declaracao` devolve uma folha A4 em PDF declarando
+que o aluno está matriculado sob aquele RA e marcou a prova presencial para tal
+dia e hora. É o papel que ele leva ao trabalho para justificar a ausência — e o
+único documento do sistema que sai pela mão do aluno, não da secretaria.
+
+**Ela só existe depois de o prazo ENCERRAR.** Enquanto o período está aberto o
+aluno ainda troca de horário, e o documento afirmaria uma data que o próprio
+portador pode mudar cinco minutos depois; quem o recebeu não teria como conferir.
+Antes disso a rota responde 403 e o portal nem mostra o botão.
+
+Quem governa o botão é o campo **`encerrado`** de `GET /portal/periodo` — e ele
+**não é `!aberto`**. "Ainda não configurado" e "ainda não abriu" também respondem
+`aberto: false`, e em nenhum dos dois há agendamento a declarar:
+
+| Estado | `aberto` | `encerrado` |
+|---|:---:|:---:|
+| Prazo correndo | `true` | `false` |
+| Sem período cadastrado | `false` | `false` |
+| Cadastrado, ainda não abriu | `false` | `false` |
+| Prazo vencido | `false` | `true` |
+| Fechado à mão pelo admin | `false` | `true` |
+
+O recorte é o mesmo de `GET /portal/agendamentos`: prova sua, confirmada, do
+semestre vigente — cancelada não emite. É **uma declaração por prova**, não por
+pessoa: quem tem dois cursos faz duas provas, em dias diferentes, e cada uma
+justifica uma ausência diferente.
+
+O layout reproduz a "Declaração de Prova" do sistema anterior (Avalia/Grupo A),
+que a secretaria e os alunos já reconhecem, sem o QR code e as duas linhas de
+validação — eles apontavam para o serviço do fornecedor antigo, que não existe
+deste lado. A marca fica em `src/agendamento/assets/logo-catolica.png`.
 
 Toda alteração registra **quem a fez**, e o administrador consulta em
 `GET /agendamentos/:id/historico`. É a resposta para "mudaram minha prova e não

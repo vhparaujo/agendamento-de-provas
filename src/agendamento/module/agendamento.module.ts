@@ -8,6 +8,7 @@ import { PortalController } from '../controller/portal.controller';
 import { AgendamentoAdminService } from '../service/agendamento-admin.service';
 import { AgendamentoService } from '../service/agendamento.service';
 import { CompulsorioService } from '../service/compulsorio.service';
+import { DeclaracaoService } from '../service/declaracao.service';
 import { DisciplinasDoAlunoService } from '../service/disciplinas-do-aluno.service';
 
 @Module({
@@ -23,6 +24,7 @@ import { DisciplinasDoAlunoService } from '../service/disciplinas-do-aluno.servi
     AgendamentoService,
     AgendamentoAdminService,
     CompulsorioService,
+    DeclaracaoService,
     DisciplinasDoAlunoService,
   ],
   exports: [AgendamentoService, AgendamentoAdminService],
