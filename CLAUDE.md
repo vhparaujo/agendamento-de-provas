@@ -769,6 +769,16 @@ npm run token:aluno -- <RA> [orgUnitId]
 npm run alunos:recalcular
 npm run alunos:recalcular -- --gravar
 
+# "id_token do LTI invalido" e generico de proposito (nao conta a quem sonda a
+# rota o que forjar). Este script decodifica o token e diz QUAL claim diverge do
+# .env — iss, aud, deployment_id ou exp. Nao verifica assinatura: e leitura.
+npm run lti:diagnosticar -- <id_token>
+
+# link de autorizacao da Valence, montado a partir do .env. Refaca a autorizacao
+# sempre que D2L_REDIRECT_URI mudar (ngrok -> producao): o Brightspace compara o
+# redirect byte a byte, e o refresh token gravado nao serve para outra URL.
+npm run d2l:autorizar
+
 # access token da Valence a partir do refresh gravado (recusa em producao).
 # Usa o D2lOauthService, entao a ROTACAO do refresh e persistida — nunca fale
 # com o token endpoint por fora, ou o refresh do banco vira lixo.

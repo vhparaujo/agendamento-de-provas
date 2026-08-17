@@ -213,6 +213,12 @@ npm run lti:keygen           # gera a chave RSA da ferramenta (LTI_TOOL_PRIVATE_
 # token de aluno para testar o portal sem o Brightspace (SÓ DESENVOLVIMENTO)
 npm run token:aluno -- <RA> [orgUnitId]
 
+# por que o launch recusou este id_token: compara os claims com o .env
+npm run lti:diagnosticar -- <id_token>
+
+# link de autorização da Valence (refaça sempre que o D2L_REDIRECT_URI mudar)
+npm run d2l:autorizar
+
 # access token da Valence a partir do refresh gravado (SÓ DESENVOLVIMENTO)
 npm run d2l:token
 
@@ -722,8 +728,24 @@ Para usar:
    em desenvolvimento, o túnel do ngrok).
 2. Preencha `D2L_CLIENT_ID`, `D2L_CLIENT_SECRET` e `D2L_REDIRECT_URI` no `.env`.
    O redirect é comparado **byte a byte**; uma barra final a mais já recusa.
-3. Autorize uma vez pelo browser:
+3. Autorize uma vez pelo browser. `npm run d2l:autorizar` monta o link a partir
+   do `.env` — o mesmo arquivo que o servidor usa, então o `redirect_uri` sai
+   idêntico ao configurado:
+
    `https://auth.brightspace.com/oauth2/auth?response_type=code&client_id=…&redirect_uri=…&scope=…&state=…`
+
+   ⚠️ **Não acrescente `offline_access` ao `D2L_SCOPES`.** É a convenção de
+   outros provedores para pedir refresh token; a D2L valida o formato do escopo
+   (`group:resource:permission`) e recusa a autorização inteira com
+   `invalid_scope: Invalid scope format: offline_access`. Aqui o refresh token
+   vem por padrão no `authorization_code`, sem escopo que o ligue.
+
+**Trocou de URL (ngrok → produção, ou de domínio)? Refaça os 3 passos.** O
+`redirect_uri` da autorização precisa bater com o que está registrado no
+Brightspace **e** com o `D2L_REDIRECT_URI` do `.env` de produção — os três são a
+mesma string. O refresh token gravado não é reaproveitável entre URLs diferentes;
+a nova autorização sobrescreve a linha de `integracao_d2l` (é `upsert` em `id=1`),
+então não há nada para apagar antes.
 
 O **refresh token vai para a tabela `integracao_d2l`, não para o `.env`**: cada
 refresh emite um token novo e invalida o anterior, então um valor em arquivo

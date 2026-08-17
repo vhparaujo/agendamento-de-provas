@@ -30,6 +30,8 @@
     "lti:keygen": "tsx scripts/gerar-chave-lti.ts",
     "token:aluno": "tsx scripts/token-aluno.ts",
     "alunos:recalcular": "tsx scripts/recalcular-elegibilidade.ts",
+    "lti:diagnosticar": "tsx scripts/lti-diagnosticar.ts",
+    "d2l:autorizar": "tsx scripts/d2l-autorizar.ts",
     "d2l:token": "tsx scripts/d2l-token.ts"
   },
   "dependencies": {
