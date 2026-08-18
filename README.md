@@ -783,11 +783,16 @@ quem tem um só pode omitir.
 | `GET` | `/portal/agendamentos` | O que esta matrícula já marcou (um por curso) |
 | `GET` | `/portal/agendamentos/:id/declaracao` | **Declaração de agendamento em PDF** — só depois de o prazo encerrar |
 | `PATCH` | `/portal/agendamentos/:id` | **Troca de horário** — atômica: sem vaga no novo, mantém o antigo |
-| `DELETE` | `/portal/agendamentos/:id` | Cancela a própria prova |
 
-Trocar e cancelar valem **enquanto o prazo estiver aberto**. Depois disso, só a
-secretaria remaneja — cancelar após o fechamento deixaria um lugar vago que mais
-ninguém consegue ocupar.
+A troca vale **enquanto o prazo estiver aberto**. Depois disso, só a secretaria
+remaneja.
+
+**O aluno não cancela a própria prova** (17/08/2026): a troca é a única alteração
+que ele faz, e `DELETE /portal/agendamentos/:id` **não existe mais**. Cancelar
+devolve a vaga e o deixa *sem* prova — num período que está lotando, a vaga sai
+em segundos e quem só queria mudar de dia chega ao balcão sem horário nenhum,
+quando a troca resolvia o caso dele sem risco. Desmarcar é decisão da secretaria,
+em `DELETE /agendamentos/:id`, que grava no histórico o e-mail de quem cancelou.
 
 O aluno enxerga **apenas o período vigente**: provas de semestres anteriores não
 aparecem nem podem ser alteradas. Mas fechar o prazo **não esconde** a prova dele
@@ -1541,7 +1546,7 @@ A ordem de implementação segue a prioridade definida para o projeto.
 | 4 | Estrutura: polo / sala / faixa / sala-faixa | ✅ concluída |
 | 5 | Portal do aluno: listar faixas + agendar com alocação sequencial | ✅ concluída |
 | 6 | Período de agendamento + relatório (consulta, ocupação por sala, CSV) | ✅ concluída |
-| 7 | Remanejo administrativo + cancelamento/troca pelo aluno | ✅ concluída |
+| 7 | Remanejo e cancelamento administrativos + troca de horário pelo aluno | ✅ concluída |
 | 8a | Valence: OAuth + leitura de matrículas (disciplinas do semestre) | 🟡 pronta, desligada por padrão |
 | 8b | Valence: special access no quiz | ⬜ **adiada pelo cliente** |
 

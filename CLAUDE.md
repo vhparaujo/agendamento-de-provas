@@ -93,12 +93,21 @@ regra de negócio ou estrutura, atualize os dois.
    correrem em paralelo, cada uma conferindo a regra 4b antes de a outra gravar,
    e as duas passando. A ordem continua `aluno → sala_faixa → agendamento`.
 7. **Reagendamento tem dono, e fica registrado.**
-   - **O aluno só reagenda com o período ABERTO.** Trocar de horário e cancelar
-     valem enquanto o prazo corre; depois disso, só a secretaria. É a mesma trava
-     do agendamento inicial — a troca não pode ser uma porta para burlar o prazo.
+   - **O ALUNO NÃO CANCELA** (17/08/2026). A troca de horário é a única alteração
+     que ele faz na própria prova; `DELETE /portal/agendamentos/:id` **não existe
+     mais**. Cancelar devolve a vaga e o deixa SEM prova — num período que está
+     lotando, a vaga sai em segundos e quem só queria mudar de dia chega ao balcão
+     sem horário nenhum, quando a troca resolvia o caso dele sem risco nenhum.
+     Desmarcar é decisão da secretaria, em `DELETE /agendamentos/:id`, que grava o
+     e-mail de quem cancelou. Tirar o botão da tela e deixar o endpoint de pé
+     manteria a regra valendo em um lugar só — o teste
+     `a rota de cancelamento do portal nao existe mais` trava isso.
+   - **O aluno só troca com o período ABERTO.** Vale enquanto o prazo corre;
+     depois disso, só a secretaria remaneja. É a mesma trava do agendamento
+     inicial — a troca não pode ser uma porta para burlar o prazo.
    - **O aluno só enxerga e só mexe no período VIGENTE.** Provas de semestres
      anteriores não aparecem para ele nem podem ser alteradas. Sem isso, abrir o
-     período novo daria a ele a chance de cancelar uma prova que já fez.
+     período novo daria a ele a chance de mexer numa prova que já fez.
    - **Fechar o prazo NÃO esconde a prova.** Ele continua vendo onde e quando é.
      Fechar tranca a *escolha*, não a *consulta*.
    - **Admin pode remanejar** qualquer agendamento (trocar sala ou faixa), e
@@ -304,7 +313,7 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `PATCH /agendamentos/:id/remanejar` · `DELETE /agendamentos/:id` | admin | Mover de sala/horário e cancelar |
 | `POST /agendamentos/compulsorio` · `GET /:id` · `/:id/relatorio` | admin | Agenda por quem não agendou; acompanha o lote e baixa o CSV de exceções |
 | `POST /agendamentos` | admin | Agenda a prova de **um** aluno, escolhendo a sala ou deixando a alocação escolher |
-| `PATCH /portal/agendamentos/:id` · `DELETE` | aluno | Trocar de horário (atômico) e cancelar |
+| `PATCH /portal/agendamentos/:id` | aluno | Trocar de horário (atômico). **Não há cancelamento pelo aluno** — só o admin, em `DELETE /agendamentos/:id` |
 | `GET /portal/agendamentos/:id/declaracao` | aluno | Declaração de agendamento em PDF — **só depois de o prazo encerrar** |
 | `GET /agendamentos/:id/historico` | admin | Quem alterou: aluno ou administrador |
 | `GET /d2l/callback` | — | Callback OAuth da Valence: troca o `code` e grava o refresh token |
@@ -962,9 +971,11 @@ passado para virar frase.
 apaga — quem aparecer no dia sem estar na lista precisa ser explicável. Toda
 contagem filtra `CONFIRMADO`, então a vaga volta sozinha.
 
-**Trocar é atômico, e por isso existe separado de "cancelar e marcar de novo".**
-Se o aluno cancelasse primeiro, poderia perder a vaga que tinha e descobrir que a
-nova lotou no meio do caminho — ficando sem nenhuma. O lock reaproveitado está em
+**Trocar é atômico, e por isso é a ÚNICA alteração que o aluno faz.**
+Se ele cancelasse primeiro, poderia perder a vaga que tinha e descobrir que a
+nova lotou no meio do caminho — ficando sem nenhuma. Foi esse risco que tirou o
+cancelamento do portal em 17/08/2026 (regra 7): a troca cobre o caso real do
+aluno ("não posso nesse dia") sem nunca deixá-lo sem horário. O lock reaproveitado está em
 `agendamento/service/lock-de-vagas.ts`, compartilhado por agendar, trocar e
 remanejar: se fossem três implementações, uma delas acabaria sem o `FOR UPDATE`.
 
@@ -1243,9 +1254,9 @@ Os três documentos da seção anterior são baixados pela **secretaria**; este 
 
 ### ⚠️ SÓ DEPOIS DE O PRAZO ENCERRAR (regra do cliente)
 
-Enquanto o período está aberto, o aluno ainda troca de horário e cancela (regra
-7). Uma declaração emitida ali afirma um dia e uma hora que **o próprio portador
-pode mudar cinco minutos depois** — e quem recebeu o papel (empregador, escola)
+Enquanto o período está aberto, o aluno ainda troca de horário (regra 7). Uma
+declaração emitida ali afirma um dia e uma hora que **o próprio portador pode
+mudar cinco minutos depois** — e quem recebeu o papel (empregador, escola)
 não tem como conferir. Depois do fechamento só a secretaria remaneja, e o que o
 documento diz para de se mover sozinho.
 
@@ -1513,7 +1524,8 @@ Como o remanejo, **não depende do período estar aberto**.
 4. ✅ Estrutura (polo/sala/faixa/sala-faixa).
 5. ✅ Portal do aluno (listar faixas + agendar com alocação sequencial).
 6. ✅ Período de agendamento + relatório (consulta, ocupação por sala, CSV).
-7. ✅ Remanejo administrativo + cancelamento/troca pelo aluno.
+7. ✅ Remanejo e cancelamento administrativos + troca de horário pelo aluno.
+   O cancelamento **pelo aluno** existiu e foi removido em 17/08/2026 (regra 7).
 8. 🟡 Valence: OAuth + enrollments (todas as disciplinas do semestre) prontos e
    desligados por padrão. Special access no quiz — **adiado pelo cliente.**
 9. ✅ Agendamento compulsório: o lote que agenda por quem não agendou, com
