@@ -31,6 +31,7 @@ export const TAGS = {
   AGENDAMENTOS: 'Agendamentos (admin)',
   RELATORIOS: 'Relatorios e exportacoes (admin)',
   D2L: 'Integracao D2L (Valence)',
+  SENHAS_QUIZ: 'Senhas dos questionarios (admin)',
 } as const;
 
 const DESCRICAO = `

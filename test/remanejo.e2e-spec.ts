@@ -913,7 +913,8 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
    * ==========================================================================
    * A outra ponta do compulsorio: uma pessoa, no balcao, em vez do lote inteiro.
    *
-   * Estes testes rodam com `D2L_HABILITADO=false` — o default —, entao todos
+   * Estes testes rodam com `D2L_HABILITADO=false` (fixado em test/setup-e2e.ts;
+   * o default do codigo virou `true` em 18/08/2026), entao todos
    * passam pelo caminho da RESERVA_ANTERIOR. E de proposito: e o caminho que a
    * secretaria mais usa (quem cancelou e nao remarcou) e o unico que funciona
    * sem a Valence de pe.

@@ -1,11 +1,7 @@
-import { BadGatewayException, Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import {
-  carregarD2lApiConfig,
-  D2lApiConfig,
-  faltandoParaApi,
-} from '../config/d2l.config';
-import { D2lOauthService } from './d2l-oauth.service';
+import { D2lApiConfig } from '../config/d2l.config';
+import { D2lHttpService } from './d2l-http.service';
 
 /**
  * Uma oferta de disciplina como a Valence a devolve.
@@ -95,9 +91,6 @@ export interface PeriodoLetivoD2L {
   semestre: number | null;
 }
 
-/** A Valence e externa: sem limite, um travamento dela trava o portal. */
-const TIMEOUT_MS = 15_000;
-
 /**
  * Teto de paginas por consulta de matriculas.
  *
@@ -159,18 +152,17 @@ export class D2lEnrollmentsService {
    */
   private descendentes = new Map<
     string,
-    { ids: Set<string>; expiraEmMs: number }
+    { ofertas: OfertaDoAluno[]; ids: Set<string>; expiraEmMs: number }
   >();
 
   constructor(
     private readonly config: ConfigService,
-    private readonly oauth: D2lOauthService,
+    private readonly http: D2lHttpService,
   ) {}
 
   /** Enquanto `false`, nenhuma chamada de rede sai daqui. */
   habilitado(): boolean {
-    const cfg = carregarD2lApiConfig(this.config);
-    return cfg.habilitado && faltandoParaApi(cfg).length === 0;
+    return this.http.habilitado();
   }
 
   /**
@@ -491,13 +483,46 @@ export class D2lEnrollmentsService {
   }
 
   /** Os ids das ofertas que pertencem ao periodo letivo, com cache. */
+  /**
+   * As ofertas do periodo letivo, COM codigo e titulo, para quem precisa casar
+   * turma por `Code` — hoje, a resolucao de `orgUnitId` das turmas do CSV no
+   * lote de senhas (src/senha-quiz).
+   *
+   * Existe porque ate 18/08/2026 esta chamada baixava `Code` e `Name` e os
+   * JOGAVA FORA, guardando so os ids: quem precisasse dos codigos teria de
+   * repetir a mesma consulta ao tenant. Agora e UMA chamada e UM cache para os
+   * dois usos — o filtro por id (portal do aluno) e o casamento por codigo.
+   */
+  async ofertasDoSemestre(periodoLetivoId: string): Promise<OfertaDoAluno[]> {
+    const cfg = this.exigirConfigurado();
+    const { ofertas } = await this.descendentesDoPeriodo(cfg, periodoLetivoId);
+    return ofertas;
+  }
+
+  /** Os ids das ofertas que pertencem ao periodo letivo, com cache. */
   private async ofertasDoPeriodoLetivo(
     cfg: D2lApiConfig,
     periodoLetivoId: string,
   ): Promise<Set<string>> {
+    const { ids } = await this.descendentesDoPeriodo(cfg, periodoLetivoId);
+    return ids;
+  }
+
+  /**
+   * A arvore do periodo, baixada uma vez e servida das duas formas.
+   *
+   * O `Set` de ids e derivado da lista, e nao o contrario: assim as duas visoes
+   * nunca divergem, e o filtro por `Type.Id` vale para as duas.
+   */
+  private async descendentesDoPeriodo(
+    cfg: D2lApiConfig,
+    periodoLetivoId: string,
+  ): Promise<{ ofertas: OfertaDoAluno[]; ids: Set<string> }> {
     const emCache = this.descendentes.get(periodoLetivoId);
 
-    if (emCache && emCache.expiraEmMs > Date.now()) return emCache.ids;
+    if (emCache && emCache.expiraEmMs > Date.now()) {
+      return { ofertas: emCache.ofertas, ids: emCache.ids };
+    }
 
     const url = this.url(
       cfg,
@@ -513,18 +538,25 @@ export class D2lEnrollmentsService {
 
     const lista = Array.isArray(dados) ? dados : (dados.Items ?? []);
 
-    const ids = new Set(
-      lista
-        .filter((d) => Number(d.Type?.Id) === cfg.tipoOferta && d.Identifier)
-        .map((d) => String(d.Identifier)),
-    );
+    const ofertas: OfertaDoAluno[] = lista
+      .filter((d) => Number(d.Type?.Id) === cfg.tipoOferta && d.Identifier)
+      .map((d) => ({
+        // §4.3: `Identifier` vem STRING aqui e `Id` vem NUMERO nas matriculas.
+        // Normalizar nos dois lados e o que impede a intersecao de dar vazia.
+        orgUnitId: String(d.Identifier),
+        codigo: d.Code ?? null,
+        titulo: d.Name ?? null,
+      }));
+
+    const ids = new Set(ofertas.map((o) => o.orgUnitId));
 
     this.descendentes.set(periodoLetivoId, {
+      ofertas,
       ids,
       expiraEmMs: Date.now() + CACHE_DESCENDENTES_MS,
     });
 
-    return ids;
+    return { ofertas, ids };
   }
 
   private url(
@@ -533,16 +565,7 @@ export class D2lEnrollmentsService {
     caminho: string,
     query: Record<string, string> = {},
   ): string {
-    const parametros = new URLSearchParams(query).toString();
-
-    // A versao acompanha o PRODUTO: `lp` e `le` numeram separado e um numero
-    // valido num deles pode nao existir no outro — ver D2L_API_VERSION_LP_PADRAO.
-    const versao = produto === 'lp' ? cfg.apiVersaoLp : cfg.apiVersaoLe;
-
-    return (
-      `${cfg.baseUrl}/d2l/api/${produto}/${versao}/${caminho}` +
-      (parametros ? `?${parametros}` : '')
-    );
+    return this.http.url(cfg, produto, caminho, query);
   }
 
   /**
@@ -563,62 +586,21 @@ export class D2lEnrollmentsService {
     o_que: string,
     opcoes: { nuloEm404?: boolean } = {},
   ): Promise<T | null> {
-    const token = await this.oauth.obterAccessToken();
-
-    let resposta: Response;
-
-    try {
-      resposta = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${token.valor}`,
-          Accept: 'application/json',
-        },
-        signal: AbortSignal.timeout(TIMEOUT_MS),
-      });
-    } catch (erro) {
-      const motivo = erro instanceof Error ? erro.message : String(erro);
-
-      throw new BadGatewayException(
-        `Nao foi possivel ler ${o_que} no Brightspace: ${motivo}`,
-      );
-    }
-
-    if (!resposta.ok) {
-      const corpo = (await resposta.text().catch(() => '')).slice(0, 300);
-
-      if (resposta.status === 404 && opcoes.nuloEm404) return null;
-
+    return this.http.chamarUrl<T>(url, {
+      oQue: o_que,
+      nuloEm404: opcoes.nuloEm404,
       // 404 aqui quase sempre e id errado no cadastro — do periodo letivo ou do
       // aluno —, nao instabilidade. A mensagem diz onde procurar.
-      if (resposta.status === 404) {
-        throw new BadGatewayException(
-          `O Brightspace nao encontrou ${o_que} (404). Confira o periodo letivo cadastrado ` +
-            'e o UserId do aluno — ambos precisam existir neste tenant.',
-        );
-      }
-
-      throw new BadGatewayException(
-        `O Brightspace recusou a leitura de ${o_que} (HTTP ${resposta.status}). ${corpo}`.trim(),
-      );
-    }
-
-    return (await resposta.json()) as T;
+      dicaDe404:
+        'Confira o periodo letivo cadastrado e o UserId do aluno — ' +
+        'ambos precisam existir neste tenant.',
+    } as { oQue: string; nuloEm404: true; dicaDe404: string });
   }
 
   private exigirConfigurado(): D2lApiConfig {
-    const cfg = carregarD2lApiConfig(this.config);
-    const faltando = faltandoParaApi(cfg);
-
-    if (!cfg.habilitado || faltando.length > 0) {
-      // Chamar isto com a integracao desligada e erro de programacao: quem chama
-      // deve consultar `habilitado()` antes e usar o caminho do launch.
-      throw new BadGatewayException(
-        'Integracao D2L desligada ou incompleta' +
-          (faltando.length ? `: faltam ${faltando.join(', ')}` : '.'),
-      );
-    }
-
-    return cfg;
+    // Chamar isto com a integracao desligada e erro de programacao: quem chama
+    // deve consultar `habilitado()` antes e usar o caminho do launch.
+    return this.http.exigirConfigurado();
   }
 }
 

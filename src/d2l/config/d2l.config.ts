@@ -118,7 +118,7 @@ export const D2L_TIPO_OFERTA_PADRAO = 3;
 export const D2L_TIPO_PERIODO_LETIVO_PADRAO = 103;
 
 export interface D2lApiConfig {
-  /** `false` (default) = nenhuma chamada de rede sai daqui. */
+  /** `false` = nenhuma chamada de rede sai daqui. O DEFAULT e `true`. */
   habilitado: boolean;
   baseUrl: string;
   /** Ver `D2L_API_VERSION_LP_PADRAO`: uma versao por produto, nunca uma so. */
@@ -139,7 +139,13 @@ function lerNumero(
 
 export function carregarD2lApiConfig(config: ConfigService): D2lApiConfig {
   return {
-    habilitado: ler(config, 'D2L_HABILITADO') === 'true',
+    // DEFAULT LIGADO (18/08/2026). Antes o default era `false` e so 'true'
+    // ligava. Inverteu porque a troca de senha dos questionarios depende da
+    // Valence para descobrir o `orgUnitId` das turmas do CSV — e um ambiente que
+    // apenas ESQUECEU de declarar a variavel nao daria erro nenhum: rodaria o
+    // lote em zero turma e as provas ficariam sem senha no dia. Desligar agora
+    // exige dizer 'false' em voz alta.
+    habilitado: ler(config, 'D2L_HABILITADO', 'true') !== 'false',
     // Sem barra final: as rotas sao montadas com `/d2l/api/...` na frente.
     baseUrl: ler(config, 'D2L_BASE_URL').replace(/\/+$/, ''),
     apiVersaoLp: ler(config, 'D2L_API_VERSION_LP', D2L_API_VERSION_LP_PADRAO),

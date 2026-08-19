@@ -316,10 +316,14 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `PATCH /portal/agendamentos/:id` | aluno | Trocar de horário (atômico). **Não há cancelamento pelo aluno** — só o admin, em `DELETE /agendamentos/:id` |
 | `GET /portal/agendamentos/:id/declaracao` | aluno | Declaração de agendamento em PDF — **só depois de o prazo encerrar** |
 | `GET /agendamentos/:id/historico` | admin | Quem alterou: aluno ou administrador |
+| `GET/PUT /senhas-de-prova` · `GET /:id/revelar` · `DELETE /:id` | admin | A grade dia × turno das senhas das provas. **A listagem nunca devolve o valor** |
+| `GET/PUT /senhas-de-prova/alvo` · `/horarios` · `GET /senhas-de-prova/turmas` | admin | Questionário-alvo, horários do cron, e quais turmas o lote vai tocar |
+| `POST /senhas-de-prova/execucoes` · `GET /:id` · `/:id/relatorio` | admin | Troca a senha dos questionários no Brightspace; acompanha e baixa o CSV |
 | `GET /d2l/callback` | — | Callback OAuth da Valence: troca o `code` e grava o refresh token |
 
-Pendente: special access no quiz (adiado pelo cliente). OAuth e leitura de
-matrículas existem — ver "Disciplinas do aluno: launch ou enrollments".
+Pendente: special access no quiz (adiado pelo cliente). OAuth, leitura de
+matrículas e troca da senha dos questionários existem — ver "Disciplinas do
+aluno: launch ou enrollments" e "Senha das provas".
 
 ## Cadastro: polos, salas e os 2 CSVs
 
@@ -620,13 +624,17 @@ tudo misturado.
 ## Integração D2L
 
 - **LTI 1.3**: entrada do aluno. ✅ **Implementado e validado contra um launch real.**
-- **Valence API — OAuth + leitura de matrículas**: 🟡 implementado, desligado por
-  padrão (`D2L_HABILITADO=false`). É o que descobre **todas** as disciplinas do
-  aluno no semestre; ver "Disciplinas do aluno" abaixo.
+- **Valence API — OAuth + leitura de matrículas**: ✅ implementado e **ligado por
+  padrão** (`D2L_HABILITADO`, default `true` desde 18/08/2026 — só `false`
+  desliga). É o que descobre **todas** as disciplinas do aluno no semestre; ver
+  "Disciplinas do aluno" abaixo.
+- **Valence API — troca da senha dos questionários**: ✅ **implementado
+  (18/08/2026), a pedido do cliente.** `src/senha-quiz/` — ver "Senha das provas"
+  abaixo.
 - **Valence API — special access nos quizzes**: ⬜ **ADIADA (decisão de
-  03/08/2026).** O sistema hoje só agenda e emite relatório; a liberação da prova
-  fica para uma fase posterior. Não implemente nada de quiz/special access sem o
-  cliente pedir.
+  03/08/2026).** O sistema hoje agenda, emite relatório e troca a senha da prova;
+  a liberação individual por aluno fica para uma fase posterior. Não implemente
+  nada de special access sem o cliente pedir.
 
 ### Disciplinas do aluno: launch ou enrollments
 
@@ -635,8 +643,19 @@ cruzamento com o CSV é o mesmo nos dois casos:
 
 | `D2L_HABILITADO` | De onde vêm as turmas |
 |---|---|
-| `false` (default) | A turma de onde o aluno clicou (claim `context` do LTI) — uma só |
-| `true` | Todas as ofertas dele no período letivo cadastrado, via `enrollments/users/{id}/orgUnits/` |
+| `false` | A turma de onde o aluno clicou (claim `context` do LTI) — uma só |
+| `true` (**default**) | Todas as ofertas dele no período letivo cadastrado, via `enrollments/users/{id}/orgUnits/` |
+
+⚠️ **O default virou `true` em 18/08/2026** (`src/d2l/config/d2l.config.ts`): a
+ausência da variável agora liga a integração, e só `'false'` explícito desliga. A
+inversão veio da troca de senha das provas, que **depende** da Valence para
+descobrir o `orgUnitId` das turmas do CSV — um ambiente que apenas esquecesse de
+declarar a variável rodaria o lote em zero turma, sem erro nenhum, e as provas
+ficariam sem senha no dia. O efeito colateral é este: **o portal do aluno passou
+a usar enrollments por padrão**, com as duas consequências já documentadas aqui
+(os 2 alunos de vínculo duplo, e `TURMAS_FILTER_ENABLED=false` ficando muito mais
+perigoso). O e2e fixa `D2L_HABILITADO=false` em `test/setup-e2e.ts` para não
+depender de um default que se move.
 
 **O semestre é o que o admin cadastrou**, não "o atual" segundo o relógio:
 `PeriodoAgendamento.periodoLetivoId` é o org unit do Período Letivo (tipo **103**
@@ -714,8 +733,14 @@ src/
                nome-de-arquivo.ts, zip com uma pasta por turma) +
                lista de presença por sala (lista-presenca.service.ts,
                pdf-lista-presenca.ts puro, assets/logo.png opcional)
-  d2l/         🟡 autorização OAuth + leitura de matrículas (d2l-enrollments).
-               Special access continua adiado — não criar sem pedido.
+  d2l/         ✅ autorização OAuth (d2l-oauth) · canal HTTP compartilhado
+               (d2l-http) · leitura de matrículas (d2l-enrollments) · cliente de
+               questionários (d2l-quizzes). Special access continua adiado —
+               não criar sem pedido.
+  senha-quiz/  ✅ a grade dia × turno (grade-senhas.service) · o lote
+               (senha-quiz.service) · o cron (senha-quiz.cron) · puras:
+               quiz-body.ts, senha.ts, turno.ts, relogio.ts ·
+               resolucao-orgunit.service.ts (CSV ∩ ofertas do semestre)
 
   app.module.ts  app.controller.ts (health)  main.ts
 ```
@@ -1516,6 +1541,151 @@ As duas últimas linhas são as decisões que mais importam:
 
 Como o remanejo, **não depende do período estar aberto**.
 
+## Senha das provas (etapa 10)
+
+O que o cliente fazia num CLI separado (`../brightspace-change-passwords`), agora
+dentro do portal: trocar o campo `Password` do questionário da prova, em massa,
+no Brightspace.
+
+**A operação é uma grade dia × turno.** Manhã/tarde/noite, seis dias de prova,
+uma senha de 6 dígitos por célula — a mesma planilha que a secretaria já usava.
+A senha de um turno vale para **todas as provas de todas as turmas**.
+
+**Sobrescrever a senha do turno anterior é o OBJETIVO, não efeito colateral.** É
+o que impede o aluno da manhã de repassar a senha ao da tarde. Só que isso torna
+o lote **frágil quanto à ordem**: rodar a tarde e depois reprocessar a manhã põe
+a senha da manhã de volta em toda a instituição. Por isso `forcar` existe e pede
+confirmação.
+
+### O que é configuração e o que é `.env`
+
+Duas coisas moram em `configuracao_senha_quiz` (linha única, `id=1`) e são
+editadas na tela: **o questionário-alvo** e **os horários de cada turno**. As
+duas mudam por semestre, e quem as conhece é a secretaria — deixar qualquer uma
+no `.env` significava que trocar o horário de um turno exigia deploy.
+
+**Nenhuma das duas tem valor padrão.** Sem alvo escolhido, `iniciar()` recusa com
+400; sem horário, o turno simplesmente não dispara. Um default plausível
+("Prova", `07:30`) seria pior que a ausência: rodaria, casaria com o que
+estivesse por perto e ninguém saberia até o dia. Foi por isso que
+`SENHA_QUIZ_NOME`/`_MATCH` e `SENHA_QUIZ_CRON_MANHA/_TARDE/_NOITE` saíram do
+`.env` em 19/08/2026 sem virar constante no código.
+
+Continua no `.env` só o que é **da instância**: `SENHA_QUIZ_CRON_HABILITADO`
+(esta réplica dispara?), a tolerância, o teto de tentativas e o ritmo contra a
+Valence.
+
+### O conjunto de turmas
+
+```
+TurmaImportada (o CSV)  ∩  descendentes do período letivo vigente
+```
+
+Decidido com o cliente: **não** se verifica se há agendamento na turma. O
+cruzamento com as ofertas do D2L serve para duas coisas e só elas:
+
+1. descobrir o `orgUnitId` — o CSV não o traz, ele é *aprendido* (nos launches, e
+   agora também aqui);
+2. descartar as linhas de **semestres passados** — a importação faz upsert e
+   nunca apaga, então a tabela acumula.
+
+⚠️ **A direção da iteração não é a direção do escopo.** `resolucao-orgunit.service.ts`
+itera sobre as ofertas do D2L porque é assim que `turma-match.ts` casa
+(`TurmaDoLaunch` → `TurmaCandidata[]`); o conjunto que entra no lote é o das
+**linhas do CSV** que casaram. Oferta do semestre que não está no CSV é
+**ignorada** — ela não tem prova. Há teste travando exatamente isso.
+
+Como em todo match do projeto, **nada é chutado**: `AMBIGUA` e `DIVERGENTE` não
+gravam `orgUnitId` nenhum e viram linha de relatório.
+
+### O PUT substitui o objeto INTEIRO
+
+Não há PATCH em quiz. `GET` → troca só `Password` → `PUT` completo. **Campo não
+reenviado é campo apagado** — um erro em `montarCorpoDoQuiz` apaga `EndDate` de
+todas as provas do semestre e ninguém descobre até o dia.
+
+A rede é `quiz-body.spec.ts`: um **teste de cobertura contra uma lista congelada
+de 35 campos**. Campo novo entra na lista de propósito, nunca por acidente. As
+duas conversões leitura→escrita (`AttemptsAllowed` achatado e
+`RichText`→`RichTextInput`) estão na §5.7 de `docs/D2L_API_REFERENCE.md`.
+
+### A senha em texto claro fica em UMA coluna
+
+`senha_de_prova.senha`, e em nenhum outro lugar. O D2L exige o valor literal e a
+secretaria imprime a folha para os fiscais — hash impossibilita as duas coisas.
+A proteção é **em volta**:
+
+- **nunca** em `ExecucaoSenhaQuiz`/`ItemSenhaQuiz`, na auditoria, no `Logger` nem
+  no CSV do relatório;
+- `descreverSenha()` devolve `'(6 caracteres)'` e é a **única** forma de a senha
+  chegar perto de um log — existe para tirar a tentação;
+- a listagem da grade devolve `temSenha: boolean`. O valor sai **só** de
+  `GET /senhas-de-prova/:id/revelar`, que é auditada em toda chamada e tem
+  throttle de rota de credencial. A grade fica aberta num monitor compartilhado
+  da secretaria: ver a senha precisa ser um **ato com rastro**;
+- `DELETE` apaga a célula, e a execução histórica **sobrevive** (`onDelete:
+  SetNull` + data/turno desnormalizados). Apagar o segredo não pode apagar a
+  prova de que o lote rodou.
+
+### Dois disparos
+
+**Manual**: `POST /senhas-de-prova/execucoes`, fire-and-forget como o compulsório
+(responde com um id, a tela faz polling). **`simulacao: true` é o padrão** e não
+emite nenhum PUT — é a única conferência possível antes de mexer na prova de toda
+a instituição, e há um teste só para provar que o dry-run emite zero PUT.
+
+**Cron** (`@nestjs/schedule`, primeira fila/cron do projeto): um tick de um minuto
+chamando `turnoParaDisparar()`, uma **função pura testada** — e não três `@Cron`
+com expressão de horário, porque decorator é avaliado uma vez, na subida. Desde
+que os horários passaram a ser **escolhidos pelo admin na tela** (19/08/2026),
+isso deixou de ser elegância: salvar `07:30` às 07:25 precisa valer às 07:30, sem
+reiniciar nada. A **janela de tolerância** (30 min) faz um restart às 07:41 ainda
+aplicar o turno das 07:30.
+
+- **Opt-in por instância**: `SENHA_QUIZ_CRON_HABILITADO` default `false`, mesmo
+  com `D2L_HABILITADO` sendo `true`. São coisas diferentes, e trocar senha
+  sozinho é irreversível. **Essa chave é a única coisa do cron que ficou no
+  `.env`**, e de propósito: ela responde "esta réplica dispara?", não "a que
+  horas a prova começa".
+- **O cron nunca simula.** Dry-run agendado gera relatório que ninguém lê. A rede
+  de proteção equivalente é mais forte: **nada acontece se um humano não tiver
+  digitado a senha da célula.**
+- **Idempotência no banco**, não em memória: é o que sobrevive ao restart.
+  Concluída → sai; viva → sai; morta (5 min sem sinal) → enterra e segue;
+  tentativas ≥ 3 → sai (sem esse teto, uma falha permanente bateria no D2L a cada
+  minuto pelos 30 min de tolerância).
+- **Multi-réplica**: o compose fixa uma réplica. Para subir outra, desligue o cron
+  nela.
+- **Cron ligado e nenhum horário cadastrado** avisa (`SENHA_QUIZ_CRON_SEM_HORARIO`)
+  em vez de calar; e a tela avisa o inverso (horários salvos com o cron desligado
+  no servidor). Um cron que *parece* armado e não está é pior que um desligado.
+
+### O resultado que mais dói é o menos barulhento
+
+`QUIZ_NAO_ENCONTRADO` — a turma não tem questionário com o nome configurado — não
+é falha de rede nem erro de ninguém, e é uma **turma inteira que não abriria a
+prova**. Zero falhas e 40 "não encontrado" é um desastre silencioso. A tela
+destaca esse contador tanto quanto `falhas`, e o mesmo vale para
+`ORGUNIT_NAO_RESOLVIDO`.
+
+**Revise `GET /senhas-de-prova/turmas` antes do primeiro dia**, não depois: cada
+linha em `naoResolvidas` é uma turma que ficaria sem senha.
+
+**Cuidado com `CONTEM`.** "Prova" casa "Prova N1", "Prova N2" e "Prova de
+recuperação". O lote não escolhe turma por turma, então um nome genérico troca a
+senha de simulados e atividades em toda turma do CSV de uma vez. O dry-run lista
+cada questionário casado; use `EXATO` assim que os nomes estiverem padronizados.
+
+### Antes do primeiro dia
+
+1. **Escopo `quizzing:` no consentimento** — acrescentar a `D2L_SCOPES` não basta,
+   é preciso `npm run d2l:autorizar`. Sem isso o primeiro PUT volta 403.
+2. Confirme com um `GET` depois do `PUT` em homologação: sem a role certa, o D2L
+   responde **200 sem gravar nada**.
+3. **Meça o tempo do dry-run.** É o número que decide se o horário do cron é cedo
+   o bastante — com ~300 turmas o lote leva ~6 min a 10 req/s; com 1.500 passa de
+   30 min.
+
 ## Ao implementar, priorize nesta ordem
 
 1. ✅ Prisma schema + migrations + Docker + seed do admin.
@@ -1526,16 +1696,22 @@ Como o remanejo, **não depende do período estar aberto**.
 6. ✅ Período de agendamento + relatório (consulta, ocupação por sala, CSV).
 7. ✅ Remanejo e cancelamento administrativos + troca de horário pelo aluno.
    O cancelamento **pelo aluno** existiu e foi removido em 17/08/2026 (regra 7).
-8. 🟡 Valence: OAuth + enrollments (todas as disciplinas do semestre) prontos e
-   desligados por padrão. Special access no quiz — **adiado pelo cliente.**
+8. ✅ Valence: OAuth + enrollments (todas as disciplinas do semestre), **ligados
+   por padrão desde 18/08/2026**. Special access no quiz — **adiado pelo cliente.**
 9. ✅ Agendamento compulsório: o lote que agenda por quem não agendou, com
    simulação, acompanhamento e relatório de exceções. **Exige `D2L_HABILITADO`**
    — é a integração que sabe as disciplinas de quem nunca fez launch.
 9b. ✅ Agendamento administrativo de UM aluno (`POST /agendamentos`): o
    atendimento de balcão que fecha a fila de exceções do compulsório. Funciona
    **sem** `D2L_HABILITADO` quando o aluno tem reserva anterior no semestre.
+10. ✅ Senha das provas: a grade dia × turno e o lote que troca o campo
+   `Password` dos questionários no Brightspace, manual e por cron. **Exige
+   `D2L_HABILITADO`** e escopo `quizzing:` no consentimento OAuth.
 
-**Bloqueios externos:** nenhum aberto. O CSV real de turmas
+**Bloqueios externos:** o consentimento OAuth precisa incluir
+`quizzing:quizzes:read quizzing:quizzes:write` — acrescentar ao `D2L_SCOPES` não
+basta, é preciso **reautorizar** (`npm run d2l:autorizar`), senão o primeiro PUT
+de senha volta 403. O CSV real de turmas
 (`Curso;Código da Turma;Disciplina / Código EAD`, `;`, UTF-8) é quem diz **quais
 turmas têm prova**. Em 07/08/2026 o match passou a usar o **`Code` composto** do
 Brightspace (código da turma + código da disciplina), portado do

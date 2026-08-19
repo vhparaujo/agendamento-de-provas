@@ -623,3 +623,232 @@ enum MotivoExcecao {
   /// conseguiria abrir a prova. Unico motivo que convive com uma alocacao.
   AVISO_CONTA_INATIVA_D2L
 }
+
+// ----------------------------------------------------------------------------
+// SENHA DOS QUESTIONARIOS — a grade que a secretaria preenche, e o lote que a
+// aplica no campo `Password` dos quizzes do Brightspace
+// ----------------------------------------------------------------------------
+// A senha e um segredo com validade de UM TURNO. A mesma turma recebe a senha de
+// cada turno, e a seguinte SOBRESCREVE a anterior — isso e a FUNCIONALIDADE, nao
+// um conflito: e o que impede o aluno da manha de repassar a senha para o da
+// tarde.
+//
+// QUAIS TURMAS ENTRAM (decisao do cliente, 18/08/2026):
+//
+//     TurmaImportada (o CSV)  ∩  ofertas descendentes do periodo letivo vigente
+//
+// Todas as turmas do CSV, sem olhar se ha agendamento nelas. O cruzamento com as
+// ofertas do Brightspace serve para DUAS coisas, e so elas: descobrir o
+// `orgUnitId` (o CSV nao o traz) e descartar as linhas de semestres passados — a
+// importacao faz upsert e NUNCA apaga, entao a tabela acumula. Oferta que existe
+// no semestre e nao esta no CSV e IGNORADA: ela nao tem prova.
+//
+// O turno NAO seleciona turma: o conjunto e o mesmo em toda execucao. Ele so diz
+// QUAL SENHA entra. Por isso nao ha coluna de turno em Faixa nem consulta a
+// Agendamento aqui.
+
+enum Turno {
+  MANHA
+  TARDE
+  NOITE
+}
+
+enum TipoMatchQuiz {
+  /// trim + igualdade.
+  EXATO
+  /// lowercase includes; pode casar VARIOS quizzes da mesma turma.
+  CONTEM
+}
+
+enum OrigemExecucao {
+  MANUAL
+  CRON
+}
+
+/// UMA celula da grade: dia x turno -> senha.
+///
+/// Sem linha aqui, NADA acontece naquele turno. Esse e o humano no circuito que
+/// o cron nao dispensa — e tambem por que sabado a noite (sem prova) nao precisa
+/// de tratamento especial: a celula simplesmente nao existe.
+model SenhaDeProva {
+  id    Int      @id @default(autoincrement())
+  data  DateTime @db.Date
+  turno Turno
+
+  /// TEXTO CLARO, e nao ha alternativa: o D2L exige o valor literal no PUT e a
+  /// secretaria imprime a folha para os fiscais. Hash impossibilitaria as duas.
+  ///
+  /// Esta e a UNICA coluna do banco com o valor. Ele NAO entra em
+  /// ExecucaoSenhaQuiz, ItemSenhaQuiz, auditoria, log, CSV nem na listagem da
+  /// grade — so em GET /senhas-de-prova/:id/revelar, que e auditada.
+  senha String @db.VarChar(200)
+
+  /// Sobe 1 a cada troca do VALOR (nao a cada PUT).
+  ///
+  /// Responde a pergunta operacional real — "editei a senha as 07:20, o cron ja
+  /// tinha rodado as 07:30?" — comparando com ExecucaoSenhaQuiz.versaoAplicada,
+  /// SEM guardar a senha anterior em lugar nenhum. Um hash da senha aplicada
+  /// resolveria o mesmo e seria forcavel por dicionario (sao 6 digitos); o
+  /// contador nao expoe nada.
+  versao Int @default(1)
+
+  /// Fotografia do e-mail, como HistoricoAgendamento.autor: precisa continuar
+  /// legivel se a conta do admin for desativada depois.
+  criadoPor     String
+  atualizadoPor String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  execucoes ExecucaoSenhaQuiz[]
+
+  @@unique([data, turno])
+  @@index([data])
+  @@map("senha_de_prova")
+}
+
+/// O que o admin configura do lote: QUAL questionario procurar e A QUE HORAS o
+/// cron aplica cada turno. Linha unica (id = 1), mesmo idioma de IntegracaoD2L.
+///
+/// Fica no BANCO e nao no .env porque as duas coisas mudam por semestre — o nome
+/// da prova ("Prova N2 2026/1") e o calendario dos turnos — e quem sabe os dois
+/// e a secretaria, que nao faz deploy. Nada aqui tem semente no .env: um valor
+/// que "ja vem preenchido" e um lote que roda com o alvo errado calado.
+model ConfiguracaoSenhaQuiz {
+  id Int @id @default(1)
+
+  /// NULO enquanto ninguem escolheu. O lote RECUSA comecar assim: um nome
+  /// chutado casaria com o questionario errado em toda turma do CSV de uma vez.
+  nomeQuiz  String?
+  matchQuiz TipoMatchQuiz @default(CONTEM)
+
+  /// "HH:MM" em America/Sao_Paulo. NULO = o cron nao dispara aquele turno — e
+  /// assim que sabado-a-noite, que nao tem prova, fica de fora sem gambiarra.
+  /// Guardado como texto e nao como minutos porque e o que o admin digita e o
+  /// que o log mostra; a conversao vive em `minutosDaHora`, com teste.
+  horaManha String? @db.VarChar(5)
+  horaTarde String? @db.VarChar(5)
+  horaNoite String? @db.VarChar(5)
+
+  atualizadoPor String?
+  atualizadoEm  DateTime @updatedAt
+
+  @@map("configuracao_senha_quiz")
+}
+
+/// UMA rodada do lote. Molde: ExecucaoCompulsorio — POST volta na hora com o id,
+/// GET acompanha, e `atualizadoEm` e o sinal de vida que distingue lote lento de
+/// lote que morreu com o processo.
+model ExecucaoSenhaQuiz {
+  id          Int            @id @default(autoincrement())
+  status      StatusExecucao @default(EM_ANDAMENTO)
+  /// true = nenhum PUT sai daqui. E o PADRAO, como no compulsorio.
+  simulacao   Boolean        @default(true)
+  origem      OrigemExecucao @default(MANUAL)
+  /// e-mail do admin, ou "cron".
+  iniciadoPor String
+
+  /// FK OPCIONAL de proposito: apagar a senha antiga (retencao) NAO pode apagar
+  /// a prova de que o lote rodou. Por isso data/turno tambem sao desnormalizados.
+  senhaDeProvaId  Int?
+  data            DateTime @db.Date
+  turno           Turno
+  periodoLetivoId String
+
+  /// Congelados no inicio: a celula e a configuracao podem ser editadas durante
+  /// a execucao, e o registro precisa dizer o que REALMENTE foi aplicado.
+  versaoAplicada Int
+  nomeQuizAlvo   String
+  matchQuizAlvo  TipoMatchQuiz
+
+  /// Fase 1 — resolucao do orgUnitId das turmas do CSV.
+  turmasNoCsv        Int @default(0)
+  turmasResolvidas   Int @default(0)
+  /// Quantos orgUnitId foram aprendidos NESTA execucao. Sinal de CSV novo.
+  orgUnitsAprendidos Int @default(0)
+
+  /// Fase 2 — os quizzes.
+  processadas    Int @default(0)
+  definidas      Int @default(0)
+  naoEncontradas Int @default(0)
+  falhas         Int @default(0)
+
+  /// Quantos GETs devolveram `Password` PREENCHIDO.
+  ///
+  /// Zero com itens > 0 significa que a API esconde o campo (o QuizReadData so o
+  /// expoe se "nao nulo E visivel ao contexto do chamador").
+  ///
+  /// ⚠️ Aqui isso e INFORMATIVO, nao salvaguarda. No CLI de origem havia risco
+  /// real, porque ele PRESERVAVA a senha lida e um GET nulo apagaria tudo em
+  /// silencio. Este lote sempre DEFINE uma senha nova — nunca preserva, nunca
+  /// remove. NAO construa regra de negocio em cima deste contador.
+  comSenhaLida Int @default(0)
+
+  /// So quando a execucao INTEIRA falha (banco fora, token vencido). Problema de
+  /// UMA turma vira linha em ItemSenhaQuiz, nunca isto.
+  erro String? @db.Text
+
+  iniciadoEm   DateTime  @default(now())
+  concluidoEm  DateTime?
+  /// Batido a cada fatia. Sem isto, um restart deixaria `EM_ANDAMENTO` para
+  /// sempre e bloquearia todo lote seguinte.
+  atualizadoEm DateTime  @updatedAt
+
+  senhaDeProva SenhaDeProva?   @relation(fields: [senhaDeProvaId], references: [id], onDelete: SetNull)
+  itens        ItemSenhaQuiz[]
+
+  /// A consulta de idempotencia do cron: "esta celula ja foi aplicada de verdade?"
+  @@index([data, turno, simulacao, status])
+  @@index([status])
+  @@map("execucao_senha_quiz")
+}
+
+enum ResultadoSenhaQuiz {
+  DEFINIDA
+  /// Dry-run: casou e teria sido definida.
+  SIMULADA
+  /// A turma nao tem quiz com o nome configurado. **A saida mais importante do
+  /// lote**: e uma turma inteira de alunos que nao conseguiria abrir a prova, e
+  /// nao aparece como "falha" nenhuma.
+  QUIZ_NAO_ENCONTRADO
+  /// Linha do CSV que nenhuma oferta do semestre casou. Nao e falha de rede: e
+  /// planilha desatualizada, ou `Code` divergente no Brightspace.
+  ORGUNIT_NAO_RESOLVIDO
+  /// Duas ofertas casaram a mesma linha. NAO se escolhe uma: alguem decide.
+  ORGUNIT_AMBIGUO
+  FALHA_AO_LISTAR
+  FALHA_AO_LER
+  FALHA_AO_GRAVAR
+}
+
+/// Uma linha por (turma, quiz casado). Turma sem quiz casado gera UMA linha
+/// QUIZ_NAO_ENCONTRADO; turma que nao resolveu o orgUnitId gera UMA linha
+/// ORGUNIT_NAO_RESOLVIDO.
+model ItemSenhaQuiz {
+  id         Int @id @default(autoincrement())
+  execucaoId Int
+
+  /// Nulo quando a resolucao falhou — e justamente o caso que o relatorio existe
+  /// para mostrar.
+  orgUnitId      String?
+  /// Desnormalizados: o CSV do relatorio precisa deles sem join.
+  codigoTurma    String?
+  nomeDisciplina String?
+
+  quizId   String?
+  nomeQuiz String?
+
+  resultado ResultadoSenhaQuiz
+
+  /// O GET devolveu `Password` preenchido? **Nunca o valor** — ver a regra 2 da
+  /// postura de seguranca no cabecalho de senha-quiz.service.ts.
+  senhaAnteriorLida Boolean @default(false)
+
+  detalhe String? @db.Text
+
+  execucao ExecucaoSenhaQuiz @relation(fields: [execucaoId], references: [id], onDelete: Cascade)
+
+  @@index([execucaoId])
+  @@index([resultado])
+  @@map("item_senha_quiz")
+}

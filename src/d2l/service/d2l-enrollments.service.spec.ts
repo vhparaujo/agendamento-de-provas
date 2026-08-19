@@ -1,6 +1,7 @@
 import { BadGatewayException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { D2lEnrollmentsService } from './d2l-enrollments.service';
+import { D2lHttpService } from './d2l-http.service';
 import { D2lOauthService } from './d2l-oauth.service';
 
 /**
@@ -39,8 +40,16 @@ describe('D2lEnrollmentsService', () => {
     jest.restoreAllMocks();
   });
 
-  const servico = (env: Record<string, string> = ENV) =>
-    new D2lEnrollmentsService(new ConfigService(env), oauth);
+  /**
+   * UNICA linha que mudou quando o canal HTTP virou `D2lHttpService`
+   * (18/08/2026). Nenhum `it()` foi tocado: os testes mockam `globalThis.fetch`,
+   * nao os metodos privados do servico — e era exatamente esse o criterio de
+   * aceite daquela refatoracao.
+   */
+  const servico = (env: Record<string, string> = ENV) => {
+    const config = new ConfigService(env);
+    return new D2lEnrollmentsService(config, new D2lHttpService(config, oauth));
+  };
 
   /** Uma matricula como a Valence a devolve: Id NUMERO, tipo aninhado. */
   const matricula = (id: number, code: string, name: string, tipo = 3) => ({

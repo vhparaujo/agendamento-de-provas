@@ -14,6 +14,21 @@
 process.env.THROTTLE_NOS_TESTES = 'false';
 
 /**
+ * A integracao D2L fica DESLIGADA no e2e, explicitamente.
+ *
+ * Ela e opcional e o e2e nao tem tenant para conversar: ligada, cada suite que
+ * agenda tentaria falar com a Valence de verdade, cairia no fallback e ficaria
+ * lenta e barulhenta sem testar nada a mais.
+ *
+ * Isto era implicito ate 18/08/2026, quando o default de `D2L_HABILITADO` virou
+ * `true` (ver src/d2l/config/d2l.config.ts). Declarar aqui e o que impede que a
+ * proxima mudanca de default reescreva o comportamento de suites que nao falam
+ * de D2L nenhum. Quem precisa da integracao LIGADA redefine no proprio arquivo,
+ * que roda depois deste setup — mesmo padrao do THROTTLE_NOS_TESTES acima.
+ */
+process.env.D2L_HABILITADO = 'false';
+
+/**
  * ============================================================================
  * POR QUE `maxWorkers: 1` EM test/jest-e2e.json
  * ============================================================================

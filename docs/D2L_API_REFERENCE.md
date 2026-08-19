@@ -123,6 +123,7 @@ Peça só o mínimo. Para este projeto:
 | Ler matrículas do aluno | `enrollment:orgunit:read` | enrollments/users/.../orgUnits/ |
 | Ler a própria matrícula (alt.) | `enrollment:own_enrollment:read` | enrollments/myenrollments/ |
 | Ler quiz (GET antes do PUT) | `quizzing:quizzes:read` | quizzes/, quizzes/(quizId) |
+| **Trocar a senha do quiz** (§5.7) | `quizzing:quizzes:write` | **PUT** quizzes/(quizId) |
 | Gravar special access | `quizzing:quizzes:write` | quizzes/(quizId)/specialaccess/(userId) |
 | Ler special access (verificação) | `quizzing:quizzes:read` | quizzes/(quizId)/specialaccess/ |
 
@@ -130,6 +131,12 @@ String de exemplo (ajuste conforme o app):
 ```
 enrollment:orgunit:read quizzing:quizzes:read quizzing:quizzes:write
 ```
+
+> **O escopo vive no CONSENTIMENTO, não no `.env`.** Acrescentar `quizzing:*` a
+> `D2L_SCOPES` não muda nada sozinho: o refresh token gravado em `integracao_d2l`
+> carrega os escopos que foram autorizados no dia. Sem **reautorizar**
+> (`npm run d2l:autorizar`), o primeiro `PUT` volta **403** — e o erro parece
+> problema de permissão de conteúdo, não de escopo.
 
 > **Armadilha de permissão (crítico):** o token OAuth dá o *scope*, mas quem executa
 > a chamada é o **Usuário de Serviço** (ou o usuário do refresh token). Se esse
@@ -268,6 +275,69 @@ DELETE /d2l/api/le/(version)/(orgUnitId)/quizzes/(quizId)/specialaccess/(userId)
 Scope: quizzing:quizzes:delete
 ```
 Se o aluno cancelar/for remanejado, remova o special access antigo.
+
+### 5.7 Trocar a senha do questionário (`PUT .../quizzes/(quizId)`)
+
+**Este é o único trecho da §5 que o portal implementa hoje** (`src/senha-quiz/`).
+Special access continua não implementado — ver §9.
+
+```
+GET /d2l/api/le/(version)/(orgUnitId)/quizzes/          Scope: quizzing:quizzes:read
+GET /d2l/api/le/(version)/(orgUnitId)/quizzes/(quizId)  Scope: quizzing:quizzes:read
+PUT /d2l/api/le/(version)/(orgUnitId)/quizzes/(quizId)  Scope: quizzing:quizzes:write
+```
+
+O campo é `Password` (string) do `QuizData`. Senha vazia (`""`) significa quiz
+**sem** senha.
+
+#### O PUT substitui o objeto INTEIRO
+
+Não existe PATCH. **Campo que você não reenviar é campo apagado** — um erro aqui
+apaga `EndDate` ou `SubmissionTimeLimit` de todas as provas do semestre, e
+ninguém descobre até o dia. Por isso o fluxo é sempre:
+
+```
+GET quizzes/(quizId)  →  troca SÓ Password  →  PUT com o objeto completo
+```
+
+`src/senha-quiz/service/quiz-body.ts` faz essa remontagem, e
+`quiz-body.spec.ts` tem um **teste de cobertura de campos** contra uma lista
+congelada de 35 nomes. Se você acrescentar um campo ao corpo, acrescente à lista;
+se o D2L acrescentar um, o teste é quem avisa.
+
+#### As duas conversões leitura→escrita
+
+O objeto que o GET devolve **não é** o objeto que o PUT aceita. Duas formas mudam:
+
+| Leitura (`QuizReadData`) | Escrita (`QuizUpdateData`) |
+|---|---|
+| `AttemptsAllowed: { IsUnlimited, NumberOfAttemptsAllowed }` | `NumberOfAttemptsAllowed` **achatado** (número) |
+| `RichText: { Text, Html }` | `RichTextInput: { Content, Type }` — `Html` preferido; `Type` vira `"Html"` ou `"Text"` |
+
+Vale para `Description`, `Header`, `Footer` e afins. Reenviar a forma de leitura
+não dá erro — o campo simplesmente vira `null`.
+
+#### `GET quizzes/` é paginado
+
+A resposta é um `ObjectListPage` com `Objects` e `Next`. **Siga o `Next`**
+reaproveitando só a query string (o bookmark). Ignorá-lo não dá erro: a prova
+simplesmente não aparece na lista, e aquela turma fica sem senha em silêncio.
+O cliente (`src/d2l/service/d2l-quizzes.service.ts`) tem trava de número máximo
+de páginas e trava de bookmark repetido.
+
+#### A senha invisível
+
+O `GET` pode devolver `Password` **vazio mesmo quando o quiz tem senha** — a API
+esconde o campo em algumas versões/configurações. No portal isso é apenas
+**diagnóstico** (`comSenhaLida` na execução), porque o lote **sempre define** e
+nunca preserva. **Não construa regra de negócio em cima desse sinal.**
+
+#### 200 sem efeito
+
+O escopo vem do token, mas quem executa é o usuário dono do refresh token (§3).
+Sem a role de edição de questionários no nível certo, o D2L pode responder **200
+sem gravar nada**. Confirme com um `GET` depois do `PUT` pelo menos uma vez em
+homologação.
 
 ---
 

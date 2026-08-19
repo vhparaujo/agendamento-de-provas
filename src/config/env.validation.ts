@@ -75,9 +75,14 @@ export class EnvironmentVariables {
   TURMAS_FILTER_ENABLED?: string;
 
   /**
-   * Default seguro = 'false'. Desligado, o cliente D2L nao faz chamada de rede
-   * nenhuma e a fila de liberacao acumula em PENDENTE — nada se perde, e nada e
-   * gravado no Brightspace por engano enquanto a configuracao nao esta pronta.
+   * Default = 'true' desde 18/08/2026 (era 'false'). A troca de senha dos
+   * questionarios depende da Valence para descobrir o `orgUnitId` das turmas do
+   * CSV; um ambiente que apenas esquecesse a variavel rodaria o lote em zero
+   * turma e as provas ficariam sem senha no dia, sem erro nenhum. Desligar exige
+   * dizer 'false'.
+   *
+   * Desligado, o cliente D2L nao faz chamada de rede nenhuma e a fila de
+   * liberacao acumula em PENDENTE — nada se perde.
    *
    * As demais D2L_* nao sao validadas aqui de proposito: quem cobra o que falta
    * e o proprio D2L_HABILITADO=true, que recusa subir a integracao dizendo
@@ -105,6 +110,67 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsString()
   D2L_API_VERSION_LE?: string;
+
+  // ==========================================================================
+  // SENHA DOS QUESTIONARIOS (troca em massa no D2L)
+  // ==========================================================================
+  // Opcionais como as D2L_*: e integracao, nao infraestrutura. Mas as de HORA
+  // sao validadas por FORMATO, e isso nao e preciosismo: um horario mal digitado
+  // faz o cron NUNCA disparar, sem erro nenhum — a falha silenciosa que custaria
+  // um turno inteiro de alunos travados na hora da prova.
+
+  /** Opt-in. `true` deixa o servidor trocar as senhas sozinho, sem humano. */
+  /**
+   * Se ESTA INSTANCIA pode disparar o cron. Os HORARIOS nao estao mais aqui
+   * (19/08/2026): eles sao escolhidos pelo admin na tela e moram em
+   * `configuracao_senha_quiz`. As duas coisas respondem perguntas diferentes —
+   * "a que horas a prova comeca" e da secretaria; "esta replica dispara" e de
+   * quem sobe o container.
+   */
+  @IsOptional()
+  @IsBooleanString()
+  SENHA_QUIZ_CRON_HABILITADO?: string;
+
+  /**
+   * Janela de recuperacao, em minutos. Servidor que estava fora as 07:30 e sobe
+   * as 07:41 ainda aplica o turno. Sem ela, um deploy na hora errada custa o
+   * turno inteiro.
+   */
+  @IsOptional()
+  @IsNumberString()
+  SENHA_QUIZ_CRON_TOLERANCIA_MIN?: string;
+
+  /**
+   * Teto de tentativas reais por celula dentro da janela de tolerancia. Sem ele,
+   * uma falha PERMANENTE (token sem escopo de quizzing) bateria no D2L a cada
+   * minuto durante toda a janela.
+   */
+  @IsOptional()
+  @IsNumberString()
+  SENHA_QUIZ_CRON_MAX_TENTATIVAS?: string;
+
+  /**
+   * O que importa e a RAZAO entre os dois: 4 turmas em paralelo com 400ms de
+   * espera antes de cada chamada da ~10 req/s contra um tenant que atende o AVA
+   * em uso. Mexer num sem olhar o outro nao diz nada.
+   */
+  @IsOptional()
+  @IsNumberString()
+  SENHA_QUIZ_CONCORRENCIA?: string;
+
+  @IsOptional()
+  @IsNumberString()
+  SENHA_QUIZ_DELAY_MS?: string;
+
+  /** Maior que o timeout do enrollments: objetos de quiz sao grandes. */
+  @IsOptional()
+  @IsNumberString()
+  SENHA_QUIZ_TIMEOUT_MS?: string;
+
+  /** Trava do laco de paginacao de `GET quizzes/` — nao e otimizacao. */
+  @IsOptional()
+  @IsNumberString()
+  SENHA_QUIZ_MAX_PAGINAS?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {

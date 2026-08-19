@@ -46,6 +46,24 @@ export type EventoSeguranca =
   | 'D2L_AUTORIZACAO_FALHOU'
   | 'D2L_TOKEN_RENOVADO'
   | 'D2L_TOKEN_RENOVACAO_FALHOU'
+  // Senha dos questionarios. NENHUM destes leva a senha em `detalhe` — so a
+  // celula (data + turno), contagens e quem disparou. Ver a postura de seguranca
+  // no cabecalho de src/senha-quiz/service/senha-quiz.service.ts.
+  | 'SENHA_QUIZ_GRADE_ALTERADA'
+  | 'SENHA_QUIZ_GRADE_REMOVIDA'
+  | 'SENHA_QUIZ_REVELADA'
+  // Configuracao do lote. Sao auditaveis porque decidem QUAIS questionarios
+  // sao reescritos e QUANDO — e um erro nos dois so aparece no dia da prova.
+  | 'SENHA_QUIZ_ALVO_ALTERADO'
+  | 'SENHA_QUIZ_HORARIOS_ALTERADOS'
+  | 'SENHA_QUIZ_INICIADA'
+  | 'SENHA_QUIZ_CONCLUIDA'
+  | 'SENHA_QUIZ_FALHOU'
+  | 'SENHA_QUIZ_CRON_SEM_GRADE'
+  // Cron ligado no servidor e nenhum horario cadastrado na tela: ele nunca
+  // dispararia, e sem este aviso ninguem descobriria antes do dia.
+  | 'SENHA_QUIZ_CRON_SEM_HORARIO'
+  | 'SENHA_QUIZ_CRON_IGNORADO'
   | 'ACESSO_NEGADO'
   | 'LIMITE_REQUISICOES'
   | 'ROTA_SEM_CONTROLE_DE_ACESSO'
@@ -112,6 +130,11 @@ const EVENTOS_DE_FALHA = new Set<EventoSeguranca>([
   'LIMITE_REQUISICOES',
   'ROTA_SEM_CONTROLE_DE_ACESSO',
   'ERRO_INTERNO',
+  'SENHA_QUIZ_FALHOU',
+  // Nao e erro de sistema, mas e o alerta que evita alunos travados na prova: o
+  // cron acordou no horario e nao havia senha cadastrada para aquele turno.
+  'SENHA_QUIZ_CRON_SEM_GRADE',
+  'SENHA_QUIZ_CRON_SEM_HORARIO',
 ]);
 
 /**
