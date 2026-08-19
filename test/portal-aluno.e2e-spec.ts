@@ -623,6 +623,188 @@ describe('Portal do aluno: listar e agendar (e2e)', () => {
     });
   });
 
+  /**
+   * ==========================================================================
+   * DUAS PROVAS NO MESMO SEMESTRE: a regular e a substitutiva
+   * ==========================================================================
+   * As duas caem no MESMO `periodoLetivoId` do Brightspace, e e a `rodada` que
+   * as separa. Antes dela, quem agendou a N2 batia em "voce ja tem prova
+   * marcada" ao tentar a SUB — a trava era `alunoId + periodoLetivoId`, e o
+   * semestre nao distinguia uma prova da outra.
+   *
+   * O bloco abre uma janela `SUB` do mesmo semestre (ela vira a vigente, porque
+   * vigente = a cadastrada mais recentemente) e a apaga no fim, para os
+   * describes seguintes voltarem a enxergar a janela original.
+   */
+  describe('rodada: a substitutiva do mesmo periodo letivo', () => {
+    let token: string;
+    let alunoId: number;
+    let faixaDaN2: number;
+    let faixaDaSub: number;
+    let periodoSubId: number;
+
+    beforeAll(async () => {
+      ({ token, alunoId } = await criarAluno({ sufixo: 'SUB1' }));
+
+      faixaDaN2 = await criarFaixa('2026-12-27', [
+        { salaId: (await criarSala('P-G', 5, poloId)).id, vagas: 5, ordem: 1 },
+      ]);
+      faixaDaSub = await criarFaixa('2026-12-28', [
+        { salaId: (await criarSala('P-H', 5, poloId)).id, vagas: 5, ordem: 1 },
+      ]);
+
+      // A prova regular, com a janela original (rodada N2) ainda vigente.
+      await comoAluno(api().post('/api/portal/agendamentos'), token)
+        .send({ faixaId: faixaDaN2 })
+        .expect(201);
+
+      // Agora a secretaria abre a substitutiva do MESMO semestre.
+      periodoSubId = (
+        await prisma.periodoAgendamento.create({
+          data: {
+            periodoLetivoId: PERIODO_LETIVO,
+            rodada: 'SUB',
+            descricao: 'e2e portal — substitutiva',
+            aberto: true,
+            dataFechamento: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+          },
+        })
+      ).id;
+    }, 60_000);
+
+    afterAll(async () => {
+      await prisma.periodoAgendamento.delete({ where: { id: periodoSubId } });
+    });
+
+    it('o MESMO vinculo que agendou a N2 consegue agendar a SUB', async () => {
+      const res = await comoAluno(api().post('/api/portal/agendamentos'), token)
+        .send({ faixaId: faixaDaSub })
+        .expect(201);
+
+      expect(res.body).toMatchObject({ alunoId, rodada: 'SUB' });
+    });
+
+    /** A trava por vinculo continua de pe — ela so passou a contar a rodada. */
+    it('mas nao consegue agendar a SUB duas vezes', async () => {
+      const outraDaSub = await criarFaixa('2026-12-29', [
+        { salaId: (await criarSala('P-I', 5, poloId)).id, vagas: 5, ordem: 1 },
+      ]);
+
+      const res = await comoAluno(api().post('/api/portal/agendamentos'), token)
+        .send({ faixaId: outraDaSub })
+        .expect(409);
+
+      expect(res.body.message).toMatch(/ja tem prova marcada/i);
+      expect(res.body.message).toMatch(/SUB/);
+    });
+
+    /**
+     * A trava por PESSOA (`exigirUmaProvaPorFaixa`) NAO olha a rodada, e este
+     * teste e o que prova: quem fez a N2 as 08:30 do dia 27 nao faz a SUB no
+     * mesmo horario — sao duas provas e ninguem esta em dois lugares ao mesmo
+     * tempo. A sala tem 4 vagas livres; quem nao pode e o aluno.
+     */
+    it('recusa a SUB na MESMA faixa em que ele ja tem a N2', async () => {
+      // Um aluno com a prova da N2 e SEM a da SUB: assim a recusa vem da trava
+      // por PESSOA, e nao da trava por vinculo, que ja pegaria o caso antes.
+      // A reserva da N2 vai direto ao banco porque a janela vigente e a da SUB,
+      // e pelo portal so se agenda na rodada aberta.
+      const { token: outro, alunoId: outroId } = await criarAluno({
+        sufixo: 'SUB2',
+      });
+
+      const ofertaDaN2 = await prisma.salaFaixa.findFirstOrThrow({
+        where: { faixaId: faixaDaN2 },
+        select: { id: true },
+      });
+
+      await prisma.agendamento.create({
+        data: {
+          alunoId: outroId,
+          salaFaixaId: ofertaDaN2.id,
+          matricula: `${PREFIXO_RA}SUB2`,
+          userIdD2L: 'd2l-SUB2',
+          periodoLetivoId: PERIODO_LETIVO,
+          rodada: 'N2',
+          modalidadeId: ead.id,
+          poloId,
+        },
+      });
+
+      // A sala tem 5 lugares e nem 3 estao ocupados: a recusa abaixo e sobre o
+      // aluno, nao sobre a cadeira.
+      const res = await comoAluno(api().post('/api/portal/agendamentos'), outro)
+        .send({ faixaId: faixaDaN2 })
+        .expect(409);
+
+      expect(res.body.message).toMatch(/neste horario/i);
+    });
+
+    /** E a tela avisa antes do clique, como no caso dos dois cursos. */
+    it('marca a faixa da N2 como conflito em GET /portal/faixas', async () => {
+      const res = await comoAluno(
+        api().get('/api/portal/faixas'),
+        token,
+      ).expect(200);
+
+      const daN2 = res.body.find(
+        (f: { faixaId: number }) => f.faixaId === faixaDaN2,
+      );
+
+      expect(daN2).toMatchObject({
+        temVaga: true,
+        conflitaComOutraProva: true,
+      });
+
+      // A propria reserva da SUB nao se marca como conflito.
+      const daSub = res.body.find(
+        (f: { faixaId: number }) => f.faixaId === faixaDaSub,
+      );
+
+      expect(daSub.conflitaComOutraProva).toBe(false);
+    });
+
+    /**
+     * `GET /portal/agendamentos` mostra a prova da RODADA vigente, e so ela. A
+     * N2 do mesmo semestre ja aconteceu; lista-las juntas mandaria o aluno para
+     * a data errada — o mesmo motivo pelo qual o semestre passado nao aparece.
+     */
+    it('meusAgendamentos mostra so a prova da rodada vigente', async () => {
+      const res = await comoAluno(
+        api().get('/api/portal/agendamentos'),
+        token,
+      ).expect(200);
+
+      expect(res.body).toHaveLength(1);
+      expect(res.body[0]).toMatchObject({ rodada: 'SUB' });
+    });
+
+    it('GET /portal/periodo diz de qual prova do semestre e a janela', async () => {
+      const res = await comoAluno(
+        api().get('/api/portal/periodo'),
+        token,
+      ).expect(200);
+
+      expect(res.body).toMatchObject({
+        aberto: true,
+        periodoLetivoId: PERIODO_LETIVO,
+        rodada: 'SUB',
+      });
+    });
+
+    /** A prova da rodada anterior fica congelada: nem trocar de horario. */
+    it('recusa trocar o horario da prova da N2 depois de a SUB abrir', async () => {
+      const daN2 = await prisma.agendamento.findFirstOrThrow({
+        where: { alunoId, rodada: 'N2' },
+        select: { id: true },
+      });
+
+      await comoAluno(api().patch(`/api/portal/agendamentos/${daN2.id}`), token)
+        .send({ faixaId: faixaDaSub })
+        .expect(404);
+    });
+  });
+
   describe('o agendamento ja deixa a liberacao no D2L enfileirada', () => {
     it('cria um SyncD2L PENDENTE por disciplina', async () => {
       const agendamento = await prisma.agendamento.findFirstOrThrow({

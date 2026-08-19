@@ -121,7 +121,8 @@ export class GradeSenhasController {
       'Integracao D2L desligada, ou nenhum periodo letivo cadastrado',
   })
   async turmas(): Promise<TurmasDoLoteDto> {
-    const periodoLetivoId = await this.periodo.periodoLetivoVigente();
+    const { periodoLetivoId } =
+      (await this.periodo.periodoLetivoVigente()) ?? {};
 
     if (!periodoLetivoId) {
       throw new BadRequestException(

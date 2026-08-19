@@ -340,6 +340,7 @@ describe('Importacao de CSVs (e2e)', () => {
           matricula: RA,
           userIdD2L: '77777',
           periodoLetivoId: PERIODO_VIGENTE,
+          rodada: 'N2',
           // Fotografia do vinculo no momento da reserva: EaD no polo A, que e
           // exatamente o que as reimportacoes deste bloco vao mudar por baixo.
           modalidadeId: ead.id,
@@ -541,6 +542,7 @@ describe('Importacao de CSVs (e2e)', () => {
           matricula: RA,
           userIdD2L: '55555',
           periodoLetivoId: PERIODO,
+          rodada: 'N2',
           modalidadeId: modalidade.id,
           poloId,
         },
@@ -652,6 +654,7 @@ describe('Importacao de CSVs (e2e)', () => {
           matricula: RA,
           userIdD2L: '55555',
           periodoLetivoId: PERIODO,
+          rodada: 'N2',
           modalidadeId: modalidade.id,
           poloId,
         },

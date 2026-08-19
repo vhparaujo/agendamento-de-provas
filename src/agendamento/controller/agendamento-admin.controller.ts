@@ -49,6 +49,15 @@ const FILTROS = [
   { name: 'modalidadeId', type: Number, example: 1 },
   { name: 'periodoLetivoId', type: String, example: '103' },
   {
+    name: 'rodada',
+    type: String,
+    example: 'SUB',
+    description:
+      'Qual prova do semestre ("N2", "SUB"...). Sem ele, a listagem traz as duas ' +
+      'rodadas juntas; a exportacao, ao contrario, recorta na rodada VIGENTE ' +
+      'quando nem `rodada` nem `periodoLetivoId` sao informados.',
+  },
+  {
     name: 'de',
     type: String,
     example: '2026-08-01',
@@ -175,8 +184,10 @@ export class AgendamentoAdminController {
       'Colunas: Matricula, Aluno, E-mail, Curso, Modalidade, Polo, Data da prova, ' +
       'Inicio, Fim, Sala, Status (`Agendado` | `Não Agendado`) e Agendado em.\n\n' +
       'O arquivo baixa como **`Lista Agendamento-<data>.csv`**.\n\n' +
-      'O recorte e **um periodo letivo** — o de `periodoLetivoId` ou, sem ele, o ' +
-      'vigente. Um agendamento **cancelado** conta como `Não Agendado`: quem ' +
+      'O recorte e **uma prova** — `periodoLetivoId` + `rodada`, os da URL ou os ' +
+      'do periodo vigente. Sem a rodada no recorte, quem ja fez a regular sairia ' +
+      'como `Agendado` durante a substitutiva e ficaria fora da cobranca. ' +
+      'Um agendamento **cancelado** conta como `Não Agendado`: quem ' +
       'cancelou e nao remarcou precisa ser contatado igual a quem nunca entrou.\n\n' +
       '`faixaId`, `salaId`, `de` e `ate` sao filtros da **prova** e, quando ' +
       'informados, restringem o arquivo a quem tem prova ali. `poloId`, ' +
@@ -310,6 +321,7 @@ export class AgendamentoAdminController {
       salaId: inteiro(query.salaId),
       modalidadeId: inteiro(query.modalidadeId),
       periodoLetivoId: query.periodoLetivoId || undefined,
+      rodada: query.rodada || undefined,
       de: query.de || undefined,
       ate: query.ate || undefined,
       busca: query.busca || undefined,

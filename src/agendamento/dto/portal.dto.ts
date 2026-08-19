@@ -147,6 +147,14 @@ export class AgendamentoConfirmadoDto implements AgendamentoConfirmado {
   @ApiProperty({ example: 'PEDAGOGIA' })
   curso!: string;
 
+  @ApiProperty({
+    example: 'SUB',
+    description:
+      'Qual prova do semestre e esta reserva ("N2", "SUB"...). Fotografia da ' +
+      'rodada do periodo no momento em que o aluno confirmou.',
+  })
+  rodada!: string;
+
   @ApiProperty({ example: 'CONFIRMADO', enum: ['CONFIRMADO', 'CANCELADO'] })
   status!: string;
 
@@ -224,6 +232,15 @@ export class SituacaoPeriodoDto implements SituacaoPeriodo {
     description: 'Id do periodo letivo no Brightspace.',
   })
   periodoLetivoId?: string;
+
+  @ApiPropertyOptional({
+    example: 'SUB',
+    description:
+      'Qual prova do semestre esta janela agenda ("N2", "SUB"...). O mesmo ' +
+      '`periodoLetivoId` pode ter mais de uma; e a rodada que diz de qual delas ' +
+      'a tela esta falando.',
+  })
+  rodada?: string;
 
   @ApiPropertyOptional({ nullable: true, example: '2026/2 — provas finais' })
   descricao?: string | null;

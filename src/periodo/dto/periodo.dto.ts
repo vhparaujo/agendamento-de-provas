@@ -29,6 +29,22 @@ export class CriarPeriodoDto {
   @MaxLength(191)
   periodoLetivoId!: string;
 
+  @ApiPropertyOptional({
+    example: 'SUB',
+    default: 'N2',
+    maxLength: 20,
+    description:
+      'QUAL prova do semestre e esta janela — "N2" (regular), "SUB" ' +
+      '(substitutiva), "N1"... O `periodoLetivoId` e o mesmo nas duas, entao e a ' +
+      'rodada que as separa: e com ela que o mesmo aluno consegue agendar a ' +
+      'regular e a substitutiva no mesmo semestre. Omitir mantem "N2", que e como ' +
+      'todos os periodos anteriores foram cadastrados.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  rodada?: string;
+
   @ApiPropertyOptional({ example: '2026/2 — provas finais', maxLength: 191 })
   @IsOptional()
   @IsString()
@@ -62,6 +78,20 @@ export class CriarPeriodoDto {
 }
 
 export class AtualizarPeriodoDto {
+  @ApiPropertyOptional({
+    example: 'SUB',
+    maxLength: 20,
+    description:
+      'Corrige a rodada — **so enquanto a janela nao tiver agendamento nenhum** ' +
+      '(cancelados contam). Com provas dentro responde 409: a rodada gravada na ' +
+      'reserva e fotografia, e trocar a da janela deixaria as provas orfas do ' +
+      'par que as identifica.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  rodada?: string;
+
   @ApiPropertyOptional({ example: '2026/2 — provas finais', nullable: true })
   @IsOptional()
   @IsString()
@@ -101,6 +131,14 @@ export class PeriodoAdminDto implements PeriodoAdmin {
   @ApiProperty({ example: '103' })
   periodoLetivoId!: string;
 
+  @ApiProperty({
+    example: 'SUB',
+    description:
+      'Qual prova do semestre. Junto do `periodoLetivoId` forma a identidade da ' +
+      'janela — duas linhas do mesmo semestre so diferem por aqui.',
+  })
+  rodada!: string;
+
   @ApiProperty({ nullable: true, example: '2026/2 — provas finais' })
   descricao!: string | null;
 
@@ -134,7 +172,9 @@ export class PeriodoAdminDto implements PeriodoAdmin {
 
   @ApiProperty({
     example: 412,
-    description: 'Agendamentos confirmados neste periodo letivo.',
+    description:
+      'Agendamentos confirmados nesta janela — periodo letivo E rodada. A linha ' +
+      'da substitutiva nao conta as provas da regular.',
   })
   totalAgendamentos!: number;
 
@@ -148,6 +188,9 @@ export class VigenteDepoisDaRemocaoDto implements VigenteDepoisDaRemocao {
 
   @ApiProperty({ example: '142286' })
   periodoLetivoId!: string;
+
+  @ApiProperty({ example: 'N2', description: 'Qual prova do semestre.' })
+  rodada!: string;
 
   @ApiProperty({ nullable: true, example: '2026/2' })
   descricao!: string | null;

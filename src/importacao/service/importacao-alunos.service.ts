@@ -196,7 +196,10 @@ export class ImportacaoAlunosService {
      * `undefined` (nenhum periodo cadastrado) vira "sem filtro", de propósito:
      * na duvida, avisa demais em vez de calar.
      */
-    const periodoLetivoVigente = await this.periodo.periodoLetivoVigente();
+    // So o semestre importa para o aviso: uma prova ja marcada e uma prova ja
+    // marcada, seja ela da regular ou da substitutiva.
+    const periodoLetivoVigente = (await this.periodo.periodoLetivoVigente())
+      ?.periodoLetivoId;
 
     /**
      * Todos os vinculos que existem ANTES desta importacao, agrupados por RA.

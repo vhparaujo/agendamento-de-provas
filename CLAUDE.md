@@ -38,6 +38,12 @@ regra de negócio ou estrutura, atualize os dois.
   É AQUI que modalidade e vagas existem de fato. A mesma sala física pode ser
   Presencial numa faixa e EaD em outra; dentro de uma faixa fica travada numa
   modalidade. O admin monta isso ao criar a faixa.
+- **Rodada**: QUAL prova do semestre é aquela — `"N2"` (regular), `"SUB"`
+  (substitutiva), `"N1"`… Vive em `PeriodoAgendamento.rodada` e é copiada para
+  `Agendamento.rodada` como fotografia. **A identidade de um período é o par
+  `periodoLetivoId + rodada`**, nunca o `periodoLetivoId` sozinho: as duas provas
+  do semestre têm o mesmo id de período letivo no Brightspace. Texto livre, não
+  enum — quem nomeia a rodada é a secretaria. Default `"N2"`.
 - **Turma real**: turma/disciplina que efetivamente terá prova (CSV de turmas). Filtro
   final do que aparece para o aluno.
 
@@ -54,6 +60,20 @@ regra de negócio ou estrutura, atualize os dois.
    (mesmo horário). Aluno com dois cursos faz dois agendamentos, um por curso.
    Quando o RA tem mais de um vínculo, o portal pergunta de qual curso é a prova
    (`precisaEscolherCurso` na resposta do launch).
+4a. **UMA PROVA POR VÍNCULO EM CADA RODADA** — e não uma por semestre.
+   A trava é `alunoId + periodoLetivoId + rodada` (`alocar`, em
+   `agendamento.service.ts`, e `agendarPeloAdmin`). Antes da rodada ela era
+   `alunoId + periodoLetivoId`, e por isso quem agendava a N2 batia em "você já
+   tem prova marcada" ao tentar a **substitutiva**: as duas caem no MESMO
+   `periodoLetivoId` do Brightspace, e o semestre não distinguia uma da outra.
+
+   - **O que o aluno enxerga e mexe é a rodada VIGENTE**, do mesmo jeito que só
+     enxerga o semestre vigente: `GET /portal/agendamentos` lista a prova da
+     rodada aberta, e a da rodada anterior fica congelada (nem troca, nem
+     declaração). Mostrar as duas juntas mandaria ele para a data errada.
+   - **A rodada gravada no `Agendamento` é FOTOGRAFIA**, como `modalidadeId` e
+     `poloId`: renomear a rodada da janela depois não remarca prova nenhuma.
+   - Isto **convive** com a regra 4b, que é sobre a pessoa e ignora a rodada.
 4b. **UMA PROVA POR PESSOA EM CADA HORÁRIO** (decisão do cliente, 14/08/2026).
    O RA com dois cursos faz duas provas, mas **não pode marcar as duas na mesma
    faixa**: são provas diferentes e ninguém faz as duas ao mesmo tempo. Antes
@@ -64,6 +84,12 @@ regra de negócio ou estrutura, atualize os dois.
      só: `exigirUmaProvaPorFaixa` (`lock-de-vagas.ts`). As quatro portas passam
      por ela — agendar, trocar, **remanejar** (o admin também, por decisão do
      cliente) e o compulsório.
+   - ⚠️ **Ela NÃO entra na `rodada`, de propósito.** Quem fez a N2 às 08:30 não
+     faz a SUB às 08:30 também: são duas provas e ninguém está em dois lugares ao
+     mesmo tempo. É a única consulta por prova que fica no `periodoLetivoId`
+     inteiro — e `faixasBloqueadasParaOVinculo` (o `conflitaComOutraProva` do
+     portal) espelha isso exatamente, senão a tela ofereceria o horário que a
+     confirmação recusa.
    - **É a faixa, não a sobreposição de horário.** Duas faixas que se cruzam no
      relógio (09:00-12:00 e 10:00-11:30) continuam permitidas. Se isso virar
      problema, o lugar de mudar é aquela função, e só ela.
@@ -1008,6 +1034,50 @@ remanejar: se fossem três implementações, uma delas acabaria sem o `FOR UPDAT
 dúvida, não libera. Para testar antes do CRUD administrativo (etapa 7), crie a
 linha em `PeriodoAgendamento` pelo `npm run prisma:studio`.
 
+### Duas provas no mesmo semestre: a `rodada`
+
+O Brightspace tem **um** `periodoLetivoId` por semestre, e a UCB tem pelo menos
+**duas** provas nele: a regular (N2) e a substitutiva. Antes da `rodada`, isso
+travava em dois lugares ao mesmo tempo — `POST /periodos` recusava a segunda
+janela como duplicata, e a trava por vínculo recusava o segundo agendamento.
+
+A `rodada` (`"N2"`, `"SUB"`, …) é a segunda metade da identidade do período. Onde
+ela entra e onde **não** entra:
+
+| Consulta | Filtra por rodada? | Por quê |
+|---|:---:|---|
+| `alocar` / `agendarPeloAdmin` — "já tem prova?" | ✅ | É o núcleo da mudança: quem fez a N2 precisa poder agendar a SUB |
+| `meusAgendamentos`, declaração, `exigirAgendamentoDoAluno` | ✅ | O aluno só vê e só mexe na prova da rodada aberta; a anterior já aconteceu |
+| `elegiveis` (compulsório) | ✅ | Elegível para a SUB é quem não tem prova **da SUB** — inclusive quem fez a N2 |
+| `remover` (período) e `totalAgendamentos` | ✅ | A conta é da janela, não do semestre |
+| `exportarCsv` | ✅ (quando o `periodoLetivoId` não vem na URL) | Sem ela, quem fez a N2 sai como "Agendado" durante a SUB e escapa da cobrança |
+| **`exigirUmaProvaPorFaixa`** | ❌ | Uma prova por PESSOA em cada horário, entre rodadas inclusive: quem fez a N2 às 08:30 não faz a SUB às 08:30 |
+| **`faixasBloqueadasParaOVinculo`** (`conflitaComOutraProva`) | ❌ | É o espelho exato da linha acima; filtrar aqui faria a tela oferecer o horário que a confirmação recusa |
+| **`reservaAnterior`** (disciplinas para o admin) | ❌ | A reserva da N2 é fonte válida para a SUB: mesmas disciplinas, mesmo `userIdD2L` |
+| `disciplinas-do-aluno`, importação, relatórios, senhas | ❌ (só usam `periodoLetivoId`) | O que define quais ofertas contam é o SEMESTRE; as duas rodadas cobrem as mesmas matérias |
+
+⚠️ **`periodoLetivoVigente()` devolve `{ periodoLetivoId, rodada }`, não uma
+string.** É de propósito: obriga cada chamador a dizer, na desestruturação, se a
+rodada importa para ele — a alternativa (voltar só o id) deixaria o filtro por
+rodada ser esquecido em silêncio, e o sintoma seria a N2 e a SUB se misturando.
+
+**`rodada` só é editável enquanto a janela estiver VAZIA** (`PATCH /periodos/:id`;
+`periodoLetivoId` nunca é). `Agendamento.rodada` é fotografia: trocar a da janela
+não renomeia prova nenhuma — a janela passaria a dizer `SUB` com 20 reservas
+dizendo `N2`, e daí em diante *toda* consulta pelo par para de casar (o portal diz
+ao aluno que ele não tem prova, a exportação o lista como "Não Agendado", o
+compulsório o aloca de novo). Com a janela vazia não há o que desalinhar, e é aí
+que a correção resolve o caso real: cadastrou como `N2` o que era a substitutiva
+e percebeu antes de abrir. A contagem inclui **cancelados**, como no `remover`.
+
+Apagar e recriar **não** é a alternativa: `vigente` = o cadastrado mais
+recentemente, então recriar embaralha essa ordem — é justamente o problema que o
+`DELETE /periodos/:id` existe para desfazer.
+
+**A migration deu `rodada = "N2"` a tudo que já existia** — períodos e
+agendamentos. Quem tinha um semestre cadastrado antes desta mudança continua
+consistente, sem nenhuma ação manual.
+
 ### `DELETE /periodos/:id` — vigente é derivado, e por isso se erra fácil
 
 Vigente = **o cadastrado mais recentemente** (`createdAt desc`), não um flag no
@@ -1020,7 +1090,7 @@ e a única saída era mexer no banco à mão. É o mesmo caso de uso do
 |---|---|
 | Só apaga período letivo **sem agendamento nenhum** (409 caso contrário) | Apagar a linha não apaga prova: `Agendamento.periodoLetivoId` é string, sem FK. As provas ficariam órfãs de janela, e o aluno perderia de vista a que já marcou — o oposto da regra 7, em que fechar tranca a escolha e nunca a consulta |
 | A contagem inclui **CANCELADO**, ao contrário do `totalAgendamentos` da tela (só `CONFIRMADO`) | São perguntas diferentes: a tela mostra vagas tomadas, e cancelar devolveu a vaga; aqui a pergunta é "alguém já usou este semestre?", e o cancelamento é justamente o registro que precisa continuar explicável no dia da prova |
-| A conta é por `periodoLetivoId`, então duas linhas do mesmo semestre travam uma a outra | Com o mesmo id de período letivo nos dois, não há como dizer a qual linha a prova pertence |
+| A conta é pelo par `periodoLetivoId + rodada` — duas linhas do MESMO par travam uma a outra, mas a N2 e a SUB do mesmo semestre não | Com a mesma chave nos dois, não há como dizer a qual linha a prova pertence. Já a janela vazia da SUB precisa poder ser desfeita: as provas da regular são de outra janela e não dizem nada sobre ela |
 | **Apagar o vigente é permitido**, e a resposta traz `vigenteAgora` | É o motivo de a rota existir. Mas o portal passa ao período anterior, em geral com o prazo vencido — avisa e não bloqueia, como `alteracoesComAgendamento` |
 
 Encerrar o prazo continua sendo `PATCH` (`aberto=false` ou `dataFechamento` no
@@ -1038,7 +1108,7 @@ eles**, e o agendamento entra como coluna. Quem não marcou sai com as colunas d
 prova vazias e `Status = Não Agendado`.
 
 Colunas, e só estas: `Matricula · Aluno · E-mail · Curso · Modalidade · Polo ·
-Data da prova · Inicio · Fim · Sala · Status · Agendado em`.
+Rodada · Data da prova · Inicio · Fim · Sala · Status · Agendado em`.
 
 - **`Modalidade` e `Polo` saem do AGENDAMENTO, não do vínculo** (13/08/2026).
   `AlunoImportado` guarda só o estado atual e a importação o sobrescreve; lendo
@@ -1053,8 +1123,12 @@ Data da prova · Inicio · Fim · Sala · Status · Agendado em`.
   secretaria a saber que cancelado também significa "precisa agendar".
 - **Cancelado conta como `Não Agendado`** e, por isso, o filtro `status` da URL
   **não se aplica** aqui: a coluna é derivada.
-- **O recorte é um período letivo** (`periodoLetivoId` ou o vigente). Sem ele,
-  prova do semestre passado faria o aluno parecer agendado.
+- **O recorte é UMA PROVA: `periodoLetivoId` + `rodada`** (os da URL ou os do
+  período vigente). Sem o semestre, prova do semestre passado faria o aluno
+  parecer agendado; sem a rodada, quem fez a N2 apareceria como agendado durante
+  a substitutiva. Os dois tiram da cobrança gente que precisa ser cobrada.
+  Fixar `periodoLetivoId` na URL **sem** `rodada` traz o semestre inteiro, de
+  propósito: aí a pergunta é outra ("o que aconteceu naquele semestre").
 - `faixaId`/`salaId`/`de`/`ate` são filtros da **prova** e restringem o arquivo a
   quem tem prova ali; `poloId`/`modalidadeId`/`busca` filtram o **aluno** e
   continuam trazendo quem não agendou.

@@ -10,12 +10,15 @@ import { PeriodoService } from './periodo.service';
 interface Periodo {
   id: number;
   periodoLetivoId: string;
+  /** A metade da identidade que separa a regular da substitutiva. */
+  rodada: string;
   descricao: string | null;
   createdAt: Date;
 }
 
 interface Reserva {
   periodoLetivoId: string;
+  rodada: string;
   status: 'CONFIRMADO' | 'CANCELADO';
 }
 
@@ -44,6 +47,7 @@ function montar(periodos: Periodo[], reservas: Reserva[] = []) {
             ? {
                 id: vigente.id,
                 periodoLetivoId: vigente.periodoLetivoId,
+                rodada: vigente.rodada,
                 descricao: vigente.descricao,
               }
             : null,
@@ -54,13 +58,73 @@ function montar(periodos: Periodo[], reservas: Reserva[] = []) {
         if (i >= 0) periodos.splice(i, 1);
         return Promise.resolve({});
       },
+      // `listar` le a linha inteira; os fixtures so carregam o que distingue um
+      // periodo do outro, entao as colunas de janela vem daqui com valor fixo.
+      findMany: () =>
+        Promise.resolve(
+          [...periodos]
+            .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+            .map((p) => ({ ...p, ...COLUNAS_DE_JANELA })),
+        ),
+      update: ({ where, data }: { where: { id: number }; data: Periodo }) => {
+        const alvo = periodos.find((p) => p.id === where.id)!;
+
+        // `undefined` no Prisma significa "nao mexe nesta coluna" — reproduzir
+        // isso importa: um duble que sobrescrevesse com undefined faria o teste
+        // da rodada inalterada passar por acidente.
+        for (const [chave, valor] of Object.entries(data)) {
+          if (valor !== undefined)
+            (alvo as never as Record<string, unknown>)[chave] = valor;
+        }
+
+        return Promise.resolve(alvo);
+      },
+      create: ({ data }: { data: Periodo }) => {
+        const criado = {
+          ...data,
+          id: Math.max(0, ...periodos.map((p) => p.id)) + 1,
+          createdAt: new Date(),
+        };
+        periodos.push(criado);
+        return Promise.resolve(criado);
+      },
     },
     agendamento: {
-      count: ({ where }: { where: { periodoLetivoId: string } }) =>
+      // Reproduz o `where` inteiro de proposito: um duble que ignorasse a
+      // `rodada` passaria dizendo que a janela da substitutiva esta travada
+      // pelas provas da regular — justamente o que o service deixou de fazer.
+      count: ({
+        where,
+      }: {
+        where: { periodoLetivoId: string; rodada: string };
+      }) =>
         Promise.resolve(
-          reservas.filter((r) => r.periodoLetivoId === where.periodoLetivoId)
-            .length,
+          reservas.filter(
+            (r) =>
+              r.periodoLetivoId === where.periodoLetivoId &&
+              r.rodada === where.rodada,
+          ).length,
         ),
+      // Agrupado pelo PAR, como o service pede — agrupar so pelo semestre faria
+      // o teste da contagem por janela passar com a soma das duas rodadas.
+      groupBy: () => {
+        const porPar = new Map<string, { par: Reserva; total: number }>();
+
+        for (const r of reservas.filter((x) => x.status === 'CONFIRMADO')) {
+          const chave = `${r.periodoLetivoId}|${r.rodada}`;
+          const atual = porPar.get(chave);
+          if (atual) atual.total += 1;
+          else porPar.set(chave, { par: r, total: 1 });
+        }
+
+        return Promise.resolve(
+          [...porPar.values()].map(({ par, total }) => ({
+            periodoLetivoId: par.periodoLetivoId,
+            rodada: par.rodada,
+            _count: { _all: total },
+          })),
+        );
+      },
     },
   } as unknown as PrismaService & Record<string, never>;
 
@@ -76,9 +140,17 @@ function montar(periodos: Periodo[], reservas: Reserva[] = []) {
   };
 }
 
+/** As colunas de janela que os fixtures nao carregam — iguais para todos. */
+const COLUNAS_DE_JANELA = {
+  aberto: true,
+  dataAbertura: new Date('2026-08-01T03:00:00Z'),
+  dataFechamento: new Date('2026-12-31T02:59:00Z'),
+};
+
 const DOIS_MIL_E_VINTE_SEIS_UM: Periodo = {
   id: 80,
   periodoLetivoId: '132035',
+  rodada: 'N2',
   descricao: '2026/1',
   createdAt: new Date('2026-08-14T11:45:00Z'),
 };
@@ -86,8 +158,18 @@ const DOIS_MIL_E_VINTE_SEIS_UM: Periodo = {
 const DOIS_MIL_E_VINTE_SEIS_DOIS: Periodo = {
   id: 79,
   periodoLetivoId: '142286',
+  rodada: 'N2',
   descricao: '2026/2',
   createdAt: new Date('2026-08-14T11:00:00Z'),
+};
+
+/** A substitutiva do MESMO semestre de `DOIS_MIL_E_VINTE_SEIS_UM`. */
+const SUBSTITUTIVA_DE_2026_1: Periodo = {
+  id: 81,
+  periodoLetivoId: '132035',
+  rodada: 'SUB',
+  descricao: '2026/1 — substitutiva',
+  createdAt: new Date('2026-08-20T09:00:00Z'),
 };
 
 describe('PeriodoService.remover', () => {
@@ -103,6 +185,7 @@ describe('PeriodoService.remover', () => {
     expect(resultado.vigenteAgora).toEqual({
       id: 79,
       periodoLetivoId: '142286',
+      rodada: 'N2',
       descricao: '2026/2',
     });
   });
@@ -118,7 +201,7 @@ describe('PeriodoService.remover', () => {
   it('recusa apagar periodo letivo com agendamento confirmado', async () => {
     const { service, periodos } = montar(
       [{ ...DOIS_MIL_E_VINTE_SEIS_UM }],
-      [{ periodoLetivoId: '132035', status: 'CONFIRMADO' }],
+      [{ periodoLetivoId: '132035', rodada: 'N2', status: 'CONFIRMADO' }],
     );
 
     await expect(service.remover(80, 'admin@ucb.br')).rejects.toThrow(
@@ -136,7 +219,7 @@ describe('PeriodoService.remover', () => {
   it('recusa mesmo quando o unico agendamento foi cancelado', async () => {
     const { service } = montar(
       [{ ...DOIS_MIL_E_VINTE_SEIS_UM }],
-      [{ periodoLetivoId: '132035', status: 'CANCELADO' }],
+      [{ periodoLetivoId: '132035', rodada: 'N2', status: 'CANCELADO' }],
     );
 
     await expect(service.remover(80, 'admin@ucb.br')).rejects.toThrow(
@@ -164,6 +247,167 @@ describe('PeriodoService.remover', () => {
     expect(eventos[0].evento).toBe('PERIODO_REMOVIDO');
     expect(eventos[0].detalhe).toContain('vigente agora: 79');
   });
+
+  /**
+   * A trava e do PAR `periodoLetivoId + rodada`, nao do semestre.
+   *
+   * Cadastrar a substitutiva e o caso em que o admin mais erra a data — e
+   * desfazer o cadastro precisa continuar possivel. As provas ja marcadas na
+   * regular sao de OUTRA janela e nao dizem nada sobre a que esta sendo apagada;
+   * contá-las travaria a SUB para sempre em todo semestre que ja teve prova, que
+   * e todo semestre.
+   */
+  it('apaga a janela da SUB mesmo com prova marcada na N2 do mesmo semestre', async () => {
+    const { service, periodos } = montar(
+      [{ ...DOIS_MIL_E_VINTE_SEIS_UM }, { ...SUBSTITUTIVA_DE_2026_1 }],
+      [{ periodoLetivoId: '132035', rodada: 'N2', status: 'CONFIRMADO' }],
+    );
+
+    await service.remover(81, 'admin@ucb.br');
+
+    expect(periodos.map((p) => p.id)).toEqual([80]);
+  });
+
+  /** E a propria SUB com prova marcada continua travada, como a N2. */
+  it('recusa apagar a SUB quando ela mesma ja tem prova', async () => {
+    const { service } = montar(
+      [{ ...DOIS_MIL_E_VINTE_SEIS_UM }, { ...SUBSTITUTIVA_DE_2026_1 }],
+      [{ periodoLetivoId: '132035', rodada: 'SUB', status: 'CONFIRMADO' }],
+    );
+
+    await expect(service.remover(81, 'admin@ucb.br')).rejects.toThrow(
+      ConflictException,
+    );
+  });
+});
+
+// ============================================================================
+// `criar` — DUAS PROVAS NO MESMO SEMESTRE SAO DUAS JANELAS
+// ============================================================================
+// A duplicata que a rota recusa e a do PAR `periodoLetivoId + rodada`. Comparar
+// so o `periodoLetivoId` — como era antes da rodada — recusava justamente o
+// cadastro da substitutiva, e sem ele o aluno que fez a N2 nao consegue agendar
+// a segunda prova.
+
+// ============================================================================
+// `atualizar` — CORRIGIR A RODADA, SO ENQUANTO A JANELA ESTA VAZIA
+// ============================================================================
+// `Agendamento.rodada` e fotografia: trocar a da janela nao renomeia prova
+// nenhuma. Com provas dentro, a janela passaria a dizer "SUB" e as reservas
+// continuariam dizendo "N2" — e toda consulta pelo par pararia de casar, com o
+// aluno vendo "voce nao tem prova marcada".
+
+describe('PeriodoService.atualizar — a rodada', () => {
+  it('troca a rodada de uma janela sem agendamento nenhum', async () => {
+    const { service, periodos } = montar([{ ...DOIS_MIL_E_VINTE_SEIS_UM }]);
+
+    await service.atualizar(80, { rodada: 'SUB' });
+
+    expect(periodos[0].rodada).toBe('SUB');
+  });
+
+  it('recusa trocar a rodada de uma janela que ja tem prova', async () => {
+    const { service, periodos } = montar(
+      [{ ...DOIS_MIL_E_VINTE_SEIS_UM }],
+      [{ periodoLetivoId: '132035', rodada: 'N2', status: 'CONFIRMADO' }],
+    );
+
+    const promessa = service.atualizar(80, { rodada: 'SUB' });
+
+    await expect(promessa).rejects.toThrow(ConflictException);
+    await expect(promessa).rejects.toThrow(/fotografia/);
+    expect(periodos[0].rodada).toBe('N2');
+  });
+
+  /** Cancelado tambem trava — a mesma pergunta do `remover`: "ja foi usada?". */
+  it('recusa mesmo quando a unica prova da janela foi cancelada', async () => {
+    const { service } = montar(
+      [{ ...DOIS_MIL_E_VINTE_SEIS_UM }],
+      [{ periodoLetivoId: '132035', rodada: 'N2', status: 'CANCELADO' }],
+    );
+
+    await expect(service.atualizar(80, { rodada: 'SUB' })).rejects.toThrow(
+      ConflictException,
+    );
+  });
+
+  /**
+   * Reenviar a MESMA rodada nao e troca. Sem isto, a tela que manda o formulario
+   * inteiro no PATCH (o caso normal) nao conseguiria mais editar a descricao de
+   * uma janela que ja tem prova — que e justamente a janela em curso.
+   */
+  it('deixa editar a descricao de uma janela com prova, reenviando a mesma rodada', async () => {
+    const { service, periodos } = montar(
+      [{ ...DOIS_MIL_E_VINTE_SEIS_UM }],
+      [{ periodoLetivoId: '132035', rodada: 'N2', status: 'CONFIRMADO' }],
+    );
+
+    await service.atualizar(80, { rodada: 'N2', descricao: '2026/1 — final' });
+
+    expect(periodos[0].descricao).toBe('2026/1 — final');
+  });
+});
+
+describe('PeriodoService.criar — a duplicata e do par periodo + rodada', () => {
+  const JANELA_NOVA = {
+    dataAbertura: '2026-09-01T08:00:00-03:00',
+    dataFechamento: '2026-09-10T23:59:00-03:00',
+  };
+
+  it('recusa repetir o MESMO periodo letivo na MESMA rodada', async () => {
+    const { service } = montar([{ ...DOIS_MIL_E_VINTE_SEIS_UM }]);
+
+    const promessa = service.criar({
+      periodoLetivoId: '132035',
+      rodada: 'N2',
+      ...JANELA_NOVA,
+    });
+
+    await expect(promessa).rejects.toThrow(ConflictException);
+    await expect(promessa).rejects.toThrow(/rodada N2/);
+  });
+
+  /** Sem `rodada` no corpo, o default e "N2" — e a duplicata continua valendo. */
+  it('recusa repetir o periodo letivo quando nenhuma rodada e informada', async () => {
+    const { service } = montar([{ ...DOIS_MIL_E_VINTE_SEIS_UM }]);
+
+    await expect(
+      service.criar({ periodoLetivoId: '132035', ...JANELA_NOVA }),
+    ).rejects.toThrow(ConflictException);
+  });
+
+  it('aceita a SUB do mesmo periodo letivo que ja tem a N2', async () => {
+    const { service, periodos } = montar([{ ...DOIS_MIL_E_VINTE_SEIS_UM }]);
+
+    const criado = await service.criar({
+      periodoLetivoId: '132035',
+      rodada: 'SUB',
+      descricao: '2026/1 — substitutiva',
+      ...JANELA_NOVA,
+    });
+
+    expect(criado).toMatchObject({ periodoLetivoId: '132035', rodada: 'SUB' });
+    expect(periodos).toHaveLength(2);
+  });
+
+  /**
+   * O `totalAgendamentos` da listagem conta por JANELA. Sem isso a linha da
+   * substitutiva exibiria as provas da regular como se fossem dela, e o admin
+   * leria "1 agendamento" numa janela em que ninguem entrou ainda.
+   */
+  it('conta os agendamentos por janela, e nao por semestre', async () => {
+    const { service } = montar(
+      [{ ...DOIS_MIL_E_VINTE_SEIS_UM }, { ...SUBSTITUTIVA_DE_2026_1 }],
+      [{ periodoLetivoId: '132035', rodada: 'N2', status: 'CONFIRMADO' }],
+    );
+
+    const listados = await service.listar();
+
+    expect(listados.map((p) => [p.rodada, p.totalAgendamentos])).toEqual([
+      ['SUB', 0],
+      ['N2', 1],
+    ]);
+  });
 });
 
 // ============================================================================
@@ -181,6 +425,7 @@ describe('PeriodoService.remover', () => {
 interface LinhaDePeriodo {
   id: number;
   periodoLetivoId: string;
+  rodada: string;
   descricao: string | null;
   aberto: boolean;
   dataAbertura: Date | null;
@@ -204,6 +449,7 @@ function comPeriodo(linha: LinhaDePeriodo | null) {
 const JANELA: LinhaDePeriodo = {
   id: 80,
   periodoLetivoId: '132035',
+  rodada: 'SUB',
   descricao: '2026/2',
   aberto: true,
   dataAbertura: new Date('2026-08-01T03:00:00Z'),
@@ -261,7 +507,7 @@ describe('PeriodoService.exigirEncerrado', () => {
   it('devolve o periodo letivo vigente depois do fechamento', async () => {
     await expect(
       comPeriodo(JANELA).exigirEncerrado(DEPOIS_DO_PRAZO),
-    ).resolves.toMatchObject({ periodoLetivoId: '132035' });
+    ).resolves.toMatchObject({ periodoLetivoId: '132035', rodada: 'SUB' });
   });
 
   it('recusa com o prazo aberto, dizendo quando ele encerra', async () => {

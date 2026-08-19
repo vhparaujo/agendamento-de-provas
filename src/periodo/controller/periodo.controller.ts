@@ -80,7 +80,9 @@ export class PeriodoController {
     description: 'Data invalida, ou dataAbertura depois de dataFechamento',
   })
   @ApiConflictResponse({
-    description: 'Ja existe periodo vigente para este periodo letivo',
+    description:
+      'Ja existe periodo vigente para este periodo letivo NA MESMA rodada — ' +
+      'repetir o semestre com outra rodada e o cadastro da proxima prova dele',
   })
   criar(@Body() dto: CriarPeriodoDto) {
     return this.periodoService.criar(dto);
@@ -91,12 +93,20 @@ export class PeriodoController {
     summary: 'Abre, fecha ou ajusta o prazo',
     description:
       'Antecipar o fechamento encerra o agendamento na hora, mas **nao desfaz nada**: ' +
-      'quem ja marcou continua com a prova. O periodo so barra quem ainda nao escolheu.',
+      'quem ja marcou continua com a prova. O periodo so barra quem ainda nao escolheu.\n\n' +
+      'A `rodada` so pode ser corrigida enquanto a janela estiver **vazia** ' +
+      '(sem agendamento nenhum, cancelados inclusive) — depois disso, 409. O ' +
+      '`periodoLetivoId` nunca muda.',
   })
   @ApiParam({ name: 'id', type: Number, example: 3 })
   @ApiOkResponse({ type: PeriodoAdminDto })
   @ApiBadRequestResponse({ description: 'Data invalida ou janela invertida' })
   @ApiNotFoundResponse({ description: 'Periodo nao encontrado' })
+  @ApiConflictResponse({
+    description:
+      'Tentou trocar a `rodada` de uma janela que ja tem agendamento — a rodada ' +
+      'da reserva e fotografia, e as provas ficariam orfas do par',
+  })
   atualizar(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: AtualizarPeriodoDto,

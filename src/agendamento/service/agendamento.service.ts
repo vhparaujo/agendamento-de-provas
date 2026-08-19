@@ -46,9 +46,10 @@ export interface FaixaDisponivel {
   disponiveis: number;
   temVaga: boolean;
   /**
-   * A MESMA PESSOA ja tem prova neste horario, pelo outro curso dela. Tem vaga,
-   * mas ela nao pode ocupar: sao duas provas diferentes e nao da para fazer as
-   * duas ao mesmo tempo. Sempre `false` para quem tem um vinculo so.
+   * A MESMA PESSOA ja tem prova neste horario — pelo outro curso dela, ou pela
+   * rodada anterior deste mesmo curso (a N2, quando o que esta aberto e a SUB).
+   * Tem vaga, mas ela nao pode ocupar: sao provas diferentes e nao da para fazer
+   * as duas ao mesmo tempo.
    */
   conflitaComOutraProva: boolean;
 }
@@ -58,6 +59,8 @@ export interface AgendamentoConfirmado {
   alunoId: number;
   matricula: string;
   curso: string;
+  /** Qual prova do semestre e esta ("N2", "SUB"...) — a rodada da reserva. */
+  rodada: string;
   status: string;
   data: Date;
   horaInicio: string;
@@ -92,10 +95,10 @@ export class AgendamentoService {
    *
    * Faixas lotadas continuam na lista com `temVaga: false`. Some-las seria pior
    * para quem esta olhando: o horario que o colega comentou simplesmente nao
-   * apareceria, sem explicacao. Mesma escolha para o horario ja tomado pelo
-   * OUTRO curso do aluno: ele volta com `conflitaComOutraProva`, e a tela diz
-   * por que aquele nao serve — em vez de o aluno descobrir no clique de
-   * confirmar.
+   * apareceria, sem explicacao. Mesma escolha para o horario em que a pessoa ja
+   * tem prova (pelo outro curso, ou pela rodada anterior): ele volta com
+   * `conflitaComOutraProva`, e a tela diz por que aquele nao serve — em vez de o
+   * aluno descobrir no clique de confirmar.
    */
   async listarFaixas(
     aluno: AlunoJwtPayload,
@@ -103,7 +106,8 @@ export class AgendamentoService {
   ): Promise<FaixaDisponivel[]> {
     const vinculo = await this.exigirVinculo(aluno, alunoId);
 
-    const ocupadasPelaOutraProva = await this.faixasDoOutroVinculo(vinculo);
+    const ocupadasPelaOutraProva =
+      await this.faixasBloqueadasParaOVinculo(vinculo);
 
     const faixas = await this.prisma.faixa.findMany({
       where: {
@@ -158,30 +162,38 @@ export class AgendamentoService {
   }
 
   /**
-   * As faixas em que a MESMA PESSOA ja tem prova por OUTRO vinculo.
+   * As faixas em que a MESMA PESSOA ja tem prova que impede esta.
    *
-   * Sao as que `exigirUmaProvaPorFaixa` vai recusar na confirmacao; aqui elas
-   * viram aviso na tela. Um aluno de um vinculo so — 99,97% deles — nao tem
-   * outro vinculo, e o conjunto sai vazio sem consulta nenhuma.
+   * Sao exatamente as que `exigirUmaProvaPorFaixa` vai recusar na confirmacao;
+   * aqui elas viram aviso na tela. O espelho tem que ser EXATO nos dois
+   * sentidos: uma faixa a menos deixa o aluno descobrir o problema no clique de
+   * confirmar, e uma faixa a mais esconde dele um horario que ele podia ter.
    *
-   * O filtro `alunoId: { not }` e o que impede a propria reserva do aluno de se
-   * marcar como conflito: para o vinculo que esta olhando, o horario dele
-   * proprio nao e impedimento — trocar para o mesmo horario ja tem recusa
-   * propria, com mensagem melhor.
+   * Por isso o recorte e `matricula + periodoLetivoId` e **nao filtra por
+   * rodada** — igual ao lock, e pela mesma razao: quem fez a N2 as 08:30 nao faz
+   * a SUB as 08:30, sao duas provas e ninguem esta em dois lugares ao mesmo
+   * tempo. Filtrar por rodada aqui faria a tela oferecer o horario que a
+   * confirmacao recusa.
+   *
+   * A UNICA exclusao e a reserva do proprio vinculo NA RODADA VIGENTE: e a que
+   * esta sendo trocada, e ela nao pode conflitar consigo mesma (trocar para o
+   * mesmo horario ja tem recusa propria, com mensagem melhor). A da rodada
+   * ANTERIOR do mesmo vinculo continua contando — ela e uma prova de verdade,
+   * ocupando aquele horario.
    */
-  private async faixasDoOutroVinculo(vinculo: {
+  private async faixasBloqueadasParaOVinculo(vinculo: {
     id: number;
     matricula: string;
   }): Promise<Set<number>> {
-    const periodoLetivoId = await this.periodo.periodoLetivoVigente();
+    const vigente = await this.periodo.periodoLetivoVigente();
 
-    if (!periodoLetivoId) return new Set();
+    if (!vigente) return new Set();
 
     const outras = await this.prisma.agendamento.findMany({
       where: {
         matricula: vinculo.matricula,
-        alunoId: { not: vinculo.id },
-        periodoLetivoId,
+        periodoLetivoId: vigente.periodoLetivoId,
+        NOT: { alunoId: vinculo.id, rodada: vigente.rodada },
         ...CONFIRMADO,
       },
       select: { salaFaixa: { select: { faixaId: true } } },
@@ -267,6 +279,7 @@ export class AgendamentoService {
       faixaId: faixa.id,
       userIdD2L: aluno.userIdD2L,
       periodoLetivoId: periodo.periodoLetivoId,
+      rodada: periodo.rodada,
       disciplinas,
     });
 
@@ -381,19 +394,25 @@ export class AgendamentoService {
    * O filtro NAO exige o periodo aberto: depois do prazo fechado ele continua
    * precisando ver onde e quando fazer a prova. Fechar tranca a escolha, nao a
    * consulta.
+   *
+   * "Vigente" e o par `periodoLetivoId + rodada`, nao o semestre sozinho: quando
+   * a janela aberta e a da substitutiva, a tela mostra a prova da SUB. A N2
+   * daquele mesmo semestre ja aconteceu, e listar as duas juntas faria o aluno
+   * ir na data errada — o mesmo motivo pelo qual o semestre passado nao aparece.
    */
   async meusAgendamentos(
     aluno: AlunoJwtPayload,
   ): Promise<AgendamentoConfirmado[]> {
-    const periodoLetivoId = await this.periodo.periodoLetivoVigente();
+    const vigente = await this.periodo.periodoLetivoVigente();
 
-    if (!periodoLetivoId) return [];
+    if (!vigente) return [];
 
     const agendamentos = await this.prisma.agendamento.findMany({
       where: {
         matricula: aluno.sub,
         alunoId: { in: aluno.vinculos.map((v) => v.alunoId) },
-        periodoLetivoId,
+        periodoLetivoId: vigente.periodoLetivoId,
+        rodada: vigente.rodada,
         ...CONFIRMADO,
       },
       include: INCLUDE_COMPLETO,
@@ -442,15 +461,22 @@ export class AgendamentoService {
     faixaId: number;
     userIdD2L: string;
     periodoLetivoId: string;
+    /** Do periodo VIGENTE. Vai gravada na reserva como fotografia — ver o schema. */
+    rodada: string;
     disciplinas: DisciplinaAgendavel[];
   }): Promise<{ id: number; salaFaixaId: number }> {
     return this.prisma.$transaction(async (tx) => {
       await travarAluno(tx, dados.matricula);
 
+      // O limite e por VINCULO **e por RODADA**: uma prova por curso em cada
+      // prova do semestre. Sem a rodada na conta — como era antes dela — quem
+      // agendou a N2 seria recusado ao tentar marcar a substitutiva, que e
+      // exatamente a segunda prova que ele precisa fazer.
       const jaAgendado = await tx.agendamento.findFirst({
         where: {
           alunoId: dados.vinculoId,
           periodoLetivoId: dados.periodoLetivoId,
+          rodada: dados.rodada,
           ...CONFIRMADO,
         },
         select: { id: true },
@@ -458,14 +484,17 @@ export class AgendamentoService {
 
       if (jaAgendado) {
         throw new ConflictException(
-          `Voce ja tem prova marcada para o curso ${dados.curso} ` +
-            `(agendamento ${jaAgendado.id}). Use a troca de horario para mudar.`,
+          `Voce ja tem prova marcada para o curso ${dados.curso} nesta prova ` +
+            `(${dados.rodada}, agendamento ${jaAgendado.id}). Use a troca de ` +
+            'horario para mudar.',
         );
       }
 
-      // O limite acima e por VINCULO ("uma prova por curso no semestre"); este e
-      // por PESSOA ("uma prova por horario"). Um RA com dois cursos passa pelo
-      // primeiro e precisa parar no segundo.
+      // O limite acima e por VINCULO + RODADA ("uma prova por curso em cada
+      // prova do semestre"); este e por PESSOA ("uma prova por horario"), e de
+      // proposito NAO olha a rodada: quem fez a N2 as 08:30 nao faz a SUB as
+      // 08:30 tambem. Um RA com dois cursos passa pelo primeiro e precisa parar
+      // no segundo.
       await exigirUmaProvaPorFaixa(tx, {
         matricula: dados.matricula,
         faixaId: dados.faixaId,
@@ -485,6 +514,10 @@ export class AgendamentoService {
           matricula: dados.matricula,
           userIdD2L: dados.userIdD2L,
           periodoLetivoId: dados.periodoLetivoId,
+          // Qual prova do semestre e esta. Fotografia, como as duas abaixo: o
+          // admin pode renomear a rodada da janela depois, e a reserva continua
+          // dizendo em qual prova ela foi feita.
+          rodada: dados.rodada,
           // Do vinculo, nao da oferta: sao iguais por construcao (a alocacao so
           // aceita oferta da modalidade do aluno, e o portal recusa faixa de
           // outro polo), mas o que a coluna documenta e o ALUNO na data da
@@ -607,11 +640,19 @@ export class AgendamentoService {
     // Semestre anterior nao se mexe. Sem esta trava, abrir o periodo novo daria
     // ao aluno a chance de cancelar uma prova que ele JA FEZ — apagando-a da
     // lista do relatorio como se nunca tivesse existido.
+    //
+    // A comparacao e do PAR `periodoLetivoId + rodada`, e a rodada nao e
+    // detalhe: aberta a janela da substitutiva, a prova da N2 do MESMO semestre
+    // ja aconteceu e cai no mesmo caso — comparar so o semestre a deixaria
+    // alteravel, que e o que esta trava existe para impedir.
     const vigente = await this.periodo.periodoLetivoVigente();
 
-    if (agendamento.periodoLetivoId !== vigente) {
+    if (
+      agendamento.periodoLetivoId !== vigente?.periodoLetivoId ||
+      agendamento.rodada !== vigente.rodada
+    ) {
       throw new NotFoundException(
-        'Este agendamento e de um periodo anterior e nao pode mais ser alterado.',
+        'Este agendamento e de uma prova anterior e nao pode mais ser alterado.',
       );
     }
 
@@ -722,6 +763,7 @@ type AgendamentoCompleto = {
   id: number;
   alunoId: number;
   matricula: string;
+  rodada: string;
   status: string;
   createdAt: Date;
   aluno: { curso: string };
@@ -748,6 +790,7 @@ function montarConfirmado(
     alunoId: agendamento.alunoId,
     matricula: agendamento.matricula,
     curso: agendamento.aluno.curso,
+    rodada: agendamento.rodada,
     status: agendamento.status,
     data: salaFaixa.faixa.data,
     horaInicio: salaFaixa.faixa.horaInicio,

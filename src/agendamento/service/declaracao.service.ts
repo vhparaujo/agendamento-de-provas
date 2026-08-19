@@ -37,13 +37,18 @@ import { pdfDeDeclaracao } from './pdf-declaracao';
  * nao ha semestre, no segundo nao ha agendamento possivel. Ver `SituacaoPeriodo`.
  *
  * ---------------------------------------------------------------------------
- * 2. SO A PROPRIA PROVA, E SO A DO SEMESTRE VIGENTE
+ * 2. SO A PROPRIA PROVA, E SO A DA JANELA VIGENTE
  * ---------------------------------------------------------------------------
  * O recorte da consulta e exatamente o de `meusAgendamentos` — matricula do
- * token, vinculo do token, periodo letivo vigente, status CONFIRMADO. E de
- * propósito: a declaracao existe para o que a tela lista, e um id que a tela nao
- * mostra nao pode virar documento. Sem o filtro por matricula, trocar o numero
- * na URL imprimiria a prova de outra pessoa com o nome dela.
+ * token, vinculo do token, periodo vigente e status CONFIRMADO. E de propósito:
+ * a declaracao existe para o que a tela lista, e um id que a tela nao mostra nao
+ * pode virar documento. Sem o filtro por matricula, trocar o numero na URL
+ * imprimiria a prova de outra pessoa com o nome dela.
+ *
+ * "Vigente" e o par `periodoLetivoId` + `rodada`, e a rodada nao e detalhe:
+ * encerrada a janela da substitutiva, o documento e da prova da SUB — a N2 do
+ * mesmo semestre ja aconteceu, e declarar a data dela mandaria o portador
+ * apresentar um papel sobre uma prova que ninguem mais vai fazer.
  *
  * Cancelado nao emite: o papel afirma que o agendamento foi feito, e um
  * agendamento cancelado nao reserva cadeira nenhuma no dia.
@@ -59,7 +64,7 @@ export class DeclaracaoService {
     aluno: AlunoJwtPayload,
     agendamentoId: number,
   ): Promise<{ nomeArquivo: string; conteudo: Buffer }> {
-    const { periodoLetivoId } = await this.periodo.exigirEncerrado();
+    const { periodoLetivoId, rodada } = await this.periodo.exigirEncerrado();
 
     const agendamento = await this.prisma.agendamento.findFirst({
       where: {
@@ -67,6 +72,7 @@ export class DeclaracaoService {
         matricula: aluno.sub,
         alunoId: { in: aluno.vinculos.map((v) => v.alunoId) },
         periodoLetivoId,
+        rodada,
         ...CONFIRMADO,
       },
       select: {

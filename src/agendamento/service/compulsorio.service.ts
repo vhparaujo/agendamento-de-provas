@@ -156,21 +156,28 @@ export class CompulsorioService {
       );
     }
 
-    const periodoLetivoId = await this.periodo.periodoLetivoVigente();
+    const vigente = await this.periodo.periodoLetivoVigente();
 
-    if (!periodoLetivoId) {
+    if (!vigente) {
       throw new BadRequestException(
         'Nenhum periodo letivo cadastrado. Sem ele nao ha como separar a prova ' +
           'deste semestre da do semestre passado.',
       );
     }
 
-    const elegiveis = await this.elegiveis(periodoLetivoId, opcoes.poloId);
+    const { periodoLetivoId, rodada } = vigente;
+
+    const elegiveis = await this.elegiveis(
+      periodoLetivoId,
+      rodada,
+      opcoes.poloId,
+    );
 
     const execucao = await this.prisma.execucaoCompulsorio.create({
       data: {
         simulacao: opcoes.simulacao,
         periodoLetivoId,
+        rodada,
         iniciadoPor: adminEmail,
         totalElegiveis: elegiveis.length,
       },
@@ -181,13 +188,15 @@ export class CompulsorioService {
       ator: adminEmail,
       detalhe:
         `execucao ${execucao.id}, ${opcoes.simulacao ? 'SIMULACAO' : 'GRAVANDO'}, ` +
-        `${elegiveis.length} elegivel(is), periodo letivo ${periodoLetivoId}` +
+        `${elegiveis.length} elegivel(is), periodo letivo ${periodoLetivoId} ` +
+        `rodada ${rodada}` +
         (opcoes.poloId ? `, polo ${opcoes.poloId}` : ''),
     });
 
     void this.executar(
       execucao.id,
       periodoLetivoId,
+      rodada,
       elegiveis,
       opcoes,
       adminEmail,
@@ -345,14 +354,28 @@ export class CompulsorioService {
    * O `none` cobre os dois casos de uma vez: quem nunca agendou e quem cancelou.
    * A separacao entre eles acontece na fase 2, porque so o segundo vira linha de
    * relatorio.
+   *
+   * O recorte e o par `periodoLetivoId + rodada`, e a rodada e o que faz o lote
+   * da substitutiva ter alguem para alocar: elegivel para a SUB e quem nao tem
+   * prova DA SUB — inclusive, e principalmente, quem fez a N2. Sem a rodada na
+   * conta, o lote da segunda prova do semestre acharia zero elegiveis e
+   * relataria sucesso.
    */
-  private async elegiveis(periodoLetivoId: string, poloId?: number) {
+  private async elegiveis(
+    periodoLetivoId: string,
+    rodada: string,
+    poloId?: number,
+  ) {
     return this.prisma.alunoImportado.findMany({
       where: {
         ativo: true,
         ...(poloId ? { poloId } : {}),
         agendamentos: {
-          none: { periodoLetivoId, status: StatusAgendamento.CONFIRMADO },
+          none: {
+            periodoLetivoId,
+            rodada,
+            status: StatusAgendamento.CONFIRMADO,
+          },
         },
       },
       select: {
@@ -362,7 +385,11 @@ export class CompulsorioService {
         poloId: true,
         modalidadeId: true,
         agendamentos: {
-          where: { periodoLetivoId, status: StatusAgendamento.CANCELADO },
+          where: {
+            periodoLetivoId,
+            rodada,
+            status: StatusAgendamento.CANCELADO,
+          },
           select: { id: true },
           take: 1,
         },
@@ -380,6 +407,7 @@ export class CompulsorioService {
   private async executar(
     execucaoId: number,
     periodoLetivoId: string,
+    rodada: string,
     elegiveis: Awaited<ReturnType<CompulsorioService['elegiveis']>>,
     opcoes: { simulacao: boolean },
     adminEmail: string,
@@ -414,6 +442,7 @@ export class CompulsorioService {
       const alocados = await this.alocarTodos(
         candidatos,
         periodoLetivoId,
+        rodada,
         opcoes.simulacao,
         excecoes,
       );
@@ -602,6 +631,7 @@ export class CompulsorioService {
   private async alocarTodos(
     candidatos: Candidato[],
     periodoLetivoId: string,
+    rodada: string,
     simulacao: boolean,
     excecoes: Excecao[],
   ): Promise<number> {
@@ -617,6 +647,10 @@ export class CompulsorioService {
      * So a simulacao precisa disto: na execucao real quem responde e a consulta
      * sob lock. E preciso ser por MATRICULA, e nao por vinculo, porque a regra
      * e sobre a pessoa — e a pessoa e justamente quem tem dois vinculos.
+     *
+     * E, como o lock, NAO recorta por rodada: a prova que a pessoa fez na N2
+     * ocupa aquele horario para a SUB tambem. Filtrar aqui faria a simulacao
+     * prometer alocacoes que a execucao real recusaria.
      */
     const faixasPorMatricula = ocupacaoSimulada
       ? await this.faixasJaOcupadas(periodoLetivoId)
@@ -645,7 +679,12 @@ export class CompulsorioService {
               ocupacaoSimulada,
               porMatricula(faixasPorMatricula, candidato.matricula),
             )
-          : await this.alocarDeVerdade(candidato, faixas, periodoLetivoId);
+          : await this.alocarDeVerdade(
+              candidato,
+              faixas,
+              periodoLetivoId,
+              rodada,
+            );
 
       if (coube === 'JA_AGENDOU') {
         // Agendou pelo portal entre a montagem da lista e agora. Nao e excecao
@@ -687,6 +726,7 @@ export class CompulsorioService {
     candidato: Candidato,
     faixas: { id: number }[],
     periodoLetivoId: string,
+    rodada: string,
   ): Promise<boolean | 'JA_AGENDOU'> {
     for (const faixa of faixas) {
       try {
@@ -700,6 +740,7 @@ export class CompulsorioService {
             where: {
               alunoId: candidato.vinculoId,
               periodoLetivoId,
+              rodada,
               ...CONFIRMADO,
             },
             select: { id: true },
@@ -730,6 +771,8 @@ export class CompulsorioService {
               matricula: candidato.matricula,
               userIdD2L: candidato.userIdD2L,
               periodoLetivoId,
+              // Qual prova do semestre este lote esta preenchendo.
+              rodada,
               // Fotografia do vinculo na data da reserva — ver o schema.
               modalidadeId: candidato.modalidadeId,
               poloId: candidato.poloId,

@@ -352,6 +352,11 @@ model Agendamento {
   matricula       String // desnormalizado p/ exportacao
   userIdD2L       String // id numerico Valence vindo do launch LTI
   periodoLetivoId String
+  /// A rodada do periodo vigente no momento da reserva — fotografia, como
+  /// `modalidadeId` e `poloId`. Editar a janela depois nao remarca a prova, e e
+  /// esta coluna que separa a N2 da SUB do MESMO semestre: sem ela, as duas
+  /// provas do aluno seriam indistinguiveis em toda consulta por periodo letivo.
+  rodada          String
   modalidadeId    Int // do ALUNO, no momento da reserva
   poloId          Int // do ALUNO, no momento da reserva
   status          StatusAgendamento @default(CONFIRMADO)
@@ -497,10 +502,22 @@ model IntegracaoD2L {
 // ----------------------------------------------------------------------------
 // PERIODO DE AGENDAMENTO (aberto/fechado pelo admin)
 // ----------------------------------------------------------------------------
+//
+// A identidade do periodo e o PAR `periodoLetivoId + rodada`, e nao o
+// `periodoLetivoId` sozinho: o mesmo semestre tem mais de uma prova (a regular e
+// a substitutiva), e cada uma abre a sua janela, com as suas faixas e o seu
+// prazo. Antes da `rodada`, cadastrar a segunda janela do semestre era recusado
+// como duplicata — e, se passasse, a trava "uma prova por vinculo no semestre"
+// impediria o mesmo aluno de agendar as duas.
 
 model PeriodoAgendamento {
   id              Int       @id @default(autoincrement())
   periodoLetivoId String // Id do Periodo Letivo no Brightspace (ex: 103)
+  /// Qual prova do semestre e esta janela: "N2", "SUB", "N1"... Texto livre de
+  /// proposito: quem nomeia a rodada e a secretaria, e um enum obrigaria uma
+  /// migration a cada nome novo. O default mantem os semestres ja cadastrados,
+  /// que sao todos da prova regular.
+  rodada          String    @default("N2")
   descricao       String?
   aberto          Boolean   @default(false)
   dataAbertura    DateTime?
@@ -542,6 +559,10 @@ model ExecucaoCompulsorio {
   simulacao       Boolean        @default(true)
   // O recorte, congelado no inicio: o vigente pode mudar durante a execucao.
   periodoLetivoId String
+  // A rodada tambem faz parte do recorte: o lote da SUB busca quem nao tem prova
+  // da SUB, e quem so agendou a N2 continua elegivel. Sem esta coluna o
+  // relatorio nao diria de qual prova do semestre aquele lote foi.
+  rodada          String         @default("N2")
   // Fotografia do e-mail do admin, como em HistoricoAgendamento.autor: precisa
   // continuar legivel se a conta for desativada depois.
   iniciadoPor     String

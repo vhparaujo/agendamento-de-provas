@@ -20,6 +20,8 @@ interface Vinculo {
 interface Reserva {
   alunoId: number;
   periodoLetivoId: string;
+  /** Qual prova do semestre — a outra metade da chave do conflito. */
+  rodada: string;
   status: 'CONFIRMADO' | 'CANCELADO';
 }
 
@@ -126,7 +128,14 @@ describe('MesclagemVinculosService', () => {
   it('move os agendamentos do vinculo antigo e apaga o antigo', async () => {
     const { service, apagados, reservas } = montar(
       [{ ...NOVO }, { ...ANTIGO }],
-      [{ alunoId: 48, periodoLetivoId: '103', status: 'CONFIRMADO' }],
+      [
+        {
+          alunoId: 48,
+          periodoLetivoId: '103',
+          rodada: 'N2',
+          status: 'CONFIRMADO',
+        },
+      ],
     );
 
     const resultado = await service.mesclar(91, 48, 'admin@ucb.br');
@@ -159,12 +168,22 @@ describe('MesclagemVinculosService', () => {
     expect(apagados).toEqual([]);
   });
 
-  it('RECUSA quando os dois tem prova confirmada no mesmo periodo', async () => {
+  it('RECUSA quando os dois tem prova confirmada na mesma prova do semestre', async () => {
     const { service, apagados } = montar(
       [{ ...NOVO }, { ...ANTIGO }],
       [
-        { alunoId: 91, periodoLetivoId: '103', status: 'CONFIRMADO' },
-        { alunoId: 48, periodoLetivoId: '103', status: 'CONFIRMADO' },
+        {
+          alunoId: 91,
+          periodoLetivoId: '103',
+          rodada: 'N2',
+          status: 'CONFIRMADO',
+        },
+        {
+          alunoId: 48,
+          periodoLetivoId: '103',
+          rodada: 'N2',
+          status: 'CONFIRMADO',
+        },
       ],
     );
 
@@ -180,8 +199,18 @@ describe('MesclagemVinculosService', () => {
     const { service, reservas } = montar(
       [{ ...NOVO }, { ...ANTIGO }],
       [
-        { alunoId: 91, periodoLetivoId: '104', status: 'CONFIRMADO' },
-        { alunoId: 48, periodoLetivoId: '103', status: 'CONFIRMADO' },
+        {
+          alunoId: 91,
+          periodoLetivoId: '104',
+          rodada: 'N2',
+          status: 'CONFIRMADO',
+        },
+        {
+          alunoId: 48,
+          periodoLetivoId: '103',
+          rodada: 'N2',
+          status: 'CONFIRMADO',
+        },
       ],
     );
 
@@ -191,12 +220,80 @@ describe('MesclagemVinculosService', () => {
     expect(reservas.every((r) => r.alunoId === 91)).toBe(true);
   });
 
+  /**
+   * A chave do conflito e `periodoLetivoId + rodada`. Um vinculo com a regular e
+   * o outro com a substitutiva sao duas provas diferentes, em dias e salas
+   * diferentes — mescladas, viram exatamente o que se espera de quem fez as
+   * duas. Comparar so o semestre travaria a mesclagem em todo RA que fez a SUB.
+   */
+  it('PERMITE quando um tem a N2 e o outro a SUB do mesmo semestre', async () => {
+    const { service, reservas, apagados } = montar(
+      [{ ...NOVO }, { ...ANTIGO }],
+      [
+        {
+          alunoId: 91,
+          periodoLetivoId: '103',
+          rodada: 'N2',
+          status: 'CONFIRMADO',
+        },
+        {
+          alunoId: 48,
+          periodoLetivoId: '103',
+          rodada: 'SUB',
+          status: 'CONFIRMADO',
+        },
+      ],
+    );
+
+    const resultado = await service.mesclar(91, 48, 'admin@ucb.br');
+
+    expect(resultado.agendamentosMovidos).toBe(1);
+    expect(reservas.every((r) => r.alunoId === 91)).toBe(true);
+    expect(apagados).toEqual([48]);
+  });
+
+  /** E a mesma rodada nos dois continua sendo conflito, como sempre foi. */
+  it('RECUSA quando os dois tem prova confirmada na MESMA rodada', async () => {
+    const { service, apagados } = montar(
+      [{ ...NOVO }, { ...ANTIGO }],
+      [
+        {
+          alunoId: 91,
+          periodoLetivoId: '103',
+          rodada: 'SUB',
+          status: 'CONFIRMADO',
+        },
+        {
+          alunoId: 48,
+          periodoLetivoId: '103',
+          rodada: 'SUB',
+          status: 'CONFIRMADO',
+        },
+      ],
+    );
+
+    await expect(service.mesclar(91, 48, 'admin@ucb.br')).rejects.toThrow(
+      /rodada SUB/,
+    );
+    expect(apagados).toEqual([]);
+  });
+
   it('prova CANCELADA nos dois lados nao impede a mesclagem', async () => {
     const { service, apagados } = montar(
       [{ ...NOVO }, { ...ANTIGO }],
       [
-        { alunoId: 91, periodoLetivoId: '103', status: 'CONFIRMADO' },
-        { alunoId: 48, periodoLetivoId: '103', status: 'CANCELADO' },
+        {
+          alunoId: 91,
+          periodoLetivoId: '103',
+          rodada: 'N2',
+          status: 'CONFIRMADO',
+        },
+        {
+          alunoId: 48,
+          periodoLetivoId: '103',
+          rodada: 'N2',
+          status: 'CANCELADO',
+        },
       ],
     );
 

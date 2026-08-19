@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
-import { StatusAgendamento } from '../../generated/prisma/client';
+import { Prisma, StatusAgendamento } from '../../generated/prisma/client';
 import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 
 export interface SituacaoPeriodo {
@@ -23,6 +23,14 @@ export interface SituacaoPeriodo {
   encerrado: boolean;
   /** Id do periodo letivo no Brightspace. Vai gravado em cada agendamento. */
   periodoLetivoId?: string;
+  /**
+   * QUAL prova do semestre e esta janela ("N2", "SUB"...).
+   *
+   * Anda sempre junto do `periodoLetivoId`: o par e que identifica o periodo, e
+   * a tela do aluno precisa dele para dizer de qual prova esta falando — dois
+   * periodos do mesmo semestre tem o mesmo `periodoLetivoId`.
+   */
+  rodada?: string;
   descricao?: string | null;
   dataAbertura?: Date | null;
   dataFechamento?: Date;
@@ -32,6 +40,8 @@ export interface SituacaoPeriodo {
 
 export interface PeriodoVigente {
   periodoLetivoId: string;
+  /** A rodada da janela vigente. Vai gravada como fotografia em cada reserva. */
+  rodada: string;
   dataFechamento: Date;
 }
 
@@ -39,6 +49,7 @@ export interface PeriodoVigente {
 export interface PeriodoAdmin {
   id: number;
   periodoLetivoId: string;
+  rodada: string;
   descricao: string | null;
   aberto: boolean;
   dataAbertura: Date | null;
@@ -54,6 +65,7 @@ export interface PeriodoAdmin {
 export interface VigenteDepoisDaRemocao {
   id: number;
   periodoLetivoId: string;
+  rodada: string;
   descricao: string | null;
 }
 
@@ -114,6 +126,7 @@ export class PeriodoService {
       aberto: false,
       encerrado: false,
       periodoLetivoId: periodo.periodoLetivoId,
+      rodada: periodo.rodada,
       descricao: periodo.descricao,
       dataAbertura: periodo.dataAbertura,
       dataFechamento: periodo.dataFechamento,
@@ -161,14 +174,23 @@ export class PeriodoService {
    *
    * `undefined` quando nao ha periodo cadastrado — nesse caso nao existe
    * "semestre atual", e o portal nao tem o que mostrar.
+   *
+   * Devolve o PAR `periodoLetivoId + rodada`, e nao a string sozinha: os dois
+   * periodos do mesmo semestre (a N2 e a SUB) compartilham o `periodoLetivoId`,
+   * e quem filtrar so por ele mistura as duas provas. Voltar um objeto obriga
+   * cada chamador a dizer, na desestruturacao, se a rodada importa para ele.
    */
-  async periodoLetivoVigente(): Promise<string | undefined> {
+  async periodoLetivoVigente(): Promise<
+    { periodoLetivoId: string; rodada: string } | undefined
+  > {
     const periodo = await this.prisma.periodoAgendamento.findFirst({
       orderBy: { createdAt: 'desc' },
-      select: { periodoLetivoId: true },
+      select: { periodoLetivoId: true, rodada: true },
     });
 
-    return periodo?.periodoLetivoId;
+    if (!periodo) return undefined;
+
+    return { periodoLetivoId: periodo.periodoLetivoId, rodada: periodo.rodada };
   }
 
   /**
@@ -184,6 +206,7 @@ export class PeriodoService {
 
     return {
       periodoLetivoId: situacao.periodoLetivoId!,
+      rodada: situacao.rodada!,
       dataFechamento: situacao.dataFechamento!,
     };
   }
@@ -218,6 +241,7 @@ export class PeriodoService {
 
     return {
       periodoLetivoId: situacao.periodoLetivoId!,
+      rodada: situacao.rodada!,
       dataFechamento: situacao.dataFechamento!,
     };
   }
@@ -233,15 +257,21 @@ export class PeriodoService {
 
     if (periodos.length === 0) return [];
 
-    // Uma consulta agrupada em vez de uma por periodo.
+    // Uma consulta agrupada em vez de uma por periodo. O agrupamento e pelo PAR
+    // `periodoLetivoId + rodada`: agrupar so pelo semestre faria a linha da SUB
+    // exibir as provas da N2 como se fossem dela, e o admin leria "412
+    // agendamentos" numa janela que ninguem usou ainda.
     const contagens = await this.prisma.agendamento.groupBy({
-      by: ['periodoLetivoId'],
+      by: ['periodoLetivoId', 'rodada'],
       where: { status: StatusAgendamento.CONFIRMADO },
       _count: { _all: true },
     });
 
     const porPeriodoLetivo = new Map(
-      contagens.map((c) => [c.periodoLetivoId, c._count._all]),
+      contagens.map((c) => [
+        chaveDaRodada(c.periodoLetivoId, c.rodada),
+        c._count._all,
+      ]),
     );
 
     const agora = new Date();
@@ -250,6 +280,7 @@ export class PeriodoService {
     return periodos.map((p, indice) => ({
       id: p.id,
       periodoLetivoId: p.periodoLetivoId,
+      rodada: p.rodada,
       descricao: p.descricao,
       aberto: p.aberto,
       dataAbertura: p.dataAbertura,
@@ -260,13 +291,15 @@ export class PeriodoService {
         p.aberto &&
         (!p.dataAbertura || agora >= p.dataAbertura) &&
         agora <= p.dataFechamento,
-      totalAgendamentos: porPeriodoLetivo.get(p.periodoLetivoId) ?? 0,
+      totalAgendamentos:
+        porPeriodoLetivo.get(chaveDaRodada(p.periodoLetivoId, p.rodada)) ?? 0,
       criadoEm: p.createdAt,
     }));
   }
 
   async criar(dados: {
     periodoLetivoId: string;
+    rodada?: string;
     descricao?: string;
     aberto?: boolean;
     dataAbertura?: string;
@@ -279,6 +312,8 @@ export class PeriodoService {
 
     validarJanela(abertura, fechamento);
 
+    const rodada = dados.rodada?.trim() || RODADA_PADRAO;
+
     // Criar um periodo novo TROCA o vigente, porque vigente = mais recente.
     // Sem este aviso, o admin poderia cadastrar o semestre seguinte com semanas
     // de antecedencia e, sem perceber, fechar o agendamento que esta em curso.
@@ -286,16 +321,27 @@ export class PeriodoService {
       orderBy: { createdAt: 'desc' },
     });
 
-    if (atual && atual.periodoLetivoId === dados.periodoLetivoId) {
+    // A duplicata e do PAR `periodoLetivoId + rodada`, e nao do semestre
+    // sozinho: `2026/3 + N2` e `2026/3 + SUB` sao duas janelas legitimas do
+    // mesmo periodo letivo, com faixas e prazos proprios. Comparar so o
+    // `periodoLetivoId` — como era antes da rodada — recusaria justamente o
+    // cadastro da substitutiva, que e o caso que esta coluna existe para servir.
+    if (
+      atual &&
+      atual.periodoLetivoId === dados.periodoLetivoId &&
+      atual.rodada === rodada
+    ) {
       throw new ConflictException(
         `Ja existe um periodo vigente para o periodo letivo ${dados.periodoLetivoId} ` +
-          `(id ${atual.id}). Ajuste aquele em vez de criar outro.`,
+          `na rodada ${rodada} (id ${atual.id}). Ajuste aquele em vez de criar ` +
+          'outro — ou informe outra `rodada` se esta e a proxima prova do mesmo semestre.',
       );
     }
 
     const criado = await this.prisma.periodoAgendamento.create({
       data: {
         periodoLetivoId: dados.periodoLetivoId.trim(),
+        rodada,
         descricao: dados.descricao?.trim() || null,
         aberto: dados.aberto ?? false,
         dataAbertura: abertura,
@@ -306,9 +352,14 @@ export class PeriodoService {
     return this.buscar(criado.id);
   }
 
+  /**
+   * ⚠️ `periodoLetivoId` NAO se edita, e `rodada` so enquanto a janela esta
+   * VAZIA — ver `exigirRodadaAindaTrocavel`.
+   */
   async atualizar(
     id: number,
     dados: {
+      rodada?: string;
       descricao?: string | null;
       aberto?: boolean;
       dataAbertura?: string | null;
@@ -320,6 +371,8 @@ export class PeriodoService {
     });
 
     if (!periodo) throw new NotFoundException(`Periodo ${id} nao encontrado`);
+
+    const rodada = dados.rodada?.trim() || undefined;
 
     const abertura =
       dados.dataAbertura === undefined
@@ -336,18 +389,26 @@ export class PeriodoService {
 
     // Antecipar o fechamento para tras de agora e legitimo (encerrar antes do
     // previsto), mas quem ja agendou nao perde a vaga: o periodo so barra quem
-    // ainda nao escolheu. Por isso nao ha checagem de agendamentos aqui.
-    await this.prisma.periodoAgendamento.update({
-      where: { id },
-      data: {
-        descricao:
-          dados.descricao === undefined
-            ? undefined
-            : (dados.descricao?.trim() ?? null) || null,
-        aberto: dados.aberto,
-        dataAbertura: abertura,
-        dataFechamento: fechamento,
-      },
+    // ainda nao escolheu. Por isso nao ha checagem de agendamentos aqui —
+    // a unica que existe e a da rodada, logo abaixo, e por outro motivo.
+    await this.prisma.$transaction(async (tx) => {
+      if (rodada && rodada !== periodo.rodada) {
+        await this.exigirRodadaAindaTrocavel(tx, periodo);
+      }
+
+      await tx.periodoAgendamento.update({
+        where: { id },
+        data: {
+          rodada,
+          descricao:
+            dados.descricao === undefined
+              ? undefined
+              : (dados.descricao?.trim() ?? null) || null,
+          aberto: dados.aberto,
+          dataAbertura: abertura,
+          dataFechamento: fechamento,
+        },
+      });
     });
 
     return this.buscar(id);
@@ -382,22 +443,27 @@ export class PeriodoService {
        * que precisa continuar explicavel — quem aparecer no dia sem estar na
        * lista se explica por ele.
        *
-       * A conta e por `periodoLetivoId`, entao duas linhas do mesmo semestre
-       * letivo travam uma a outra. E conservador de proposito: com o mesmo id
-       * de periodo letivo nos dois, nao ha como dizer a qual linha a prova
-       * pertence.
+       * A conta e pelo PAR `periodoLetivoId + rodada` — a mesma chave que
+       * identifica a janela. Duas linhas com o MESMO par continuam travando uma
+       * a outra, e e conservador de proposito: nao ha como dizer a qual delas a
+       * prova pertence. Mas a N2 e a SUB do mesmo semestre nao se travam — o
+       * cadastro errado de uma janela vazia da SUB precisa poder ser desfeito, e
+       * as provas ja marcadas na N2 nao dizem nada sobre ela.
        */
       const agendamentos = await tx.agendamento.count({
-        where: { periodoLetivoId: periodo.periodoLetivoId },
+        where: {
+          periodoLetivoId: periodo.periodoLetivoId,
+          rodada: periodo.rodada,
+        },
       });
 
       if (agendamentos > 0) {
         throw new ConflictException(
-          `O periodo letivo ${periodo.periodoLetivoId} ja tem ${agendamentos} ` +
-            'agendamento(s) (incluindo cancelados) e nao pode ser apagado — as ' +
-            'provas ficariam sem a janela que as identifica, e sumiriam do portal ' +
-            'do aluno. Para encerrar o prazo, use PATCH com dataFechamento no ' +
-            'passado ou aberto=false; a linha continua no historico.',
+          `O periodo letivo ${periodo.periodoLetivoId} (rodada ${periodo.rodada}) ` +
+            `ja tem ${agendamentos} agendamento(s) (incluindo cancelados) e nao ` +
+            'pode ser apagado — as provas ficariam sem a janela que as identifica, ' +
+            'e sumiriam do portal do aluno. Para encerrar o prazo, use PATCH com ' +
+            'dataFechamento no passado ou aberto=false; a linha continua no historico.',
         );
       }
 
@@ -410,15 +476,20 @@ export class PeriodoService {
       // resposta for so "removido".
       const vigente = await tx.periodoAgendamento.findFirst({
         orderBy: { createdAt: 'desc' },
-        select: { id: true, periodoLetivoId: true, descricao: true },
+        select: {
+          id: true,
+          periodoLetivoId: true,
+          rodada: true,
+          descricao: true,
+        },
       });
 
       this.auditoria.registrar('PERIODO_REMOVIDO', {
         ator: porAdmin,
         detalhe:
-          `periodo ${id} (letivo ${periodo.periodoLetivoId}` +
+          `periodo ${id} (letivo ${periodo.periodoLetivoId}, rodada ${periodo.rodada}` +
           `${periodo.descricao ? `, "${periodo.descricao}"` : ''}) removido; ` +
-          `vigente agora: ${vigente ? `${vigente.id} (letivo ${vigente.periodoLetivoId})` : 'nenhum'}`,
+          `vigente agora: ${vigente ? `${vigente.id} (letivo ${vigente.periodoLetivoId}, rodada ${vigente.rodada})` : 'nenhum'}`,
       });
 
       return {
@@ -426,6 +497,50 @@ export class PeriodoService {
         vigenteAgora: vigente,
       };
     });
+  }
+
+  /**
+   * ==========================================================================
+   * TROCAR A RODADA: so enquanto a janela nao tiver prova nenhuma
+   * ==========================================================================
+   * A `rodada` e metade da chave que liga esta janela as reservas — e o
+   * `Agendamento.rodada` e FOTOGRAFIA, gravada no instante da reserva. Trocar a
+   * rodada da janela com provas dentro nao renomeia prova nenhuma: a janela
+   * passaria a dizer "SUB" enquanto as 20 provas dela continuam dizendo "N2", e
+   * a partir dali TODA consulta pelo par para de casar. O portal diria ao aluno
+   * que ele nao tem prova marcada, a exportacao o listaria como "Nao Agendado",
+   * e o compulsorio o alocaria de novo — tres sintomas longe da causa.
+   *
+   * Com a janela vazia nao ha nada a desalinhar, e e ai que a troca resolve o
+   * caso real: cadastrou como N2 o que era a substitutiva, e percebeu antes de
+   * abrir. A alternativa seria apagar e recriar — pior, porque `vigente` = o
+   * cadastrado mais recentemente, e recriar embaralha essa ordem.
+   *
+   * A contagem inclui CANCELADO, pelo mesmo motivo do `remover`: a pergunta e
+   * "alguem ja usou esta janela?", e o cancelamento e justamente o registro que
+   * precisa continuar explicavel no dia da prova.
+   */
+  private async exigirRodadaAindaTrocavel(
+    tx: Prisma.TransactionClient,
+    periodo: { periodoLetivoId: string; rodada: string },
+  ): Promise<void> {
+    const agendamentos = await tx.agendamento.count({
+      where: {
+        periodoLetivoId: periodo.periodoLetivoId,
+        rodada: periodo.rodada,
+      },
+    });
+
+    if (agendamentos === 0) return;
+
+    throw new ConflictException(
+      `Esta janela ja tem ${agendamentos} agendamento(s) gravado(s) como rodada ` +
+        `"${periodo.rodada}" (incluindo cancelados), e a rodada da reserva e uma ` +
+        'fotografia: trocar a da janela nao renomearia nenhuma delas. As provas ' +
+        'ficariam orfas — sumiriam do portal do aluno e voltariam a contar como ' +
+        '"nao agendado". A rodada so pode ser corrigida enquanto a janela estiver ' +
+        'vazia.',
+    );
   }
 
   async buscar(id: number): Promise<PeriodoAdmin> {
@@ -436,6 +551,18 @@ export class PeriodoService {
 
     return periodo;
   }
+}
+
+/**
+ * A rodada de quem nao informou nenhuma. Igual ao default da coluna: os periodos
+ * ja cadastrados sao todos da prova regular, e quem so tem uma prova por
+ * semestre continua criando periodo como antes, sem saber que a rodada existe.
+ */
+const RODADA_PADRAO = 'N2';
+
+/** Chave do par que identifica uma janela — nunca so o `periodoLetivoId`. */
+function chaveDaRodada(periodoLetivoId: string, rodada: string): string {
+  return `${periodoLetivoId}\u0000${rodada}`;
 }
 
 function exigirData(valor: string, campo: string): Date {

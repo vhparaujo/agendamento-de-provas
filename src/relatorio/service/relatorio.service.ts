@@ -407,7 +407,12 @@ export class RelatorioService {
   private periodoDoRecorte(
     filtro: FiltroRelatorio,
   ): Promise<string | undefined> | string {
-    return filtro.periodoLetivoId ?? this.periodo.periodoLetivoVigente();
+    return (
+      filtro.periodoLetivoId ??
+      this.periodo
+        .periodoLetivoVigente()
+        .then((vigente) => vigente?.periodoLetivoId)
+    );
   }
 }
 

@@ -257,6 +257,7 @@ describe('Relatorio de grupos para o D2L (e2e)', () => {
         matricula,
         userIdD2L: '99999',
         periodoLetivoId,
+        rodada: 'N2',
         // Fotografia do vinculo, como o service grava.
         modalidadeId: ead.id,
         poloId,

@@ -201,6 +201,7 @@ describe('Lista de presenca (e2e)', () => {
         matricula,
         userIdD2L: '99999',
         periodoLetivoId,
+        rodada: 'N2',
         // Fotografia do vinculo, como o service grava.
         modalidadeId: ead.id,
         poloId,

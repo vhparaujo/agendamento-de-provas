@@ -51,6 +51,11 @@ export interface AgendamentoDoAluno {
   polo: string;
   status: string;
   periodoLetivoId: string;
+  /**
+   * Qual prova do semestre. Sem ela, o balcao veria duas linhas com o mesmo
+   * periodo letivo e nada dizendo qual e a regular e qual e a substitutiva.
+   */
+  rodada: string;
 }
 
 export interface AlunoImportadoDetalhe extends AlunoImportadoResumo {
@@ -170,6 +175,7 @@ export class AlunoAdminService {
         polo: a.salaFaixa.faixa.polo.nome,
         status: a.status,
         periodoLetivoId: a.periodoLetivoId,
+        rodada: a.rodada,
       })),
     };
   }

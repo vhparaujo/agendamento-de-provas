@@ -427,11 +427,37 @@ datas das provas**, que são as faixas. São duas linhas do tempo independentes.
 Fecha **só por data/hora**. Vaga esgotando é problema de capacidade (o admin abre
 mais salas), nunca motivo para encerrar o agendamento de quem ainda não escolheu.
 
+#### `rodada`: duas provas no mesmo semestre
+
+O Brightspace tem **um** `periodoLetivoId` por semestre, e existe mais de uma
+prova nele — a regular e a **substitutiva**. O campo `rodada` (`"N2"` por padrão,
+`"SUB"`, `"N1"`…) é a segunda metade da identidade do período: `2026/3 + N2` e
+`2026/3 + SUB` são duas janelas distintas, cada uma com seu prazo e suas faixas.
+
+- `POST /periodos` aceita `rodada` (opcional, default `"N2"`). O 409 de duplicata
+  é do **par** `periodoLetivoId + rodada` — repetir o semestre com outra rodada é
+  exatamente o caso de uso, não um erro.
+- **O aluno agenda uma prova por curso em CADA rodada.** Quem marcou a N2 marca
+  também a SUB, e `GET /portal/agendamentos` mostra só a da rodada vigente — a
+  anterior já aconteceu e fica congelada (sem troca e sem declaração).
+- **Mas continua sendo uma prova por pessoa em cada horário**, entre rodadas
+  inclusive: quem fez a N2 às 08:30 não pode marcar a SUB no mesmo horário.
+- O `Agendamento` guarda a rodada como **fotografia**, junto de `modalidadeId` e
+  `poloId`: renomear a rodada da janela depois não remarca prova nenhuma.
+- `rodada` só é editável **enquanto a janela não tiver prova nenhuma** (o `PATCH`
+  responde 409 depois disso; cancelados contam). A rodada gravada na reserva é
+  fotografia — trocar a da janela não renomearia nenhuma delas, e as provas
+  sumiriam do portal do aluno como se ninguém tivesse agendado. `periodoLetivoId`
+  nunca muda.
+- **Os períodos que já existiam ganharam `rodada = "N2"` na migration**, junto com
+  os agendamentos deles. Nada a fazer à mão.
+
 **Vigente = o cadastrado mais recentemente**, e não existe como marcar outro no
 lugar. Por isso cadastrar o semestre seguinte com antecedência **rouba o vigente
 do período em curso** — a linha nova passa a ser a única que o portal do aluno
 consulta. O `DELETE` é a saída para isso e para cadastro errado, com duas travas:
-período letivo que já tem agendamento (**contando os cancelados**) responde 409, e
+a janela (`periodoLetivoId` + `rodada`) que já tem agendamento (**contando os
+cancelados**) responde 409, e
 a resposta traz `vigenteAgora` porque apagar o mais recente devolve o portal ao
 semestre anterior, normalmente com o prazo já vencido. Para encerrar o prazo sem
 perder o histórico, é o `PATCH` — não este.
@@ -439,7 +465,8 @@ perder o histórico, é o `PATCH` — não este.
 ### Relatório de agendamentos
 
 Exigem JWT de admin. Todas aceitam os mesmos filtros: `poloId`, `faixaId`,
-`salaId`, `modalidadeId`, `periodoLetivoId`, `de`, `ate` (data da **prova**).
+`salaId`, `modalidadeId`, `periodoLetivoId`, `rodada`, `de`, `ate` (data da
+**prova**).
 
 | Método | Rota | Descrição |
 |---|---|---|
@@ -562,6 +589,7 @@ colunas da prova vazias e `Status = Não Agendado`.
 | Coluna | |
 |---|---|
 | `Matricula` · `Aluno` · `E-mail` · `Curso` · `Modalidade` · `Polo` | do vínculo importado |
+| `Rodada` | qual prova do semestre (`N2`, `SUB`…); vazia para quem não agendou |
 | `Data da prova` · `Inicio` · `Fim` · `Sala` | vazias para quem não agendou |
 | `Status` | **só dois valores**: `Agendado` ou `Não Agendado` |
 | `Agendado em` | data/hora em que o aluno confirmou |
@@ -569,9 +597,11 @@ colunas da prova vazias e `Status = Não Agendado`.
 - **Cancelado conta como `Não Agendado`.** Quem cancelou e não remarcou precisa
   ser contatado igual a quem nunca entrou no portal. É também por isso que
   `status` não se aplica aqui: a coluna é **derivada**, não filtrada.
-- **O recorte é um período letivo** — o de `periodoLetivoId` ou, sem ele, o
-  vigente. Sem isso, quem fez prova no semestre passado apareceria como
-  "agendado" e escaparia da cobrança deste.
+- **O recorte é uma prova: `periodoLetivoId` + `rodada`** — os da URL ou os do
+  período vigente. Sem o semestre, quem fez prova no semestre passado apareceria
+  como "agendado"; sem a rodada, quem fez a regular apareceria como "agendado"
+  durante a substitutiva. Informar `periodoLetivoId` **sem** `rodada` traz o
+  semestre inteiro, de propósito.
 - `faixaId`, `salaId`, `de` e `ate` são filtros da **prova**: informá-los
   restringe o arquivo a quem tem prova ali (é a lista daquela sala/daquele dia).
   `poloId`, `modalidadeId` e `busca` filtram o **aluno** e continuam trazendo
@@ -944,7 +974,8 @@ arquivo só (`agendamento/service/disciplinas-do-aluno.service.ts`):
 
 O semestre é **o que o admin cadastrou** em `PeriodoAgendamento.periodoLetivoId`
 (org unit tipo `103` neste tenant), não "o atual" segundo o relógio. Sem esse
-recorte viriam também as disciplinas de semestres passados.
+recorte viriam também as disciplinas de semestres passados. A `rodada` **não**
+entra aqui: a substitutiva é outra prova das mesmas matérias.
 
 ⚠️ **A lista não é separada por vínculo.** Turma não pertence a um curso, então
 quem tem dois vínculos na mesma matrícula recebe as disciplinas dos dois juntas.
@@ -1047,11 +1078,11 @@ TurmaImportada ── ImportacaoCsv      Admin      PeriodoAgendamento
 | `AlunoImportado` | Um registro **por vínculo** (matrícula + curso) |
 | `TurmaImportada` | Turmas reais com prova, chaveadas por `codigoTurma + nomeDisciplina` |
 | `ImportacaoCsv` | Auditoria: tipo, arquivo, linhas, quem, quando |
-| `Agendamento` | A reserva, apontando para a `SalaFaixa` alocada. Guarda `modalidadeId` e `poloId` **do aluno na época** — ver abaixo |
+| `Agendamento` | A reserva, apontando para a `SalaFaixa` alocada. Guarda `rodada`, `modalidadeId` e `poloId` **do aluno na época** — ver abaixo |
 | `AgendamentoDisciplina` | As N disciplinas cobertas pela reserva |
 | `SyncD2L` | Fila de gravação do *special access* (PENDENTE/CONCLUIDO/FALHOU/NAO_MATRICULADO) |
 | `HistoricoAgendamento` | Quem alterou o agendamento: evento, autor (aluno/admin), de → para |
-| `PeriodoAgendamento` | Janela de agendamento; fecha por `dataFechamento` |
+| `PeriodoAgendamento` | Janela de agendamento; fecha por `dataFechamento`. Identidade = `periodoLetivoId` + `rodada` |
 | `SenhaDeProva` | Uma célula da grade `(data, turno)` → senha da prova. **Única coluna do banco com a senha em texto claro** |
 | `ConfiguracaoSenhaQuiz` | Linha única (`id=1`): o que o admin configura — questionário-alvo e os horários do cron |
 | `ExecucaoSenhaQuiz` | Uma rodada do lote de troca de senhas. Guarda contadores e a `versaoAplicada`; **nunca a senha** |

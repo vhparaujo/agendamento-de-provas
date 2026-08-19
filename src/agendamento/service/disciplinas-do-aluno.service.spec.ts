@@ -82,11 +82,17 @@ describe('DisciplinasDoAlunoService', () => {
     } as unknown as D2lEnrollmentsService;
 
     const periodo = {
-      periodoLetivoVigente: jest
-        .fn()
-        .mockResolvedValue(
-          'periodoLetivoId' in opcoes ? opcoes.periodoLetivoId : '103',
-        ),
+      periodoLetivoVigente: jest.fn().mockResolvedValue(
+        // `undefined` continua sendo "nenhum periodo cadastrado"; o resto vira o
+        // par que o service passou a devolver.
+        (() => {
+          const id =
+            'periodoLetivoId' in opcoes ? opcoes.periodoLetivoId : '103';
+          return id === undefined
+            ? undefined
+            : { periodoLetivoId: id, rodada: 'N2' };
+        })(),
+      ),
     } as unknown as PeriodoService;
 
     return {

@@ -106,6 +106,14 @@ export class AgendamentoDoAlunoDto implements AgendamentoDoAluno {
 
   @ApiProperty({ example: '103' })
   periodoLetivoId!: string;
+
+  @ApiProperty({
+    example: 'SUB',
+    description:
+      'Qual prova do semestre — "N2" (regular), "SUB" (substitutiva). E o que ' +
+      'distingue duas linhas com o mesmo periodo letivo.',
+  })
+  rodada!: string;
 }
 
 export class ImportacaoDeOrigemDto {

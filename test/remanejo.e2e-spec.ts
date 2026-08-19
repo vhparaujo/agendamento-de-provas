@@ -618,6 +618,7 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
               matricula: RA,
               userIdD2L: 'd2l-dois-remanejo',
               periodoLetivoId: PERIODO_LETIVO,
+              rodada: 'N2',
               modalidadeId: ead.id,
               poloId,
             },
@@ -704,9 +705,25 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
   });
 
   describe('HISTORICO: quem alterou o agendamento', () => {
+    /**
+     * Faixa so deste bloco, com folga — pela mesma razao do bloco do
+     * agendamento administrativo. A `faixaHistorico` compartilhada tem 5 vagas e chega
+     * aqui praticamente cheia: os casos daqui pediam mais reservas do que
+     * sobrava, e o 409 de "vagas esgotadas" aparecia como se o historico
+     * estivesse quebrado, longe da causa.
+     */
+    let faixaHistorico: number;
+
+    beforeAll(async () => {
+      const sala = await criarSala('HIST-BASE', 30);
+      ({ faixaId: faixaHistorico } = await criarFaixa('2027-04-10', poloId, [
+        { salaId: sala.id, modalidadeId: ead.id, vagas: 30, ordem: 1 },
+      ]));
+    });
+
     it('registra o aluno quando foi o proprio aluno', async () => {
       const aluno = await criarAluno('HIST-A');
-      const ag = await agendar(aluno.token, faixaB);
+      const ag = await agendar(aluno.token, faixaHistorico);
 
       const nova = await criarSala('HIST-DEST', 3);
       const { faixaId } = await criarFaixa('2026-11-27', poloId, [
@@ -727,7 +744,7 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
         autorTipo: 'ALUNO',
         autor: `${PREFIXO}HIST-A`,
       });
-      expect(res.body[0].de).toMatch(/REM-B/);
+      expect(res.body[0].de).toMatch(/HIST-BASE/);
       expect(res.body[0].para).toMatch(/HIST-DEST/);
 
       expect(res.body[1]).toMatchObject({
@@ -738,7 +755,7 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
 
     it('registra o administrador, com o e-mail, quando foi ele', async () => {
       const aluno = await criarAluno('HIST-B');
-      const ag = await agendar(aluno.token, faixaB);
+      const ag = await agendar(aluno.token, faixaHistorico);
 
       const nova = await criarSala('HIST-ADM', 3);
       const { ofertas } = await criarFaixa('2026-11-28', poloId, [
@@ -763,7 +780,7 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
 
     it('distingue os dois numa mesma linha do tempo', async () => {
       const aluno = await criarAluno('HIST-C');
-      const ag = await agendar(aluno.token, faixaB);
+      const ag = await agendar(aluno.token, faixaHistorico);
 
       const s1 = await criarSala('HIST-C1', 3);
       const f1 = await criarFaixa('2026-11-29', poloId, [
@@ -777,7 +794,7 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
 
       // ...e depois o admin remaneja de volta
       await comoAdmin(api().patch(`/api/agendamentos/${ag.id}/remanejar`))
-        .send({ faixaId: faixaB })
+        .send({ faixaId: faixaHistorico })
         .expect(200);
 
       const res = await comoAdmin(
@@ -803,7 +820,7 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
      */
     it('registra o cancelamento com o e-mail de quem cancelou', async () => {
       const aluno = await criarAluno('HIST-E');
-      const ag = await agendar(aluno.token, faixaB);
+      const ag = await agendar(aluno.token, faixaHistorico);
       await comoAdmin(api().delete(`/api/agendamentos/${ag.id}`)).expect(200);
 
       const h = await comoAdmin(
@@ -824,7 +841,7 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
 
     it('o historico e do admin — o aluno nao acessa', async () => {
       const aluno = await criarAluno('HIST-F');
-      const ag = await agendar(aluno.token, faixaB);
+      const ag = await agendar(aluno.token, faixaHistorico);
 
       await como(
         api().get(`/api/agendamentos/${ag.id}/historico`),

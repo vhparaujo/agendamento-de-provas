@@ -119,7 +119,8 @@ export class SenhaQuizService {
       );
     }
 
-    const periodoLetivoId = await this.periodo.periodoLetivoVigente();
+    const { periodoLetivoId } =
+      (await this.periodo.periodoLetivoVigente()) ?? {};
 
     if (!periodoLetivoId) {
       throw new BadRequestException(

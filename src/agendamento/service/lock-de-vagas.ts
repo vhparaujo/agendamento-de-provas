@@ -68,14 +68,18 @@ export async function travarAluno(
  * A regra e por **matricula + faixa**, deliberadamente:
  *
  * - **matricula, e nao vinculo.** O limite por vinculo ja existe e responde
- *   outra pergunta ("uma prova por curso no semestre"); este responde "uma prova
- *   por PESSOA naquele horario". Os dois convivem.
+ *   outra pergunta ("uma prova por curso em cada rodada"); este responde "uma
+ *   prova por PESSOA naquele horario". Os dois convivem.
  * - **faixa, e nao sobreposicao de horario** (decisao do cliente, 14/08/2026).
  *   Duas faixas que se cruzam no relogio (09:00-12:00 e 10:00-11:30) continuam
  *   permitidas. Se um dia isso virar problema, o lugar de mudar e aqui — e so
  *   aqui, porque as quatro portas de entrada passam por esta funcao.
- * - **`periodoLetivoId` entra na conta.** Sem ele, a prova do semestre passado na
- *   mesma faixa bloquearia a deste.
+ * - **`periodoLetivoId` entra na conta, mas a `rodada` NAO.** Sem o periodo
+ *   letivo, a prova do semestre passado na mesma faixa bloquearia a deste. Ja a
+ *   rodada fica de fora de proposito: quem fez a N2 as 08:30 nao faz a SUB as
+ *   08:30 tambem — sao duas provas diferentes no mesmo momento, e a trava aqui e
+ *   por PESSOA, nao por prova. `faixasBloqueadasParaOVinculo` (o
+ *   `conflitaComOutraProva` do portal) espelha exatamente este recorte.
  *
  * `exceto` existe para a troca e o remanejo: o agendamento que esta sendo movido
  * nao pode conflitar consigo mesmo.

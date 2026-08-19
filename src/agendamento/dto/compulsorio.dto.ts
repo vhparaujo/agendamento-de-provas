@@ -70,6 +70,14 @@ export class AndamentoDoCompulsorioDto {
   @ApiProperty({ example: '103' })
   periodoLetivoId!: string;
 
+  @ApiProperty({
+    example: 'SUB',
+    description:
+      'Qual prova do semestre este lote preencheu. Elegivel para a SUB e quem ' +
+      'nao tem prova DA SUB — quem fez so a N2 entra.',
+  })
+  rodada!: string;
+
   @ApiProperty({ example: 'secretaria@ucb.br' })
   iniciadoPor!: string;
 

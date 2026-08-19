@@ -33,6 +33,8 @@ export interface FiltroAgendamentos {
   salaId?: number;
   modalidadeId?: number;
   periodoLetivoId?: string;
+  /** Qual prova do semestre ("N2", "SUB"...). Sem ele, vem as duas juntas. */
+  rodada?: string;
   /** Data da prova (AAAA-MM-DD). */
   de?: string;
   ate?: string;
@@ -59,6 +61,7 @@ export interface AgendamentoAdmin {
   status: string;
   alocadoManual: boolean;
   periodoLetivoId: string;
+  rodada: string;
   disciplinas: { orgUnitId: string; nomeDisciplina: string | null }[];
   criadoEm: Date;
 }
@@ -181,14 +184,16 @@ export class AgendamentoAdminService {
       throw new NotFoundException(`Vinculo ${dados.alunoId} nao encontrado`);
     }
 
-    const periodoLetivoId = await this.periodo.periodoLetivoVigente();
+    const vigente = await this.periodo.periodoLetivoVigente();
 
-    if (!periodoLetivoId) {
+    if (!vigente) {
       throw new BadRequestException(
         'Nenhum periodo de agendamento cadastrado: sem periodo letivo nao ha ' +
           'como saber de qual semestre e esta prova. Cadastre em /periodos.',
       );
     }
+
+    const { periodoLetivoId, rodada } = vigente;
 
     const avisos: string[] = [];
 
@@ -212,16 +217,20 @@ export class AgendamentoAdminService {
 
     // Conferido de novo dentro da transacao, sob lock. Aqui e so para a
     // mensagem: "use o remanejo" resolve o problema; "409" nao diz nada.
+    //
+    // O recorte inclui a RODADA, como no portal: quem ja fez a N2 pode e deve
+    // ser agendado na substitutiva, e mandar a secretaria "usar o remanejo"
+    // nesse caso a faria mover a prova ja realizada.
     const jaTem = await this.prisma.agendamento.findFirst({
-      where: { alunoId: vinculo.id, periodoLetivoId, ...CONFIRMADO },
+      where: { alunoId: vinculo.id, periodoLetivoId, rodada, ...CONFIRMADO },
       select: { id: true },
     });
 
     if (jaTem) {
       throw new ConflictException(
-        `Este aluno ja tem prova marcada para o curso ${vinculo.curso} neste ` +
-          `semestre (agendamento ${jaTem.id}). Para mudar de sala ou horario, ` +
-          'use o remanejo.',
+        `Este aluno ja tem prova marcada para o curso ${vinculo.curso} nesta ` +
+          `prova do semestre (${rodada}, agendamento ${jaTem.id}). Para mudar ` +
+          'de sala ou horario, use o remanejo.',
       );
     }
 
@@ -242,15 +251,15 @@ export class AgendamentoAdminService {
       // Entre a checagem la em cima e agora, o proprio aluno pode ter agendado
       // pelo portal — ou outro atendente pode ter feito exatamente isto.
       const existente = await tx.agendamento.findFirst({
-        where: { alunoId: vinculo.id, periodoLetivoId, ...CONFIRMADO },
+        where: { alunoId: vinculo.id, periodoLetivoId, rodada, ...CONFIRMADO },
         select: { id: true },
       });
 
       if (existente) {
         throw new ConflictException(
-          `Este aluno acabou de receber prova neste semestre (agendamento ` +
-            `${existente.id}), enquanto esta tela estava aberta. Recarregue e ` +
-            'use o remanejo se precisar mudar de horario.',
+          `Este aluno acabou de receber prova nesta prova do semestre ` +
+            `(${rodada}, agendamento ${existente.id}), enquanto esta tela ` +
+            'estava aberta. Recarregue e use o remanejo se precisar mudar de horario.',
         );
       }
 
@@ -278,6 +287,9 @@ export class AgendamentoAdminService {
           matricula: vinculo.matricula,
           userIdD2L: fonte.userIdD2L,
           periodoLetivoId,
+          // Qual prova do semestre e esta, tirada do periodo vigente — o admin
+          // nao escolhe a rodada, pelo mesmo motivo que nao escolhe o semestre.
+          rodada,
           // Fotografia do vinculo na data da reserva — ver o schema.
           modalidadeId: vinculo.modalidadeId,
           poloId: vinculo.poloId,
@@ -467,6 +479,12 @@ export class AgendamentoAdminService {
    * Reserva sem disciplina nenhuma nao serve: seria marcar prova que nao cobre
    * nada. Por isso o filtro nao e "a mais recente", e sim "a mais recente que
    * tem o que copiar".
+   *
+   * ⚠️ **NAO filtra por rodada, de proposito.** A reserva da N2 e fonte valida
+   * para a SUB: as disciplinas do semestre sao as mesmas e o `userIdD2L` veio do
+   * mesmo launch. Filtrar por rodada deixaria a substitutiva sem fonte nenhuma
+   * justamente na primeira vez que ela abrisse — que e quando o balcao mais
+   * precisa dela, com a integracao desligada.
    */
   private async reservaAnterior(
     vinculo: { id: number; matricula: string },
@@ -911,20 +929,37 @@ export class AgendamentoAdminService {
    * - **Cancelado conta como "Não Agendado".** Quem cancelou e nao remarcou
    *   precisa ser contatado igual a quem nunca entrou no portal. Por isso o
    *   `status` da URL nao vale aqui: a coluna e derivada, nao filtrada.
-   * - **O recorte e UM periodo letivo** (o da URL ou o vigente). Sem isso, um
-   *   aluno com prova no semestre passado apareceria como "agendado" e ficaria
-   *   de fora da cobranca deste semestre.
+   * - **O recorte e UMA PROVA: `periodoLetivoId` + `rodada`** (os da URL ou os
+   *   do periodo vigente). Sem o semestre, quem tem prova no semestre passado
+   *   apareceria como "agendado"; sem a rodada, quem fez a N2 apareceria como
+   *   "agendado" durante a substitutiva. Os dois casos tiram da cobranca gente
+   *   que precisa ser cobrada.
    *
    * Sem paginacao de proposito — quem exporta quer o arquivo inteiro. Sao ~7.500
    * vinculos, um arquivo de planilha, nao um dump.
    */
   async exportarCsv(filtro: FiltroAgendamentos): Promise<string> {
-    const periodoLetivoId =
-      filtro.periodoLetivoId ?? (await this.periodo.periodoLetivoVigente());
+    const vigente = await this.periodo.periodoLetivoVigente();
+
+    const periodoLetivoId = filtro.periodoLetivoId ?? vigente?.periodoLetivoId;
+
+    /**
+     * A rodada entra no recorte pela MESMA razao que o periodo letivo: sem ela,
+     * quem agendou a N2 sairia como "Agendado" durante a substitutiva e ficaria
+     * de fora da cobranca — o erro exato que o recorte por semestre evita.
+     *
+     * Quando o admin fixa um `periodoLetivoId` na URL sem dizer a rodada, o
+     * arquivo traz o semestre INTEIRO (as duas provas). Ai a pergunta e outra —
+     * "o que aconteceu naquele semestre" —, e recortar por uma rodada que ele
+     * nao pediu esconderia metade da resposta.
+     */
+    const rodada =
+      filtro.rodada ?? (filtro.periodoLetivoId ? undefined : vigente?.rodada);
 
     const daProva: Prisma.AgendamentoWhereInput = {
       status: StatusAgendamento.CONFIRMADO,
       periodoLetivoId,
+      rodada,
       salaFaixa: {
         salaId: filtro.salaId,
         faixaId: filtro.faixaId,
@@ -969,6 +1004,7 @@ export class AgendamentoAdminService {
           where: daProva,
           select: {
             createdAt: true,
+            rodada: true,
             // A modalidade e o polo DA EPOCA da reserva, nao os de hoje — ver
             // `dadosDoAluno` abaixo.
             modalidade: { select: { nome: true } },
@@ -1011,6 +1047,9 @@ export class AgendamentoAdminService {
             ...identificacao,
             aluno.modalidade.nome,
             aluno.polo.nome,
+            // Sem prova nao ha rodada: a coluna diz de qual prova do semestre e
+            // a linha, e quem nao agendou nao esta em nenhuma delas.
+            null,
             null,
             null,
             null,
@@ -1030,14 +1069,16 @@ export class AgendamentoAdminService {
        * data e da sala corretas, que sao as da prova de verdade. Duas colunas da
        * mesma linha discordando sobre o mesmo fato.
        *
-       * A regra e um agendamento por vinculo no periodo; se algum dia houver
+       * A regra e um agendamento por vinculo em cada rodada, e o recorte desta
+       * consulta ja fixa a rodada — entao aqui e um so. Ainda assim, se houver
        * mais de um, cada um vira uma linha em vez de sumir do arquivo.
        */
       return aluno.agendamentos.map(
-        ({ salaFaixa, createdAt, modalidade, polo }) => [
+        ({ salaFaixa, createdAt, modalidade, polo, rodada: daLinha }) => [
           ...identificacao,
           modalidade.nome,
           polo.nome,
+          daLinha,
           dataDaProva(salaFaixa.faixa.data),
           salaFaixa.faixa.horaInicio,
           salaFaixa.faixa.horaFim,
@@ -1068,6 +1109,7 @@ export class AgendamentoAdminService {
       // do dia da prova faria alguem procurar um aluno que nao vem.
       status: filtro.status ?? StatusAgendamento.CONFIRMADO,
       periodoLetivoId: filtro.periodoLetivoId,
+      rodada: filtro.rodada,
       salaFaixa: {
         salaId: filtro.salaId,
         modalidadeId: filtro.modalidadeId,
@@ -1097,6 +1139,7 @@ const CABECALHOS_EXPORTACAO = [
   'Curso',
   'Modalidade',
   'Polo',
+  'Rodada',
   'Data da prova',
   'Inicio',
   'Fim',
@@ -1160,6 +1203,7 @@ type RegistroAdmin = {
   status: string;
   alocadoManual: boolean;
   periodoLetivoId: string;
+  rodada: string;
   createdAt: Date;
   aluno: {
     nome: string | null;
@@ -1199,6 +1243,7 @@ function montarAdmin(registro: RegistroAdmin): AgendamentoAdmin {
     status: registro.status,
     alocadoManual: registro.alocadoManual,
     periodoLetivoId: registro.periodoLetivoId,
+    rodada: registro.rodada,
     disciplinas: registro.disciplinas,
     criadoEm: registro.createdAt,
   };

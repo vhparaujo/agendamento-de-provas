@@ -436,7 +436,7 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
       // Sem o BOM, o Excel em Windows le "Câmpus" como "CÃ¢mpus".
       expect(res.text.charCodeAt(0)).toBe(0xfeff);
       expect(res.text.split('\r\n')[0]).toBe(
-        '﻿Matricula;Aluno;E-mail;Curso;Modalidade;Polo;Data da prova;' +
+        '﻿Matricula;Aluno;E-mail;Curso;Modalidade;Polo;Rodada;Data da prova;' +
           'Inicio;Fim;Sala;Status;Agendado em',
       );
     });
@@ -451,6 +451,8 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
       expect(linha).toBeDefined();
       expect(linha).toContain('NUTRIÇÃO');
       expect(linha).toContain('REL-101');
+      // Qual prova do semestre — a coluna que separa a regular da substitutiva.
+      expect(linha).toContain(';N2;');
       expect(linha).toContain('12/11/2026'); // data da prova, no fuso certo
       expect(linha).toContain('08:30');
       expect(linha).toContain(';Agendado;');

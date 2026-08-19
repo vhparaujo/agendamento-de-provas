@@ -171,12 +171,19 @@ export class MesclagemVinculosService {
   }
 
   /**
-   * Os dois vinculos com prova confirmada no MESMO periodo letivo.
+   * Os dois vinculos com prova confirmada na MESMA prova do semestre.
    *
-   * Mesclar ali produziria uma pessoa com dois agendamentos confirmados no
-   * mesmo semestre — estado que o resto do sistema assume impossivel (a regra e
-   * um agendamento por vinculo por periodo). O aluno apareceria em duas listas
-   * de sala no mesmo dia e ocuparia duas vagas.
+   * Mesclar ali produziria uma pessoa com dois agendamentos confirmados para a
+   * mesma prova — estado que o resto do sistema assume impossivel (a regra e um
+   * agendamento por vinculo por rodada). O aluno apareceria em duas listas de
+   * sala no mesmo dia e ocuparia duas vagas.
+   *
+   * A comparacao e do par `periodoLetivoId + rodada`, e nao do semestre sozinho:
+   * um vinculo com prova na N2 e o outro com prova na SUB sao duas provas
+   * diferentes, cada uma na sua sala e no seu dia. Mescladas, viram duas provas
+   * da mesma pessoa — que e exatamente o que se espera de quem faz a regular e
+   * depois a substitutiva. Recusar esse caso travaria a mesclagem em todo RA que
+   * fez as duas.
    *
    * Recusa em vez de escolher uma: decidir qual prova sobrevive e das duas uma —
    * ou sao a mesma pessoa e uma das reservas precisa ser cancelada (decisao da
@@ -193,26 +200,27 @@ export class MesclagemVinculosService {
         alunoId: { in: [destinoId, absorverId] },
         status: StatusAgendamento.CONFIRMADO,
       },
-      select: { alunoId: true, periodoLetivoId: true },
+      select: { alunoId: true, periodoLetivoId: true, rodada: true },
     });
 
-    const periodosDoDestino = new Set(
-      confirmados
-        .filter((a) => a.alunoId === destinoId)
-        .map((a) => a.periodoLetivoId),
+    const chave = (a: { periodoLetivoId: string; rodada: string }) =>
+      `${a.periodoLetivoId}\u0000${a.rodada}`;
+
+    const provasDoDestino = new Set(
+      confirmados.filter((a) => a.alunoId === destinoId).map(chave),
     );
 
     const conflito = confirmados.find(
-      (a) =>
-        a.alunoId === absorverId && periodosDoDestino.has(a.periodoLetivoId),
+      (a) => a.alunoId === absorverId && provasDoDestino.has(chave(a)),
     );
 
     if (conflito) {
       throw new ConflictException(
         `Os dois vinculos tem prova CONFIRMADA no periodo letivo ` +
-          `${conflito.periodoLetivoId}. Mesclar deixaria a mesma pessoa com duas ` +
-          `reservas no semestre, em duas salas. Cancele uma das provas antes de mesclar ` +
-          `— ou reveja se estes vinculos sao mesmo a mesma coisa.`,
+          `${conflito.periodoLetivoId}, rodada ${conflito.rodada}. Mesclar deixaria ` +
+          `a mesma pessoa com duas reservas para a mesma prova, em duas salas. ` +
+          `Cancele uma das provas antes de mesclar — ou reveja se estes vinculos ` +
+          `sao mesmo a mesma coisa.`,
       );
     }
   }

@@ -70,6 +70,13 @@ export class AgendamentoAdminDto implements AgendamentoAdmin {
   @ApiProperty({ example: '103' })
   periodoLetivoId!: string;
 
+  @ApiProperty({
+    example: 'SUB',
+    description:
+      'Qual prova do semestre — "N2" (regular), "SUB" (substitutiva).',
+  })
+  rodada!: string;
+
   @ApiProperty({ type: [DisciplinaDoRelatorioDto] })
   disciplinas!: DisciplinaDoRelatorioDto[];
 

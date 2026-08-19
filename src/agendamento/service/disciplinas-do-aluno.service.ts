@@ -250,13 +250,16 @@ export class DisciplinasDoAlunoService {
   }> {
     // O semestre e o que o admin cadastrou, nao o "atual" segundo o relogio: e
     // ele quem diz quais ofertas do Brightspace contam nesta janela.
-    const periodoLetivoId = await this.periodo.periodoLetivoVigente();
+    // So o `periodoLetivoId` interessa aqui: quem diz quais ofertas do
+    // Brightspace contam e o SEMESTRE, e as duas rodadas dele cobrem as mesmas
+    // disciplinas — a substitutiva e outra prova das mesmas materias.
+    const vigente = await this.periodo.periodoLetivoVigente();
 
-    if (!periodoLetivoId) return { turmas: [], motivo: SEM_PERIODO_LETIVO };
+    if (!vigente) return { turmas: [], motivo: SEM_PERIODO_LETIVO };
 
     const ofertas = await this.enrollments.ofertasDoPeriodo(
       userIdD2L,
-      periodoLetivoId,
+      vigente.periodoLetivoId,
     );
 
     return {
