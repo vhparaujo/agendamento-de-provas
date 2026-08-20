@@ -110,8 +110,9 @@ export class PeriodoController {
   atualizar(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: AtualizarPeriodoDto,
+    @AdminLogado() admin: AdminJwtPayload,
   ) {
-    return this.periodoService.atualizar(id, dto);
+    return this.periodoService.atualizar(id, dto, admin.email);
   }
 
   @Delete(':id')

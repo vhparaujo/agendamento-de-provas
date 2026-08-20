@@ -107,6 +107,12 @@ export class CompulsorioController {
       'diferente — `SEM_VAGA` pede abrir sala, `SEM_CONTA_D2L` pede chamado no ' +
       'suporte do LMS, `SEM_DISCIPLINA_AGENDAVEL` pede conferir o CSV de ' +
       'turmas.\n\n' +
+      '`NAO_ELEGIVEL_PELA_NOTA` e a excecao que NAO pede acao nenhuma: a janela ' +
+      'filtra por nota (a substitutiva) e a nota final do aluno esta fora da ' +
+      'faixa em todas as disciplinas dele. No lote da substitutiva ele tende a ' +
+      'ser o motivo mais numeroso, porque quem passou de ano e a maioria — e e ' +
+      'justamente por isso que ele nao se mistura com `SEM_DISCIPLINA_AGENDAVEL`, ' +
+      'que e fila de trabalho.\n\n' +
       '`AVISO_CONTA_INATIVA_D2L` e o unico motivo que aparece para quem **foi** ' +
       'alocado: tem lugar na sala, mas a conta esta desativada no Brightspace e ' +
       'do jeito que esta nao conseguiria abrir a prova.\n\n' +

@@ -10,6 +10,7 @@ import { AgendamentoService } from '../service/agendamento.service';
 import { CompulsorioService } from '../service/compulsorio.service';
 import { DeclaracaoService } from '../service/declaracao.service';
 import { DisciplinasDoAlunoService } from '../service/disciplinas-do-aluno.service';
+import { ElegibilidadeDeNotaService } from '../service/elegibilidade-de-nota.service';
 
 @Module({
   imports: [PeriodoModule, TurmaModule, D2lModule],
@@ -26,6 +27,7 @@ import { DisciplinasDoAlunoService } from '../service/disciplinas-do-aluno.servi
     CompulsorioService,
     DeclaracaoService,
     DisciplinasDoAlunoService,
+    ElegibilidadeDeNotaService,
   ],
   exports: [AgendamentoService, AgendamentoAdminService],
 })

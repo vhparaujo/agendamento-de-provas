@@ -3,11 +3,33 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { Prisma, StatusAgendamento } from '../../generated/prisma/client';
 import { AuditoriaService } from '../../seguranca/service/auditoria.service';
+
+/**
+ * A FAIXA DE NOTA QUE HABILITA A RODADA — a regra da substitutiva.
+ *
+ * `null` = sem filtro, que e o caso da N2 e o de toda janela cadastrada antes
+ * desta regra existir: a prova cobre as disciplinas do semestre sem olhar nota
+ * nenhuma, e nenhuma chamada de nota sai para a Valence.
+ *
+ * Preenchido = so entra na prova a disciplina em que a nota final do aluno esta
+ * em `[minima, maxima)` — `>=` na minima e `<` na maxima, assimetrico de
+ * proposito: quem tirou o piso ainda tem chance, quem alcancou o teto ja passou.
+ *
+ * ⚠️ **E um objeto, e nao dois campos soltos**, pela mesma razao que
+ * `periodoLetivoVigente()` devolve o par: quem desestrutura tem de dizer se o
+ * filtro importa para ele. Dois numeros nulaveis lado a lado seriam esquecidos
+ * em silencio, e o sintoma seria a substitutiva liberada para o curso inteiro.
+ */
+export interface FiltroDeNota {
+  minima: number;
+  maxima: number;
+}
 
 export interface SituacaoPeriodo {
   aberto: boolean;
@@ -31,6 +53,14 @@ export interface SituacaoPeriodo {
    * periodos do mesmo semestre tem o mesmo `periodoLetivoId`.
    */
   rodada?: string;
+  /**
+   * A faixa de nota desta janela, ou `null` quando ela nao filtra por nota.
+   *
+   * Vai para a TELA do aluno: sem ela, quem tem tres disciplinas e ve uma so na
+   * substitutiva nao tem como saber que a lista foi filtrada, e a hipotese
+   * natural e que o sistema errou.
+   */
+  filtroDeNota?: FiltroDeNota | null;
   descricao?: string | null;
   dataAbertura?: Date | null;
   dataFechamento?: Date;
@@ -42,6 +72,8 @@ export interface PeriodoVigente {
   periodoLetivoId: string;
   /** A rodada da janela vigente. Vai gravada como fotografia em cada reserva. */
   rodada: string;
+  /** Ver `FiltroDeNota`. `null` quando a janela nao filtra por nota. */
+  filtroDeNota: FiltroDeNota | null;
   dataFechamento: Date;
 }
 
@@ -50,6 +82,8 @@ export interface PeriodoAdmin {
   id: number;
   periodoLetivoId: string;
   rodada: string;
+  /** Ver `FiltroDeNota`. `null` quando a janela nao filtra por nota. */
+  filtroDeNota: FiltroDeNota | null;
   descricao: string | null;
   aberto: boolean;
   dataAbertura: Date | null;
@@ -92,6 +126,8 @@ export interface RemocaoPeriodo {
  */
 @Injectable()
 export class PeriodoService {
+  private readonly logger = new Logger(PeriodoService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditoria: AuditoriaService,
@@ -127,6 +163,7 @@ export class PeriodoService {
       encerrado: false,
       periodoLetivoId: periodo.periodoLetivoId,
       rodada: periodo.rodada,
+      filtroDeNota: lerFiltroDeNota(periodo),
       descricao: periodo.descricao,
       dataAbertura: periodo.dataAbertura,
       dataFechamento: periodo.dataFechamento,
@@ -181,16 +218,30 @@ export class PeriodoService {
    * cada chamador a dizer, na desestruturacao, se a rodada importa para ele.
    */
   async periodoLetivoVigente(): Promise<
-    { periodoLetivoId: string; rodada: string } | undefined
+    | {
+        periodoLetivoId: string;
+        rodada: string;
+        filtroDeNota: FiltroDeNota | null;
+      }
+    | undefined
   > {
     const periodo = await this.prisma.periodoAgendamento.findFirst({
       orderBy: { createdAt: 'desc' },
-      select: { periodoLetivoId: true, rodada: true },
+      select: {
+        periodoLetivoId: true,
+        rodada: true,
+        notaMinima: true,
+        notaMaxima: true,
+      },
     });
 
     if (!periodo) return undefined;
 
-    return { periodoLetivoId: periodo.periodoLetivoId, rodada: periodo.rodada };
+    return {
+      periodoLetivoId: periodo.periodoLetivoId,
+      rodada: periodo.rodada,
+      filtroDeNota: lerFiltroDeNota(periodo),
+    };
   }
 
   /**
@@ -207,6 +258,7 @@ export class PeriodoService {
     return {
       periodoLetivoId: situacao.periodoLetivoId!,
       rodada: situacao.rodada!,
+      filtroDeNota: situacao.filtroDeNota ?? null,
       dataFechamento: situacao.dataFechamento!,
     };
   }
@@ -242,6 +294,7 @@ export class PeriodoService {
     return {
       periodoLetivoId: situacao.periodoLetivoId!,
       rodada: situacao.rodada!,
+      filtroDeNota: situacao.filtroDeNota ?? null,
       dataFechamento: situacao.dataFechamento!,
     };
   }
@@ -281,6 +334,7 @@ export class PeriodoService {
       id: p.id,
       periodoLetivoId: p.periodoLetivoId,
       rodada: p.rodada,
+      filtroDeNota: lerFiltroDeNota(p),
       descricao: p.descricao,
       aberto: p.aberto,
       dataAbertura: p.dataAbertura,
@@ -300,6 +354,8 @@ export class PeriodoService {
   async criar(dados: {
     periodoLetivoId: string;
     rodada?: string;
+    notaMinima?: number | null;
+    notaMaxima?: number | null;
     descricao?: string;
     aberto?: boolean;
     dataAbertura?: string;
@@ -313,6 +369,7 @@ export class PeriodoService {
     validarJanela(abertura, fechamento);
 
     const rodada = dados.rodada?.trim() || RODADA_PADRAO;
+    const filtro = exigirFiltroDeNotaValido(dados.notaMinima, dados.notaMaxima);
 
     // Criar um periodo novo TROCA o vigente, porque vigente = mais recente.
     // Sem este aviso, o admin poderia cadastrar o semestre seguinte com semanas
@@ -342,6 +399,8 @@ export class PeriodoService {
       data: {
         periodoLetivoId: dados.periodoLetivoId.trim(),
         rodada,
+        notaMinima: filtro?.minima ?? null,
+        notaMaxima: filtro?.maxima ?? null,
         descricao: dados.descricao?.trim() || null,
         aberto: dados.aberto ?? false,
         dataAbertura: abertura,
@@ -360,11 +419,14 @@ export class PeriodoService {
     id: number,
     dados: {
       rodada?: string;
+      notaMinima?: number | null;
+      notaMaxima?: number | null;
       descricao?: string | null;
       aberto?: boolean;
       dataAbertura?: string | null;
       dataFechamento?: string;
     },
+    porAdmin: string,
   ): Promise<PeriodoAdmin> {
     const periodo = await this.prisma.periodoAgendamento.findUnique({
       where: { id },
@@ -373,6 +435,24 @@ export class PeriodoService {
     if (!periodo) throw new NotFoundException(`Periodo ${id} nao encontrado`);
 
     const rodada = dados.rodada?.trim() || undefined;
+
+    // O par de nota e revalidado INTEIRO, mesmo quando so um dos dois campos
+    // vem: mandar `notaMaxima` sozinha para uma janela sem filtro deixaria meio
+    // filtro no banco, e meio filtro nao e regra nenhuma — seria lido como
+    // "sem filtro" e a substitutiva abriria para todos.
+    const mexeuNaNota =
+      dados.notaMinima !== undefined || dados.notaMaxima !== undefined;
+
+    const filtro = mexeuNaNota
+      ? exigirFiltroDeNotaValido(
+          dados.notaMinima === undefined
+            ? numeroOuNulo(periodo.notaMinima)
+            : dados.notaMinima,
+          dados.notaMaxima === undefined
+            ? numeroOuNulo(periodo.notaMaxima)
+            : dados.notaMaxima,
+        )
+      : undefined;
 
     const abertura =
       dados.dataAbertura === undefined
@@ -400,6 +480,10 @@ export class PeriodoService {
         where: { id },
         data: {
           rodada,
+          // `undefined` = nao mexeu; `null` = desligou o filtro. A distincao
+          // e o que permite editar so a descricao sem apagar a faixa de nota.
+          notaMinima: mexeuNaNota ? (filtro?.minima ?? null) : undefined,
+          notaMaxima: mexeuNaNota ? (filtro?.maxima ?? null) : undefined,
           descricao:
             dados.descricao === undefined
               ? undefined
@@ -411,7 +495,64 @@ export class PeriodoService {
       });
     });
 
+    if (mexeuNaNota) {
+      await this.avisarSeAJanelaJaTemReserva(periodo, filtro ?? null, porAdmin);
+    }
+
     return this.buscar(id);
+  }
+
+  /**
+   * ==========================================================================
+   * MEXER NA FAIXA DE NOTA COM A JANELA JA EM USO — avisa e NAO bloqueia
+   * ==========================================================================
+   * Ao contrario da `rodada` (`exigirRodadaAindaTrocavel`), que so muda com a
+   * janela vazia. Sao coisas diferentes:
+   *
+   * - `rodada` e FOTOGRAFIA: cada reserva grava a sua, e trocar a da janela
+   *   desalinha o par que TODA consulta usa — o portal passa a dizer ao aluno
+   *   que ele nao tem prova, e a exportacao o lista como nao agendado.
+   * - a faixa de nota nao e gravada em lugar nenhum. Mexer nela nao desfaz nem
+   *   renomeia reserva alguma: so muda quem consegue agendar daqui para a
+   *   frente. E bloquear seria pior que o problema — a correcao mais provavel e
+   *   justamente ter cadastrado a faixa errada e perceber com a janela ja aberta.
+   *
+   * O que ela FAZ e deixar rastro, porque a consequencia e invisivel na tela:
+   * quem estava elegivel ontem pode nao estar hoje, e quem ja agendou continua
+   * com a prova marcada — inclusive quem, pela faixa nova, nao poderia te-la.
+   * Essa lista e trabalho da secretaria, e ela precisa saber que existe.
+   */
+  private async avisarSeAJanelaJaTemReserva(
+    periodo: { id: number; periodoLetivoId: string; rodada: string },
+    filtro: FiltroDeNota | null,
+    porAdmin: string,
+  ): Promise<void> {
+    const reservas = await this.prisma.agendamento.count({
+      where: {
+        periodoLetivoId: periodo.periodoLetivoId,
+        rodada: periodo.rodada,
+      },
+    });
+
+    const faixa = filtro
+      ? `[${filtro.minima}; ${filtro.maxima})`
+      : 'sem filtro de nota';
+
+    this.auditoria.registrar('PERIODO_FILTRO_DE_NOTA_ALTERADO', {
+      ator: porAdmin,
+      detalhe:
+        `periodo ${periodo.id} (letivo ${periodo.periodoLetivoId}, rodada ` +
+        `${periodo.rodada}) passou a ${faixa}; ${reservas} reserva(s) ja existem`,
+    });
+
+    if (reservas === 0) return;
+
+    this.logger.warn(
+      `A faixa de nota do periodo ${periodo.id} mudou para ${faixa} com ` +
+        `${reservas} reserva(s) ja marcada(s). As provas existentes NAO sao ` +
+        'revistas: quem agendou pela faixa anterior continua com o horario. ' +
+        'Confira a lista se a mudanca foi correcao de cadastro.',
+    );
   }
 
   /**
@@ -591,4 +732,103 @@ function formatar(data: Date): string {
     timeStyle: 'short',
     timeZone: 'America/Sao_Paulo',
   });
+}
+
+/**
+ * A NOTA MAXIMA que uma prova vale nesta instituicao.
+ *
+ * Serve so para recusar digitacao impossivel no cadastro (um "67,5" digitado no
+ * lugar de "6,75" viraria uma janela que libera o curso inteiro). A comparacao
+ * com a nota do aluno e feita em PONTOS, contra o que a Valence devolver.
+ */
+const NOTA_MAXIMA_POSSIVEL = 10;
+
+/**
+ * O par de colunas virando `FiltroDeNota`.
+ *
+ * Exige os DOIS: meio filtro no banco nao e regra nenhuma — seria lido como
+ * "sem filtro", e a substitutiva abriria para todo mundo sem nada no log
+ * denunciando. A validacao do cadastro (`exigirFiltroDeNotaValido`) ja impede
+ * que essa metade chegue la, e este `null` e a segunda trava.
+ */
+function lerFiltroDeNota(periodo: {
+  notaMinima: Prisma.Decimal | null;
+  notaMaxima: Prisma.Decimal | null;
+}): FiltroDeNota | null {
+  const minima = numeroOuNulo(periodo.notaMinima);
+  const maxima = numeroOuNulo(periodo.notaMaxima);
+
+  if (minima === null || maxima === null) return null;
+
+  return { minima, maxima };
+}
+
+/**
+ * `Decimal` do Prisma virando `number`.
+ *
+ * A coluna e DECIMAL de propósito (nota e dinheiro nao vivem em ponto
+ * flutuante binario no banco), mas a comparacao com a nota da Valence e feita
+ * em `number` — que e como a API a devolve. A conversao acontece AQUI, uma vez,
+ * em vez de espalhar `.toNumber()` por quem le o filtro.
+ */
+function numeroOuNulo(valor: Prisma.Decimal | null): number | null {
+  if (valor === null || valor === undefined) return null;
+
+  const numero = Number(valor);
+
+  return Number.isFinite(numero) ? numero : null;
+}
+
+/**
+ * Valida o par informado no cadastro. `null` quando a janela nao filtra.
+ *
+ * As tres recusas, e por que cada uma existe:
+ *
+ * - **um sem o outro**: metade de um intervalo nao delimita nada, e o banco
+ *   leria a linha como "sem filtro" — a substitutiva aberta para o curso todo,
+ *   sem erro nenhum aparecendo.
+ * - **minima >= maxima**: intervalo vazio. NINGUEM seria elegivel, e o sintoma
+ *   ("nenhuma disciplina sua...") apontaria para o CSV de turmas, nao para o
+ *   cadastro que o causou.
+ * - **fora de 0..10**: digitacao trocada. "67,5" no lugar de "6,75" libera todo
+ *   mundo; "0,675", ninguem.
+ */
+function exigirFiltroDeNotaValido(
+  minima: number | null | undefined,
+  maxima: number | null | undefined,
+): FiltroDeNota | null {
+  const temMinima = minima !== null && minima !== undefined;
+  const temMaxima = maxima !== null && maxima !== undefined;
+
+  if (!temMinima && !temMaxima) return null;
+
+  if (!temMinima || !temMaxima) {
+    throw new BadRequestException(
+      'notaMinima e notaMaxima andam juntas: informe as duas para filtrar por ' +
+        'nota (a substitutiva), ou nenhuma para a janela cobrir todas as ' +
+        'disciplinas do semestre. Metade do intervalo seria lida como "sem filtro".',
+    );
+  }
+
+  for (const [campo, valor] of [
+    ['notaMinima', minima],
+    ['notaMaxima', maxima],
+  ] as const) {
+    if (!Number.isFinite(valor) || valor < 0 || valor > NOTA_MAXIMA_POSSIVEL) {
+      throw new BadRequestException(
+        `${campo} precisa ser um numero entre 0 e ${NOTA_MAXIMA_POSSIVEL} ` +
+          `(recebido: ${String(valor)}).`,
+      );
+    }
+  }
+
+  if (minima >= maxima) {
+    throw new BadRequestException(
+      `notaMinima (${minima}) precisa ser MENOR que notaMaxima (${maxima}). ` +
+        'Do jeito informado nenhum aluno ficaria elegivel, e a tela diria a ' +
+        'todos que eles nao tem disciplina para agendar.',
+    );
+  }
+
+  return { minima: minima, maxima: maxima };
 }

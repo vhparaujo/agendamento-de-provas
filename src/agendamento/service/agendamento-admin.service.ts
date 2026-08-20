@@ -14,9 +14,9 @@ import {
 } from '../../generated/prisma/client';
 import { PeriodoService } from '../../periodo/service/periodo.service';
 import { AuditoriaService } from '../../seguranca/service/auditoria.service';
-import type { DisciplinaAgendavel } from '../../turma/service/turma.service';
 import { dataBr, dataDaProva, montarCsv } from './csv-relatorio';
 import { DisciplinasDoAlunoService } from './disciplinas-do-aluno.service';
+import type { DisciplinaComNota } from './elegibilidade-de-nota.service';
 import { AUTOR_ADMIN, descreverOferta, registrarHistorico } from './historico';
 import {
   CONFIRMADO,
@@ -300,6 +300,9 @@ export class AgendamentoAdminService {
             create: fonte.disciplinas.map((d) => ({
               orgUnitId: d.orgUnitId,
               nomeDisciplina: d.nomeDisciplina,
+              // Ver o schema: fotografia da nota, nula quando a janela nao
+              // filtrou por nota.
+              notaFinal: d.notaFinal,
             })),
           },
           // A fila de liberacao nasce na MESMA transacao, como no portal: um
@@ -369,11 +372,16 @@ export class AgendamentoAdminService {
     periodoLetivoId: string,
   ): Promise<{
     userIdD2L: string;
-    disciplinas: DisciplinaAgendavel[];
+    disciplinas: DisciplinaComNota[];
     origem: OrigemDasDisciplinas;
     avisos: string[];
   }> {
     const anterior = await this.reservaAnterior(vinculo, periodoLetivoId);
+
+    // A janela filtra por nota? Muda o que o fallback significa — ver o aviso
+    // montado em `semBrightspace`.
+    const vigente = await this.periodo.periodoLetivoVigente();
+    const filtroDeNota = vigente?.filtroDeNota ?? null;
 
     /** Cai para a reserva anterior, ou recusa dizendo o porque de cada uma. */
     const semBrightspace = (motivo: string) => {
@@ -385,14 +393,31 @@ export class AgendamentoAdminService {
         );
       }
 
+      const avisos = [
+        `${motivo} As disciplinas foram copiadas da reserva anterior deste ` +
+          `aluno neste semestre (agendamento ${anterior.id}). Confira antes ` +
+          'de liberar a prova no Brightspace.',
+      ];
+
+      // ⚠️ A reserva copiada NAO passou pela faixa de nota desta janela — em
+      // geral ela e da prova regular, marcada quando nota nenhuma era
+      // consultada. O portal recusaria este aluno em vez de degradar; aqui nao
+      // ha como recusar sem travar o balcao com o aluno na frente, entao a
+      // saida e dizer em voz alta o que a lista NAO garante.
+      if (filtroDeNota) {
+        avisos.push(
+          'ATENCAO: esta janela so admite disciplina com nota final entre ' +
+            `${filtroDeNota.minima} e ${filtroDeNota.maxima} (este ultimo ` +
+            'excluido), e a lista copiada NAO foi conferida contra a nota — ' +
+            'ela veio de outra reserva, nao do Brightspace. Confira as notas ' +
+            'antes de confirmar, ou refaca quando a integracao voltar.',
+        );
+      }
+
       return {
         ...anterior.dados,
         origem: 'RESERVA_ANTERIOR' as const,
-        avisos: [
-          `${motivo} As disciplinas foram copiadas da reserva anterior deste ` +
-            `aluno neste semestre (agendamento ${anterior.id}). Confira antes ` +
-            'de liberar a prova no Brightspace.',
-        ],
+        avisos,
       };
     };
 
@@ -491,7 +516,7 @@ export class AgendamentoAdminService {
     periodoLetivoId: string,
   ): Promise<{
     id: number;
-    dados: { userIdD2L: string; disciplinas: DisciplinaAgendavel[] };
+    dados: { userIdD2L: string; disciplinas: DisciplinaComNota[] };
   } | null> {
     const anteriores = await this.prisma.agendamento.findMany({
       where: { matricula: vinculo.matricula, periodoLetivoId },
@@ -500,7 +525,9 @@ export class AgendamentoAdminService {
         id: true,
         alunoId: true,
         userIdD2L: true,
-        disciplinas: { select: { orgUnitId: true, nomeDisciplina: true } },
+        disciplinas: {
+          select: { orgUnitId: true, nomeDisciplina: true, notaFinal: true },
+        },
       },
     });
 
@@ -514,7 +541,15 @@ export class AgendamentoAdminService {
       id: escolhida.id,
       dados: {
         userIdD2L: escolhida.userIdD2L,
-        disciplinas: escolhida.disciplinas,
+        // A nota da reserva antiga vem junto e e RECOPIADA como esta: e a nota
+        // que decidiu AQUELA reserva, e nao a de agora. Copiar sem ela apagaria
+        // a unica explicacao existente; inventar uma nova exigiria consultar a
+        // Valence — que e justamente o que nao respondeu quando se cai aqui.
+        disciplinas: escolhida.disciplinas.map((d) => ({
+          orgUnitId: d.orgUnitId,
+          nomeDisciplina: d.nomeDisciplina,
+          notaFinal: d.notaFinal === null ? null : Number(d.notaFinal),
+        })),
       },
     };
   }

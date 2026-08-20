@@ -1,16 +1,46 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { AlunoJwtPayload } from '../../auth/jwt/jwt.types';
 import { D2lEnrollmentsService } from '../../d2l/service/d2l-enrollments.service';
+import type { FiltroDeNota } from '../../periodo/service/periodo.service';
 import { PeriodoService } from '../../periodo/service/periodo.service';
 import {
-  DisciplinaAgendavel,
   ResultadoDoCruzamento,
   TurmaService,
 } from '../../turma/service/turma.service';
 import type { TurmaDoLaunch } from '../../turma/service/turma-match';
+import {
+  DisciplinaComNota,
+  ElegibilidadeDeNotaService,
+  motivoDeNenhumaElegivel,
+  NOTAS_INDISPONIVEIS,
+  notasIndisponiveis,
+} from './elegibilidade-de-nota.service';
 
 /** De onde saiu a lista de turmas. So muda a mensagem quando nao ha nenhuma. */
 type Origem = 'LAUNCH' | 'ENROLLMENTS';
+
+/**
+ * O que sai daqui: as disciplinas que o aluno consegue agendar NESTA janela.
+ *
+ * E o `ResultadoDoCruzamento` do `TurmaService` com a nota junto — a mesma
+ * lista, depois do filtro de elegibilidade. A nota vem `null` quando a janela
+ * nao filtra por nota (a N2), porque nesse caso nenhuma foi consultada.
+ */
+export interface DisciplinasParaAgendar {
+  agendaveis: DisciplinaComNota[];
+  /** Por que nao passou, em texto de tela. Ausente quando encontrou. */
+  motivo?: string;
+  /**
+   * A CAUSA em codigo, para quem precisa decidir e nao exibir.
+   *
+   * O `motivo` e uma frase para o aluno ler, e comparar frase e a receita para
+   * a regra silenciosamente parar de valer quando alguem melhorar o texto. Quem
+   * usa isto e o compulsorio: `FILTRO_DE_NOTA` vira uma linha de relatorio que
+   * NAO manda a secretaria conferir o CSV de turmas, porque nao ha nada la para
+   * conferir — o aluno passou de ano.
+   */
+  causa?: 'FILTRO_DE_NOTA';
+}
 
 const SEM_PERIODO_LETIVO =
   'O periodo letivo ainda nao foi configurado. Procure a secretaria academica.';
@@ -71,14 +101,20 @@ export class DisciplinasDoAlunoService {
   /** Ver `avisarIndisponivel`: um aviso por minuto, nao um por request. */
   private avisouIndisponivelEmMs = 0;
 
+  /** Ver `avisarNotasIndisponiveis`. Contador PROPRIO: sao dois incidentes
+   * diferentes (as disciplinas e as notas), e um so relogio deixaria o segundo
+   * calado enquanto o primeiro estivesse dentro do intervalo. */
+  private avisouSemNotasEmMs = 0;
+
   constructor(
     private readonly turmaService: TurmaService,
     private readonly enrollments: D2lEnrollmentsService,
     private readonly periodo: PeriodoService,
+    private readonly elegibilidade: ElegibilidadeDeNotaService,
   ) {}
 
   /** As disciplinas que o aluno consegue agendar. Pode vir vazia. */
-  async agendaveis(aluno: AlunoJwtPayload): Promise<DisciplinaAgendavel[]> {
+  async agendaveis(aluno: AlunoJwtPayload): Promise<DisciplinaComNota[]> {
     const { agendaveis } = await this.cruzar(aluno);
     return agendaveis;
   }
@@ -87,14 +123,33 @@ export class DisciplinasDoAlunoService {
    * Igual ao anterior, mas devolve tambem o MOTIVO de nao ter achado — o portal
    * usa para dizer ao aluno algo melhor que "nao ha o que agendar".
    */
-  async cruzar(aluno: AlunoJwtPayload): Promise<ResultadoDoCruzamento> {
-    const origem = await this.turmasDoAluno(aluno);
+  async cruzar(aluno: AlunoJwtPayload): Promise<DisciplinasParaAgendar> {
+    // O semestre e a rodada saem da MESMA leitura, e nao de duas: o filtro de
+    // nota e do periodo vigente, e ler o periodo de novo mais adiante abriria a
+    // janela para ele mudar no meio do cruzamento.
+    const vigente = await this.periodo.periodoLetivoVigente();
+
+    if (!vigente) return { agendaveis: [], motivo: SEM_PERIODO_LETIVO };
+
+    const origem = await this.turmasDoAluno(aluno, vigente.filtroDeNota);
 
     if (origem.motivo) return { agendaveis: [], motivo: origem.motivo };
 
     this.avisarSeFiltroDesligado(origem.origem);
 
-    return this.turmaService.filtrarAgendaveis(origem.turmas);
+    const cruzamento = await this.turmaService.filtrarAgendaveis(origem.turmas);
+
+    // O portal responde 200 com `motivo` mesmo quando nada passou — e o que
+    // desabilita o botao ANTES de o aluno escolher horario. Por isso a Valence
+    // fora vira TEXTO aqui, e excecao no `cruzarPorUserId`.
+    return this.filtrarPorNota(
+      aluno.userIdD2L,
+      cruzamento,
+      vigente.filtroDeNota,
+      {
+        erroVira: 'MOTIVO',
+      },
+    );
   }
 
   /**
@@ -141,7 +196,7 @@ export class DisciplinasDoAlunoService {
    * turmas — quando a causa foi a rede. O erro sobe, `resolverUm` o classifica
    * como `FALHA_NA_INTEGRACAO`, e rodar de novo reprocessa so aquele aluno.
    */
-  async cruzarPorUserId(userIdD2L: string): Promise<ResultadoDoCruzamento> {
+  async cruzarPorUserId(userIdD2L: string): Promise<DisciplinasParaAgendar> {
     if (!this.enrollments.habilitado()) {
       return {
         agendaveis: [],
@@ -151,22 +206,109 @@ export class DisciplinasDoAlunoService {
       };
     }
 
-    const { turmas, motivo } = await this.turmasPorUserId(userIdD2L);
+    const { turmas, motivo, filtroDeNota } =
+      await this.turmasPorUserId(userIdD2L);
 
     if (motivo) return { agendaveis: [], motivo };
 
     this.avisarSeFiltroDesligado('ENROLLMENTS');
 
-    return this.turmaService.filtrarAgendaveis(turmas);
+    const cruzamento = await this.turmaService.filtrarAgendaveis(turmas);
+
+    // Aqui o erro SOBE, ao contrario do `cruzar`: transformado em texto, ele
+    // viraria `NAO_ELEGIVEL_PELA_NOTA` no relatorio — uma linha que diz "este
+    // aluno passou de ano" quando a causa foi a rede, e que ninguem
+    // reprocessaria. Deixando subir, `resolverUm` o classifica como
+    // `FALHA_NA_INTEGRACAO` e rodar de novo refaz so aquele aluno.
+    return this.filtrarPorNota(userIdD2L, cruzamento, filtroDeNota, {
+      erroVira: 'EXCECAO',
+    });
+  }
+
+  /**
+   * ==========================================================================
+   * A FAIXA DE NOTA DA JANELA — a diferenca entre a N2 e a SUBSTITUTIVA
+   * ==========================================================================
+   * Sem filtro (`null`), devolve o cruzamento como estava, com `notaFinal: null`
+   * — e a verdade: nenhuma nota foi consultada, e nenhuma chamada de rede saiu.
+   * E o caminho da N2, e ele continua custando zero.
+   *
+   * Com filtro, cada disciplina passa pela nota do aluno naquela turma. O
+   * resultado costuma ser uma lista MENOR que a do CSV, e e isso que a
+   * substitutiva e: a prova das materias que faltaram, nao a do semestre.
+   *
+   * `erroVira` existe porque as duas portas precisam de coisas opostas da mesma
+   * falha — ver os comentarios em `cruzar` e `cruzarPorUserId`.
+   */
+  private async filtrarPorNota(
+    userIdD2L: string,
+    cruzamento: ResultadoDoCruzamento,
+    filtro: FiltroDeNota | null,
+    como: { erroVira: 'MOTIVO' | 'EXCECAO' },
+  ): Promise<DisciplinasParaAgendar> {
+    if (!filtro) {
+      return {
+        agendaveis: cruzamento.agendaveis.map((d) => ({
+          ...d,
+          notaFinal: null,
+        })),
+        motivo: cruzamento.motivo,
+      };
+    }
+
+    // Nada passou pelo CSV: o motivo do cruzamento e melhor que qualquer coisa
+    // que a nota diria, e consultar nota de lista vazia so gastaria tempo.
+    if (cruzamento.agendaveis.length === 0) {
+      return { agendaveis: [], motivo: cruzamento.motivo };
+    }
+
+    try {
+      const { elegiveis, recusadas } = await this.elegibilidade.filtrar(
+        userIdD2L,
+        cruzamento.agendaveis,
+        filtro,
+      );
+
+      if (elegiveis.length > 0) return { agendaveis: elegiveis };
+
+      return {
+        agendaveis: [],
+        motivo: motivoDeNenhumaElegivel(recusadas, filtro),
+        causa: 'FILTRO_DE_NOTA',
+      };
+    } catch (erro) {
+      this.avisarNotasIndisponiveis(erro);
+
+      if (como.erroVira === 'EXCECAO') throw notasIndisponiveis(erro);
+
+      return { agendaveis: [], motivo: NOTAS_INDISPONIVEIS };
+    }
   }
 
   /** As turmas do aluno, antes de qualquer filtro de prova. */
-  private async turmasDoAluno(aluno: AlunoJwtPayload): Promise<{
+  private async turmasDoAluno(
+    aluno: AlunoJwtPayload,
+    filtroDeNota: FiltroDeNota | null,
+  ): Promise<{
     turmas: TurmaDoLaunch[];
     origem: Origem;
     motivo?: string;
   }> {
     if (!this.enrollments.habilitado()) {
+      // A janela pede nota e a integracao esta desligada: nao ha de onde tirar
+      // a nota, e a turma do launch entregaria a substitutiva SEM conferir
+      // nenhuma. E erro de configuracao, nao do aluno — mas quem esta na tela e
+      // ele, entao a frase manda para a secretaria e o log diz o que fazer.
+      if (filtroDeNota) {
+        this.logger.error(
+          'A janela vigente filtra por nota e D2L_HABILITADO esta desligado. ' +
+            'Ninguem consegue agendar a substitutiva: ligue a integracao ou ' +
+            'remova a faixa de nota do periodo.',
+        );
+
+        return { turmas: [], origem: 'LAUNCH', motivo: NOTAS_INDISPONIVEIS };
+      }
+
       return {
         turmas: aluno.contexto ? [aluno.contexto] : [],
         origem: 'LAUNCH',
@@ -178,7 +320,7 @@ export class DisciplinasDoAlunoService {
 
       return { turmas, origem: 'ENROLLMENTS', motivo };
     } catch (erro) {
-      return this.cairParaOLaunch(aluno, erro);
+      return this.cairParaOLaunch(aluno, erro, filtroDeNota);
     }
   }
 
@@ -206,8 +348,18 @@ export class DisciplinasDoAlunoService {
   private cairParaOLaunch(
     aluno: AlunoJwtPayload,
     erro: unknown,
+    filtroDeNota: FiltroDeNota | null,
   ): { turmas: TurmaDoLaunch[]; origem: Origem; motivo?: string } {
     this.avisarIndisponivel(erro);
+
+    // ⚠️ **O fallback NAO vale quando a janela filtra por nota.** Degradar para
+    // a turma clicada aqui liberaria a substitutiva sem conferir nota nenhuma —
+    // exatamente o que a regra existe para impedir. Na N2 "agendar uma prova e
+    // melhor que agendar nenhuma"; na SUB, agendar a prova errada e pior que
+    // nao agendar, porque o aluno so descobre no dia.
+    if (filtroDeNota) {
+      return { turmas: [], origem: 'LAUNCH', motivo: NOTAS_INDISPONIVEIS };
+    }
 
     if (!aluno.contexto) {
       return { turmas: [], origem: 'LAUNCH', motivo: VALENCE_FORA_SEM_LAUNCH };
@@ -223,6 +375,23 @@ export class DisciplinasDoAlunoService {
    * incidente que precisa ser visto vira milhares de linhas iguais e enterra o
    * resto do log — inclusive a auditoria, que e JSON na mesma saida.
    */
+  private avisarNotasIndisponiveis(erro: unknown): void {
+    const agora = Date.now();
+
+    if (agora - this.avisouSemNotasEmMs < INTERVALO_AVISO_MS) return;
+
+    this.avisouSemNotasEmMs = agora;
+
+    this.logger.warn(
+      'Nao foi possivel ler as notas no Brightspace, e a janela vigente filtra ' +
+        'por nota: NINGUEM consegue agendar ate isto normalizar. Ao contrario ' +
+        'das disciplinas, aqui nao ha fallback possivel — liberar sem a nota e ' +
+        `o que a regra existe para impedir. Causa: ${
+          erro instanceof Error ? erro.message : String(erro)
+        }`,
+    );
+  }
+
   private avisarIndisponivel(erro: unknown): void {
     const agora = Date.now();
 
@@ -246,16 +415,21 @@ export class DisciplinasDoAlunoService {
    */
   private async turmasPorUserId(userIdD2L: string): Promise<{
     turmas: TurmaDoLaunch[];
+    filtroDeNota: FiltroDeNota | null;
     motivo?: string;
   }> {
     // O semestre e o que o admin cadastrou, nao o "atual" segundo o relogio: e
     // ele quem diz quais ofertas do Brightspace contam nesta janela.
-    // So o `periodoLetivoId` interessa aqui: quem diz quais ofertas do
-    // Brightspace contam e o SEMESTRE, e as duas rodadas dele cobrem as mesmas
-    // disciplinas — a substitutiva e outra prova das mesmas materias.
+    // A `rodada` continua sem entrar aqui: quem diz quais ofertas contam e o
+    // SEMESTRE, e as duas rodadas dele cobrem as mesmas disciplinas — a
+    // substitutiva e outra prova das mesmas materias. O que a janela da SUB
+    // muda e QUANTAS delas o aluno agenda, e isso e o `filtroDeNota`, aplicado
+    // depois do cruzamento com o CSV.
     const vigente = await this.periodo.periodoLetivoVigente();
 
-    if (!vigente) return { turmas: [], motivo: SEM_PERIODO_LETIVO };
+    if (!vigente) {
+      return { turmas: [], filtroDeNota: null, motivo: SEM_PERIODO_LETIVO };
+    }
 
     const ofertas = await this.enrollments.ofertasDoPeriodo(
       userIdD2L,
@@ -264,6 +438,10 @@ export class DisciplinasDoAlunoService {
 
     return {
       turmas: ofertas,
+      // A rodada nao muda QUAIS ofertas contam (as duas cobrem as mesmas
+      // materias), mas a faixa de nota decide quais delas o aluno agenda — e
+      // ela sai da mesma leitura, para as duas nao poderem divergir.
+      filtroDeNota: vigente.filtroDeNota,
       motivo:
         ofertas.length === 0
           ? 'Nenhuma disciplina sua aparece no periodo letivo vigente. Procure a secretaria academica.'

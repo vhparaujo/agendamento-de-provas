@@ -1,10 +1,12 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
   Param,
   ParseIntPipe,
   Post,
+  Query,
   Res,
 } from '@nestjs/common';
 import {
@@ -16,12 +18,14 @@ import {
   ApiOperation,
   ApiParam,
   ApiProduces,
+  ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
 import type { Response } from 'express';
 import type { AdminJwtPayload } from '../../auth/jwt/jwt.types';
 import { AdminLogado, SomenteAdmin } from '../../auth/roles.decorator';
 import { TAGS } from '../../config/swagger';
+import { OrigemExecucao } from '../../generated/prisma/client';
 import {
   AndamentoDaSenhaQuizDto,
   ExecucaoSenhaIniciadaDto,
@@ -87,6 +91,44 @@ export class SenhaQuizController {
       },
       admin.email,
     );
+  }
+
+  /**
+   * ⚠️ Precisa vir ANTES de `@Get(':id')`: as rotas sao avaliadas na ordem de
+   * declaracao, e `:id` casaria com a palavra "ultima" — o `ParseIntPipe`
+   * devolveria 400 numa rota que existe. Mesma armadilha do cabecalho da classe,
+   * um nivel abaixo.
+   */
+  @Get('ultima')
+  @ApiOperation({
+    summary: 'A execucao mais recente (a tela usa para enxergar o cron)',
+    description:
+      'O disparo manual e acompanhado pelo id que o POST devolveu. O do **cron** ' +
+      'nao tem quem o acompanhe: ele roda as 07:30, sozinho, e sem esta rota a ' +
+      'tela nao dizia nada nem enquanto a troca acontecia nem depois dela.\n\n' +
+      'Use `origem=CRON` para perguntar so pelo disparo automatico — senao um ' +
+      'lote manual rodado depois esconderia o resultado do cron.\n\n' +
+      '**Corpo vazio (200) quando nunca houve execucao.** Nao e 404: "nunca ' +
+      'rodou" e o estado normal de um ambiente recem-configurado, e a tela ' +
+      'precisa distingui-lo de "nao consegui perguntar".',
+  })
+  @ApiQuery({
+    name: 'origem',
+    required: false,
+    enum: OrigemExecucao,
+    description:
+      'MANUAL ou CRON. Ausente = a mais recente, de qualquer origem.',
+  })
+  @ApiOkResponse({ type: AndamentoDaSenhaQuizDto })
+  @ApiBadRequestResponse({ description: 'Origem invalida' })
+  ultima(@Query('origem') origem?: string) {
+    if (origem !== undefined && !(origem in OrigemExecucao)) {
+      throw new BadRequestException(
+        `Origem invalida: use ${Object.keys(OrigemExecucao).join(' ou ')}.`,
+      );
+    }
+
+    return this.service.ultima(origem as OrigemExecucao | undefined);
   }
 
   @Get(':id')

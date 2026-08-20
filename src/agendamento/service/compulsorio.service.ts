@@ -16,10 +16,13 @@ import {
 } from '../../generated/prisma/client';
 import { PeriodoService } from '../../periodo/service/periodo.service';
 import { AuditoriaService } from '../../seguranca/service/auditoria.service';
-import type { DisciplinaAgendavel } from '../../turma/service/turma.service';
 import { ocuparVagaSimulada, ordenarPorProximidade } from './alocacao';
 import { montarCsv } from './csv-relatorio';
 import { DisciplinasDoAlunoService } from './disciplinas-do-aluno.service';
+import {
+  DisciplinaComNota,
+  ElegibilidadeDeNotaService,
+} from './elegibilidade-de-nota.service';
 import { AUTOR_ADMIN, descreverOferta, registrarHistorico } from './historico';
 import {
   CONFIRMADO,
@@ -40,6 +43,15 @@ import {
 const CONCORRENCIA = 6;
 
 /**
+ * Espera entre duas turmas na leitura de notas da fase 0.
+ *
+ * O lote pode se dar ao luxo de ser lento, e as centenas de turmas do semestre
+ * saem em sequencia contra o mesmo tenant. Sem o freio, a fase 0 e a rajada mais
+ * agressiva do sistema inteiro — e um 429 aqui atrasa mais do que a espera.
+ */
+const ATRASO_ENTRE_TURMAS_MS = 200;
+
+/**
  * Silencio maior que isto significa lote MORTO, nao lote lento.
  *
  * `atualizadoEm` e batido a cada aluno (~1,5s). Cinco minutos parado so
@@ -58,7 +70,7 @@ const SILENCIO_ATE_MORRER_MS = 5 * 60_000;
  */
 interface Pessoa {
   userIdD2L: string;
-  disciplinas: DisciplinaAgendavel[];
+  disciplinas: DisciplinaComNota[];
   /** Conta desativada no LMS: aloca, mas nao conseguiria abrir a prova. */
   contaInativa: boolean;
 }
@@ -122,6 +134,7 @@ export class CompulsorioService {
     private readonly prisma: PrismaService,
     private readonly d2l: D2lEnrollmentsService,
     private readonly disciplinas: DisciplinasDoAlunoService,
+    private readonly elegibilidadeDeNota: ElegibilidadeDeNotaService,
     private readonly periodo: PeriodoService,
     private readonly auditoria: AuditoriaService,
   ) {}
@@ -416,6 +429,9 @@ export class CompulsorioService {
     const candidatos: Candidato[] = [];
 
     try {
+      // ------------------------------------------------------------- fase 0
+      await this.preCarregarNotas(periodoLetivoId);
+
       // ---------------------------------------------------------------- fase 1
       const cancelaram = elegiveis.filter((e) => e.agendamentos.length > 0);
 
@@ -485,6 +501,57 @@ export class CompulsorioService {
       });
 
       this.logger.error(`Execucao ${execucaoId} falhou: ${motivo}`);
+    }
+  }
+
+  /**
+   * ==========================================================================
+   * FASE 0: AS NOTAS DO SEMESTRE INTEIRO, ANTES DE COMECAR
+   * ==========================================================================
+   * So acontece quando a janela filtra por nota (a substitutiva). Sem filtro,
+   * sai daqui sem uma unica chamada — o lote da N2 continua exatamente como era.
+   *
+   * POR QUE ANTES, E POR TURMA: a nota e lida por (aluno x disciplina), e essas
+   * consultas se repetem muito — a mesma turma aparece para todos os alunos
+   * dela. Aluno a aluno seriam ~5 chamadas por pessoa: perto de 35 mil num lote
+   * de 7 mil, somadas as 2 que ja existem por aluno. Por turma sao algumas
+   * centenas, uma vez.
+   *
+   * **Falha aqui nao para o lote**: a turma que nao carregou volta a ser
+   * consultada aluno a aluno, mais devagar e igualmente correta. O `preAquecer`
+   * ja engole o erro por turma; o `catch` daqui cobre o resto (a propria lista
+   * de ofertas do semestre).
+   *
+   * O cache e esvaziado antes: uma execucao nao pode decidir com a nota que
+   * outra leu ha horas — no meio, o professor pode ter lancado a pendencia que
+   * muda a elegibilidade.
+   */
+  private async preCarregarNotas(periodoLetivoId: string): Promise<void> {
+    const vigente = await this.periodo.periodoLetivoVigente();
+
+    if (!vigente?.filtroDeNota) return;
+
+    this.elegibilidadeDeNota.esquecer();
+
+    try {
+      const ofertas = await this.d2l.ofertasDoSemestre(periodoLetivoId);
+
+      this.logger.log(
+        `Janela com faixa de nota [${vigente.filtroDeNota.minima}; ` +
+          `${vigente.filtroDeNota.maxima}): carregando as notas de ` +
+          `${ofertas.length} turma(s) do periodo letivo ${periodoLetivoId}.`,
+      );
+
+      await this.elegibilidadeDeNota.preAquecer(
+        ofertas.map((o) => o.orgUnitId),
+        { atrasoMs: ATRASO_ENTRE_TURMAS_MS },
+      );
+    } catch (erro) {
+      this.logger.warn(
+        'Nao foi possivel pre-carregar as notas do semestre; o lote segue ' +
+          'consultando aluno a aluno. Causa: ' +
+          (erro instanceof Error ? erro.message : String(erro)),
+      );
     }
   }
 
@@ -597,6 +664,24 @@ export class CompulsorioService {
       );
 
       if (cruzamento.agendaveis.length === 0) {
+        // Duas linhas de relatorio DIFERENTES, e a diferenca importa: uma e
+        // fila de trabalho ("confira o CSV de turmas"), a outra e informacao
+        // ("este aluno nao faz a substitutiva"). Misturar as duas encheria a
+        // fila da secretaria de casos que ninguem deve tratar — e, no lote da
+        // SUB, eles serao a MAIORIA, porque quem passou de ano e a maioria.
+        //
+        // A escolha e pela `causa`, e nunca pelo texto do `motivo`: comparar
+        // frase faria a classificacao mudar sozinha no dia em que alguem
+        // melhorasse a mensagem da tela.
+        if (cruzamento.causa === 'FILTRO_DE_NOTA') {
+          return {
+            motivo: MotivoExcecao.NAO_ELEGIVEL_PELA_NOTA,
+            detalhe:
+              cruzamento.motivo ??
+              'Nenhuma disciplina dele esta na faixa de nota desta janela.',
+          };
+        }
+
         return {
           motivo: MotivoExcecao.SEM_DISCIPLINA_AGENDAVEL,
           detalhe:
@@ -784,6 +869,9 @@ export class CompulsorioService {
                 create: candidato.disciplinas.map((d) => ({
                   orgUnitId: d.orgUnitId,
                   nomeDisciplina: d.nomeDisciplina,
+                  // Fotografia da nota que tornou a disciplina elegivel. Nula
+                  // quando a janela nao filtra por nota. Ver o schema.
+                  notaFinal: d.notaFinal,
                 })),
               },
               syncs: {

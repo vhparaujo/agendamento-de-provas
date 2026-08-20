@@ -12,6 +12,9 @@ interface Periodo {
   periodoLetivoId: string;
   /** A metade da identidade que separa a regular da substitutiva. */
   rodada: string;
+  /** A faixa de nota da janela. Ausente nos fixtures = janela sem filtro. */
+  notaMinima?: number | null;
+  notaMaxima?: number | null;
   descricao: string | null;
   createdAt: Date;
 }
@@ -37,20 +40,36 @@ function montar(periodos: Periodo[], reservas: Reserva[] = []) {
       // O vigente e o mais recente — mesma ordenacao do service. O `select` e
       // reproduzido de proposito: sem ele o teste passaria com um objeto que o
       // Prisma real nunca devolveria.
-      findFirst: () => {
+      findFirst: ({ select }: { select?: Record<string, boolean> } = {}) => {
         const vigente = [...periodos].sort(
           (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
         )[0];
 
+        if (!vigente) return Promise.resolve(null);
+
+        const linha = {
+          id: vigente.id,
+          periodoLetivoId: vigente.periodoLetivoId,
+          rodada: vigente.rodada,
+          // Ausente no fixture = coluna nula, como no banco.
+          notaMinima: vigente.notaMinima ?? null,
+          notaMaxima: vigente.notaMaxima ?? null,
+          descricao: vigente.descricao,
+          ...COLUNAS_DE_JANELA,
+        };
+
+        // O `select` e HONRADO: cada chamador pede um conjunto diferente de
+        // colunas, e um duble que devolvesse tudo faria passar um teste sobre
+        // um objeto que o Prisma real nunca montaria.
+        if (!select) return Promise.resolve(linha);
+
         return Promise.resolve(
-          vigente
-            ? {
-                id: vigente.id,
-                periodoLetivoId: vigente.periodoLetivoId,
-                rodada: vigente.rodada,
-                descricao: vigente.descricao,
-              }
-            : null,
+          Object.fromEntries(
+            Object.keys(select).map((coluna) => [
+              coluna,
+              (linha as Record<string, unknown>)[coluna],
+            ]),
+          ),
         );
       },
       delete: ({ where }: { where: { id: number } }) => {
@@ -301,7 +320,7 @@ describe('PeriodoService.atualizar — a rodada', () => {
   it('troca a rodada de uma janela sem agendamento nenhum', async () => {
     const { service, periodos } = montar([{ ...DOIS_MIL_E_VINTE_SEIS_UM }]);
 
-    await service.atualizar(80, { rodada: 'SUB' });
+    await service.atualizar(80, { rodada: 'SUB' }, 'admin@ucb.br');
 
     expect(periodos[0].rodada).toBe('SUB');
   });
@@ -312,7 +331,7 @@ describe('PeriodoService.atualizar — a rodada', () => {
       [{ periodoLetivoId: '132035', rodada: 'N2', status: 'CONFIRMADO' }],
     );
 
-    const promessa = service.atualizar(80, { rodada: 'SUB' });
+    const promessa = service.atualizar(80, { rodada: 'SUB' }, 'admin@ucb.br');
 
     await expect(promessa).rejects.toThrow(ConflictException);
     await expect(promessa).rejects.toThrow(/fotografia/);
@@ -326,9 +345,9 @@ describe('PeriodoService.atualizar — a rodada', () => {
       [{ periodoLetivoId: '132035', rodada: 'N2', status: 'CANCELADO' }],
     );
 
-    await expect(service.atualizar(80, { rodada: 'SUB' })).rejects.toThrow(
-      ConflictException,
-    );
+    await expect(
+      service.atualizar(80, { rodada: 'SUB' }, 'admin@ucb.br'),
+    ).rejects.toThrow(ConflictException);
   });
 
   /**
@@ -342,7 +361,11 @@ describe('PeriodoService.atualizar — a rodada', () => {
       [{ periodoLetivoId: '132035', rodada: 'N2', status: 'CONFIRMADO' }],
     );
 
-    await service.atualizar(80, { rodada: 'N2', descricao: '2026/1 — final' });
+    await service.atualizar(
+      80,
+      { rodada: 'N2', descricao: '2026/1 — final' },
+      'admin@ucb.br',
+    );
 
     expect(periodos[0].descricao).toBe('2026/1 — final');
   });
@@ -527,5 +550,151 @@ describe('PeriodoService.exigirEncerrado', () => {
     await expect(
       comPeriodo(null).exigirEncerrado(DENTRO_DO_PRAZO),
     ).rejects.toThrow(ForbiddenException);
+  });
+});
+
+/**
+ * ==========================================================================
+ * A FAIXA DE NOTA DA JANELA — a regra da substitutiva
+ * ==========================================================================
+ * O par `notaMinima + notaMaxima` e o que liga o filtro. Ele NAO e comparado
+ * com a `rodada`, que e texto livre: e por isso que estes testes nunca mencionam
+ * a string "SUB".
+ */
+describe('PeriodoService — a faixa de nota', () => {
+  const JANELA = {
+    dataFechamento: '2026-12-31T23:59:00-03:00',
+    periodoLetivoId: '132035',
+  };
+
+  it('cadastra a faixa e a devolve como objeto no vigente', async () => {
+    const { service } = montar([]);
+
+    await service.criar({
+      ...JANELA,
+      rodada: 'SUB',
+      notaMinima: 1.5,
+      notaMaxima: 6.75,
+    });
+
+    await expect(service.periodoLetivoVigente()).resolves.toEqual({
+      periodoLetivoId: '132035',
+      rodada: 'SUB',
+      filtroDeNota: { minima: 1.5, maxima: 6.75 },
+    });
+  });
+
+  it('sem a faixa, o vigente diz `null` — e nenhuma nota sera consultada', async () => {
+    const { service } = montar([]);
+
+    await service.criar(JANELA);
+
+    const vigente = await service.periodoLetivoVigente();
+
+    expect(vigente?.filtroDeNota).toBeNull();
+  });
+
+  /**
+   * Meio intervalo nao delimita nada: o banco leria a linha como "sem filtro", a
+   * substitutiva abriria para o curso inteiro e nada apareceria no log.
+   */
+  it('recusa uma das duas sem a outra', async () => {
+    const { service } = montar([]);
+
+    await expect(service.criar({ ...JANELA, notaMinima: 1.5 })).rejects.toThrow(
+      /andam juntas/,
+    );
+
+    await expect(
+      service.criar({ ...JANELA, notaMaxima: 6.75 }),
+    ).rejects.toThrow(/andam juntas/);
+  });
+
+  /** Intervalo vazio: NINGUEM seria elegivel, e o sintoma apontaria para o CSV. */
+  it('recusa minima >= maxima', async () => {
+    const { service } = montar([]);
+
+    await expect(
+      service.criar({ ...JANELA, notaMinima: 6.75, notaMaxima: 1.5 }),
+    ).rejects.toThrow(/MENOR/);
+
+    await expect(
+      service.criar({ ...JANELA, notaMinima: 5, notaMaxima: 5 }),
+    ).rejects.toThrow(/MENOR/);
+  });
+
+  /** "67,5" digitado no lugar de "6,75" liberaria todo mundo. */
+  it('recusa nota fora de 0..10', async () => {
+    const { service } = montar([]);
+
+    await expect(
+      service.criar({ ...JANELA, notaMinima: 1.5, notaMaxima: 67.5 }),
+    ).rejects.toThrow(/entre 0 e 10/);
+  });
+
+  /**
+   * ⚠️ Ao contrario da `rodada`, a faixa muda com a janela CHEIA. A rodada e
+   * fotografia gravada em cada reserva, e troca-la desalinha toda consulta; a
+   * faixa nao e gravada em lugar nenhum. Bloquear seria pior que o problema: a
+   * correcao mais provavel e ter cadastrado a faixa errada e perceber depois de
+   * abrir.
+   */
+  it('deixa corrigir a faixa mesmo com prova ja marcada, e audita', async () => {
+    const { service, periodos, eventos } = montar(
+      [{ ...DOIS_MIL_E_VINTE_SEIS_UM, notaMinima: 1.5, notaMaxima: 6 }],
+      [{ periodoLetivoId: '132035', rodada: 'N2', status: 'CONFIRMADO' }],
+    );
+
+    await service.atualizar(80, { notaMaxima: 6.75 }, 'admin@ucb.br');
+
+    expect(periodos[0].notaMaxima).toBe(6.75);
+    expect(periodos[0].notaMinima).toBe(1.5);
+    expect(eventos.map((e) => e.evento)).toContain(
+      'PERIODO_FILTRO_DE_NOTA_ALTERADO',
+    );
+  });
+
+  /**
+   * Mandar so um campo no PATCH nao pode deixar meio filtro no banco — o
+   * service revalida o par inteiro, mesclando com o que ja estava la.
+   */
+  it('recusa desligar so metade da faixa', async () => {
+    const { service } = montar([
+      { ...DOIS_MIL_E_VINTE_SEIS_UM, notaMinima: 1.5, notaMaxima: 6.75 },
+    ]);
+
+    await expect(
+      service.atualizar(80, { notaMaxima: null }, 'admin@ucb.br'),
+    ).rejects.toThrow(/andam juntas/);
+  });
+
+  it('desliga o filtro quando os dois vem nulos', async () => {
+    const { service, periodos } = montar([
+      { ...DOIS_MIL_E_VINTE_SEIS_UM, notaMinima: 1.5, notaMaxima: 6.75 },
+    ]);
+
+    await service.atualizar(
+      80,
+      { notaMinima: null, notaMaxima: null },
+      'admin@ucb.br',
+    );
+
+    expect(periodos[0].notaMinima).toBeNull();
+    expect(periodos[0].notaMaxima).toBeNull();
+  });
+
+  /**
+   * Editar so a descricao NAO pode apagar a faixa. E o caso normal da tela, que
+   * manda o formulario inteiro — sem os campos de nota quando eles nao mudaram.
+   */
+  it('editar so a descricao preserva a faixa', async () => {
+    const { service, periodos } = montar([
+      { ...DOIS_MIL_E_VINTE_SEIS_UM, notaMinima: 1.5, notaMaxima: 6.75 },
+    ]);
+
+    await service.atualizar(80, { descricao: 'outra' }, 'admin@ucb.br');
+
+    expect(periodos[0].notaMinima).toBe(1.5);
+    expect(periodos[0].notaMaxima).toBe(6.75);
   });
 });

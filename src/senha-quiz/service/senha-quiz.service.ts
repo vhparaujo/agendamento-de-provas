@@ -218,6 +218,32 @@ export class SenhaQuizService {
     };
   }
 
+  /**
+   * A execucao mais recente, opcionalmente so as de uma origem.
+   *
+   * Existe por causa do CRON. O disparo manual acompanha o proprio lote pelo id
+   * que o POST devolveu; o do cron nao tem quem o acompanhe — ele acontece as
+   * 07:30, sozinho, e ate 19/08/2026 a tela nao dizia nada nem enquanto rodava
+   * nem depois de acabar. Quem estava na tela via a grade parada, e quem chegava
+   * depois nao tinha como saber se a troca das 07:30 aconteceu.
+   *
+   * Devolve `null` quando nunca houve execucao: e o estado normal de um ambiente
+   * recem-configurado, nao um 404. A tela precisa distinguir "nunca rodou" de
+   * "nao consegui perguntar" — um 404 aqui faria as duas coisas parecerem erro.
+   *
+   * Ordenada por `id`, e nao por `iniciadoEm`: a chave primaria ja e crescente e
+   * indexada, e esta rota e consultada em laco por toda tela aberta.
+   */
+  async ultima(origem?: OrigemExecucao) {
+    const recente = await this.prisma.execucaoSenhaQuiz.findFirst({
+      where: origem ? { origem } : {},
+      orderBy: { id: 'desc' },
+      select: { id: true },
+    });
+
+    return recente ? await this.consultar(recente.id) : null;
+  }
+
   /** O andamento, para a tela perguntar de tempos em tempos. */
   async consultar(id: number) {
     const execucao = await this.prisma.execucaoSenhaQuiz.findUnique({

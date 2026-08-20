@@ -437,10 +437,20 @@ enum AutorDaAlteracao {
 // ----------------------------------------------------------------------------
 
 model AgendamentoDisciplina {
-  id             Int     @id @default(autoincrement())
+  id             Int      @id @default(autoincrement())
   agendamentoId  Int
   orgUnitId      String // disciplina (course offering) no D2L
   nomeDisciplina String?
+  /// A nota final do aluno NESTA disciplina no momento da reserva — fotografia,
+  /// como `rodada` e `poloId` no agendamento.
+  ///
+  /// So e preenchida quando a janela tinha filtro de nota (a substitutiva); na
+  /// N2 fica nula, porque nota nenhuma foi consultada. Existe para responder a
+  /// pergunta que a secretaria recebe com o aluno na frente — "por que ele
+  /// agendou substitutiva desta materia?" —, e a nota no Brightspace pode ter
+  /// mudado depois. Sem a coluna, a unica resposta seria consultar a Valence de
+  /// novo e ver um numero que talvez ja nao seja o que decidiu a reserva.
+  notaFinal      Decimal? @db.Decimal(5, 2)
 
   agendamento Agendamento @relation(fields: [agendamentoId], references: [id], onDelete: Cascade)
 
@@ -518,6 +528,21 @@ model PeriodoAgendamento {
   /// migration a cada nome novo. O default mantem os semestres ja cadastrados,
   /// que sao todos da prova regular.
   rodada          String    @default("N2")
+  /// FAIXA DE NOTA QUE HABILITA ESTA RODADA — os dois campos andam juntos.
+  ///
+  /// NULOS = sem filtro: e o caso da N2 e o de toda janela ja cadastrada, em que
+  /// a prova cobre as disciplinas do semestre sem olhar nota nenhuma.
+  ///
+  /// PREENCHIDOS = so entra na prova a disciplina em que a nota final do aluno
+  /// esta em [notaMinima, notaMaxima) — `>=` na minima e `<` na maxima. E a
+  /// regra da SUBSTITUTIVA: quem tirou menos que o piso ja reprovou por nota, e
+  /// quem alcancou o teto ja passou.
+  ///
+  /// ⚠️ O gatilho e ESTE PAR, e nunca `rodada == "SUB"`: `rodada` e texto livre
+  /// (quem a nomeia e a secretaria), entao comparar a string faria a regra parar
+  /// de valer no dia em que alguem cadastrasse "Substitutiva" ou "sub".
+  notaMinima      Decimal?  @db.Decimal(5, 2)
+  notaMaxima      Decimal?  @db.Decimal(5, 2)
   descricao       String?
   aberto          Boolean   @default(false)
   dataAbertura    DateTime?
@@ -631,6 +656,12 @@ enum MotivoExcecao {
   ID_INVALIDO_D2L
   /// Nenhuma disciplina do aluno cruzou com o CSV de turmas.
   SEM_DISCIPLINA_AGENDAVEL
+  /// A janela tem filtro de nota (a substitutiva) e NENHUMA disciplina dele caiu
+  /// na faixa. Nao e defeito de cadastro: e o aluno que passou, ou que ja
+  /// reprovou por nota. Separado de SEM_DISCIPLINA_AGENDAVEL de proposito —
+  /// aquele motivo manda a secretaria conferir o CSV de turmas, e aqui nao ha
+  /// nada para conferir.
+  NAO_ELEGIVEL_PELA_NOTA
   /// O polo do aluno nao tem faixa cadastrada para a modalidade dele.
   SEM_FAIXA_NO_POLO
   /// Ha faixa, mas todas as salas da modalidade lotaram. Abrir mais sala.

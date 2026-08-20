@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { D2lCatalogoController } from '../controller/d2l-catalogo.controller';
 import { D2lController } from '../controller/d2l.controller';
 import { D2lEnrollmentsService } from '../service/d2l-enrollments.service';
+import { D2lGradesService } from '../service/d2l-grades.service';
 import { D2lHttpService } from '../service/d2l-http.service';
 import { D2lOauthService } from '../service/d2l-oauth.service';
 import { D2lQuizzesService } from '../service/d2l-quizzes.service';
@@ -11,6 +12,10 @@ import { D2lQuizzesService } from '../service/d2l-quizzes.service';
  *
  * Contem a autorizacao OAuth (obter e persistir o refresh token) e a LEITURA de
  * matriculas, que e o que descobre todas as disciplinas do aluno no semestre.
+ *
+ * Desde 20/08/2026 contem tambem o cliente de NOTAS (`D2lGradesService`), que e
+ * o que responde "este aluno pode fazer a substitutiva desta disciplina?" — a
+ * regra em si mora em src/agendamento, nao aqui.
  *
  * Desde 18/08/2026 contem tambem o cliente de QUIZZES (`D2lQuizzesService`),
  * pedido pelo cliente para a troca em massa da senha das provas — ver
@@ -26,12 +31,14 @@ import { D2lQuizzesService } from '../service/d2l-quizzes.service';
     D2lHttpService,
     D2lEnrollmentsService,
     D2lQuizzesService,
+    D2lGradesService,
   ],
   exports: [
     D2lOauthService,
     D2lHttpService,
     D2lEnrollmentsService,
     D2lQuizzesService,
+    D2lGradesService,
   ],
 })
 export class D2lModule {}

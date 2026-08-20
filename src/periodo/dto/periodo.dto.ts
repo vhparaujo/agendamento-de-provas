@@ -3,11 +3,15 @@ import {
   IsBoolean,
   IsISO8601,
   IsNotEmpty,
+  IsNumber,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
+  Min,
 } from 'class-validator';
 import type {
+  FiltroDeNota,
   PeriodoAdmin,
   RemocaoPeriodo,
   VigenteDepoisDaRemocao,
@@ -16,6 +20,16 @@ import type {
 const AJUDA_DATA =
   'ISO 8601 COM fuso (ex: 2026-08-18T23:59:00-03:00). Sem o fuso, a data e lida ' +
   'como UTC e o prazo fecha 3 horas antes do que voce quis.';
+
+const AJUDA_NOTA =
+  'A FAIXA DE NOTA que habilita esta janela — a regra da substitutiva. Informe ' +
+  'as DUAS ou nenhuma. Com as duas, so entra na prova a disciplina em que a ' +
+  'nota final do aluno esta em [notaMinima, notaMaxima): `>=` na minima e `<` ' +
+  'na maxima. Sem elas (o padrao, e o caso da N2), a prova cobre todas as ' +
+  'disciplinas do semestre e nenhuma nota e consultada no Brightspace.\n\n' +
+  'Ler a nota exige o escopo `grades:gradevalues:read` no consentimento da ' +
+  'Valence — acrescenta-lo ao `.env` nao basta, e preciso refazer ' +
+  '`npm run d2l:autorizar`.';
 
 export class CriarPeriodoDto {
   @ApiProperty({
@@ -44,6 +58,32 @@ export class CriarPeriodoDto {
   @IsString()
   @MaxLength(20)
   rodada?: string;
+
+  @ApiPropertyOptional({
+    example: 1.5,
+    minimum: 0,
+    maximum: 10,
+    description: `Piso da faixa, INCLUSIVE. ${AJUDA_NOTA}`,
+  })
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(10)
+  notaMinima?: number;
+
+  @ApiPropertyOptional({
+    example: 6.75,
+    minimum: 0,
+    maximum: 10,
+    description:
+      'Teto da faixa, EXCLUSIVE — quem alcanca este valor ja passou e nao ' +
+      'aparece na substitutiva.',
+  })
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(10)
+  notaMaxima?: number;
 
   @ApiPropertyOptional({ example: '2026/2 — provas finais', maxLength: 191 })
   @IsOptional()
@@ -92,6 +132,38 @@ export class AtualizarPeriodoDto {
   @MaxLength(20)
   rodada?: string;
 
+  @ApiPropertyOptional({
+    example: 1.5,
+    nullable: true,
+    minimum: 0,
+    maximum: 10,
+    description:
+      `Piso da faixa, INCLUSIVE. Envie null nos DOIS campos para desligar o ` +
+      `filtro de nota. ${AJUDA_NOTA}\n\n` +
+      '**Editavel mesmo com a janela cheia**, ao contrario da `rodada`: a faixa ' +
+      'nao e gravada em reserva nenhuma, entao muda-la so afeta quem agendar ' +
+      'daqui para a frente — quem ja marcou continua com o horario, inclusive ' +
+      'quem pela faixa nova nao seria elegivel. A alteracao vai para a auditoria.',
+  })
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(10)
+  notaMinima?: number | null;
+
+  @ApiPropertyOptional({
+    example: 6.75,
+    nullable: true,
+    minimum: 0,
+    maximum: 10,
+    description: 'Teto da faixa, EXCLUSIVE. Ver `notaMinima`.',
+  })
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(10)
+  notaMaxima?: number | null;
+
   @ApiPropertyOptional({ example: '2026/2 — provas finais', nullable: true })
   @IsOptional()
   @IsString()
@@ -124,6 +196,14 @@ export class AtualizarPeriodoDto {
   dataFechamento?: string;
 }
 
+export class FiltroDeNotaDto implements FiltroDeNota {
+  @ApiProperty({ example: 1.5, description: 'Piso da faixa, INCLUSIVE.' })
+  minima!: number;
+
+  @ApiProperty({ example: 6.75, description: 'Teto da faixa, EXCLUSIVE.' })
+  maxima!: number;
+}
+
 export class PeriodoAdminDto implements PeriodoAdmin {
   @ApiProperty({ example: 3 })
   id!: number;
@@ -138,6 +218,15 @@ export class PeriodoAdminDto implements PeriodoAdmin {
       'janela — duas linhas do mesmo semestre so diferem por aqui.',
   })
   rodada!: string;
+
+  @ApiProperty({
+    nullable: true,
+    type: FiltroDeNotaDto,
+    description:
+      'A faixa de nota desta janela, ou null quando ela nao filtra por nota ' +
+      '(o caso da N2). Ver `notaMinima` em POST /periodos.',
+  })
+  filtroDeNota!: FiltroDeNota | null;
 
   @ApiProperty({ nullable: true, example: '2026/2 — provas finais' })
   descricao!: string | null;

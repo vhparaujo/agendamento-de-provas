@@ -1,10 +1,12 @@
 import type { AlunoJwtPayload } from '../../auth/jwt/jwt.types';
 import { D2lEnrollmentsService } from '../../d2l/service/d2l-enrollments.service';
+import { D2lGradesService } from '../../d2l/service/d2l-grades.service';
 import { Perfil } from '../../enums/perfil.enum';
 import { PeriodoService } from '../../periodo/service/periodo.service';
 import type { DisciplinaAgendavel } from '../../turma/service/turma.service';
 import { TurmaService } from '../../turma/service/turma.service';
 import { DisciplinasDoAlunoService } from './disciplinas-do-aluno.service';
+import { ElegibilidadeDeNotaService } from './elegibilidade-de-nota.service';
 
 /**
  * O que estes testes protegem:
@@ -62,6 +64,12 @@ describe('DisciplinasDoAlunoService', () => {
     periodoLetivoId?: string | undefined;
     /** A Valence recusa em vez de responder — token invalido, rede, 502. */
     erroDaValence?: Error;
+    /** A faixa de nota da janela. Ausente = a N2, que nao filtra por nota. */
+    filtroDeNota?: { minima: number; maxima: number } | null;
+    /** Nota por orgUnitId. Ausente = a turma nao lancou nota para o aluno. */
+    notas?: Record<string, number>;
+    /** A leitura de notas falha — Valence fora, escopo faltando, 502. */
+    erroDasNotas?: Error;
   }) => {
     const filtrarAgendaveis = jest
       .fn()
@@ -90,15 +98,51 @@ describe('DisciplinasDoAlunoService', () => {
             'periodoLetivoId' in opcoes ? opcoes.periodoLetivoId : '103';
           return id === undefined
             ? undefined
-            : { periodoLetivoId: id, rodada: 'N2' };
+            : {
+                periodoLetivoId: id,
+                rodada: 'N2',
+                filtroDeNota: opcoes.filtroDeNota ?? null,
+              };
         })(),
       ),
     } as unknown as PeriodoService;
 
+    // O cliente de notas e mockado no nivel do `D2lGradesService`: assim o
+    // proprio `ElegibilidadeDeNotaService` (a regra, e o cache) entra no teste.
+    const notaFinal = opcoes.erroDasNotas
+      ? jest.fn().mockRejectedValue(opcoes.erroDasNotas)
+      : jest.fn().mockImplementation((orgUnitId: string) => {
+          const pontos = opcoes.notas?.[orgUnitId];
+
+          return Promise.resolve(
+            pontos === undefined
+              ? { situacao: 'SEM_NOTA' }
+              : {
+                  situacao: 'ACHOU',
+                  pontos,
+                  denominador: 10,
+                  origem: 'CALCULADA',
+                  exibida: null,
+                },
+          );
+        });
+
+    const elegibilidade = new ElegibilidadeDeNotaService({
+      notaFinal,
+      notasFinaisDaTurma: jest.fn(),
+      habilitado: () => true,
+    } as unknown as D2lGradesService);
+
     return {
-      service: new DisciplinasDoAlunoService(turma, enrollments, periodo),
+      service: new DisciplinasDoAlunoService(
+        turma,
+        enrollments,
+        periodo,
+        elegibilidade,
+      ),
       filtrarAgendaveis,
       ofertasDoPeriodo,
+      notaFinal,
     };
   };
 
@@ -266,6 +310,156 @@ describe('DisciplinasDoAlunoService', () => {
       const disciplinas = await service.agendaveis(aluno(DOIS));
 
       expect(disciplinas.map((d) => d.orgUnitId)).toEqual(['6606']);
+    });
+  });
+  /**
+   * ==========================================================================
+   * A JANELA DA SUBSTITUTIVA — a faixa de nota
+   * ==========================================================================
+   * O que muda aqui e so o `filtroDeNota` do periodo vigente. Nada de `rodada`:
+   * ela e texto livre, e amarrar a regra a string "SUB" faria a substitutiva
+   * abrir para todo mundo no dia em que alguem cadastrasse "Substitutiva".
+   */
+  describe('com faixa de nota na janela', () => {
+    const FAIXA = { minima: 1.5, maxima: 6.75 };
+
+    it('devolve so as disciplinas dentro da faixa', async () => {
+      const { service } = montar({
+        habilitado: true,
+        ofertas: [HISTORIA, NUTRICAO],
+        cruzamento: [cruzada(HISTORIA), cruzada(NUTRICAO)],
+        filtroDeNota: FAIXA,
+        notas: { '6606': 4.25, '6610': 8.5 },
+      });
+
+      const disciplinas = await service.agendaveis(aluno(['EDUCACAO FISICA']));
+
+      expect(disciplinas).toEqual([{ ...cruzada(HISTORIA), notaFinal: 4.25 }]);
+    });
+
+    it('nenhuma na faixa: motivo proprio, que NAO manda conferir o CSV', async () => {
+      const { service } = montar({
+        habilitado: true,
+        ofertas: [HISTORIA],
+        cruzamento: [cruzada(HISTORIA)],
+        filtroDeNota: FAIXA,
+        notas: { '6606': 8.5 },
+      });
+
+      const { agendaveis, motivo, causa } = await service.cruzar(
+        aluno(['EDUCACAO FISICA']),
+      );
+
+      expect(agendaveis).toHaveLength(0);
+      expect(causa).toBe('FILTRO_DE_NOTA');
+      expect(motivo).toContain('1,50');
+      expect(motivo).not.toMatch(/turma|CSV/i);
+    });
+
+    /**
+     * ⚠️ O teste que mais importa. Sem filtro, a Valence fora degrada para a
+     * turma do launch — "agendar uma prova e melhor que agendar nenhuma". Com
+     * filtro, degradar liberaria a substitutiva SEM conferir nota nenhuma, que e
+     * exatamente o que a regra existe para impedir.
+     */
+    it('Valence fora NAO cai para o launch: recusa e explica', async () => {
+      const { service } = montar({
+        habilitado: true,
+        cruzamento: [cruzada(HISTORIA)],
+        filtroDeNota: FAIXA,
+        erroDaValence: new Error('502 no tenant'),
+      });
+
+      const { agendaveis, motivo } = await service.cruzar(
+        aluno(['EDUCACAO FISICA']),
+      );
+
+      expect(agendaveis).toHaveLength(0);
+      expect(motivo).toContain('notas');
+    });
+
+    it('a leitura da NOTA falhando tambem recusa, sem liberar nada', async () => {
+      const { service } = montar({
+        habilitado: true,
+        ofertas: [HISTORIA],
+        cruzamento: [cruzada(HISTORIA)],
+        filtroDeNota: FAIXA,
+        erroDasNotas: new Error('403 sem escopo'),
+      });
+
+      const { agendaveis, motivo } = await service.cruzar(
+        aluno(['EDUCACAO FISICA']),
+      );
+
+      expect(agendaveis).toHaveLength(0);
+      expect(motivo).toContain('notas');
+    });
+
+    /**
+     * No compulsorio o erro precisa SUBIR: virado texto, ele daria uma linha
+     * dizendo "este aluno passou de ano" quando a causa foi a rede — e ninguem
+     * reprocessaria. Subindo, vira `FALHA_NA_INTEGRACAO`, que se reprocessa.
+     */
+    it('no compulsorio, a falha de nota SOBE em vez de virar motivo', async () => {
+      const { service } = montar({
+        habilitado: true,
+        ofertas: [HISTORIA],
+        cruzamento: [cruzada(HISTORIA)],
+        filtroDeNota: FAIXA,
+        erroDasNotas: new Error('403 sem escopo'),
+      });
+
+      await expect(service.cruzarPorUserId('76629')).rejects.toThrow(/notas/);
+    });
+
+    /** Sem integracao nao ha nota, e sem nota a substitutiva nao pode abrir. */
+    it('D2L desligado com faixa de nota recusa, em vez de usar o launch', async () => {
+      const { service } = montar({
+        habilitado: false,
+        cruzamento: [cruzada(HISTORIA)],
+        filtroDeNota: FAIXA,
+      });
+
+      const { agendaveis, motivo } = await service.cruzar(
+        aluno(['EDUCACAO FISICA']),
+      );
+
+      expect(agendaveis).toHaveLength(0);
+      expect(motivo).toContain('notas');
+    });
+
+    it('sem nota lancada nao agenda, e o texto manda a secretaria', async () => {
+      const { service } = montar({
+        habilitado: true,
+        ofertas: [HISTORIA],
+        cruzamento: [cruzada(HISTORIA)],
+        filtroDeNota: FAIXA,
+        notas: {},
+      });
+
+      const { agendaveis, motivo } = await service.cruzar(
+        aluno(['EDUCACAO FISICA']),
+      );
+
+      expect(agendaveis).toHaveLength(0);
+      expect(motivo).toContain('secretaria');
+    });
+
+    /**
+     * O caminho da N2 nao pode ter passado a custar uma consulta de nota por
+     * disciplina — e o caminho de quase todo agendamento do sistema.
+     */
+    it('sem faixa, NENHUMA nota e consultada', async () => {
+      const { service, notaFinal } = montar({
+        habilitado: true,
+        ofertas: [HISTORIA, NUTRICAO],
+        cruzamento: [cruzada(HISTORIA), cruzada(NUTRICAO)],
+      });
+
+      const disciplinas = await service.agendaveis(aluno(['EDUCACAO FISICA']));
+
+      expect(notaFinal).not.toHaveBeenCalled();
+      expect(disciplinas.every((d) => d.notaFinal === null)).toBe(true);
     });
   });
 });

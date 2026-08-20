@@ -100,6 +100,13 @@ mesma faixa, porém, a sala fica travada numa única modalidade (garantido pelo
    o período de agendamento aberto.
 4. **Disciplinas agendáveis** = disciplinas do aluno na Valence ∩ turmas reais
    (CSV) ∩ período letivo vigente. **Não são todas as disciplinas do aluno.**
+4b. **Na rodada com faixa de nota (a substitutiva), só entra a disciplina cuja
+   nota final está na faixa** — `>= notaMinima` e `< notaMaxima` (1,5 e 6,75 no
+   cadastro do cliente). É por DISCIPLINA: um aluno com três matérias pode
+   agendar só uma. O gatilho é a faixa cadastrada no período, **nunca** o texto
+   da `rodada`. Sem faixa (a N2), nada muda e nenhuma nota é consultada. Sem
+   conseguir ler a nota, o aluno **não** agenda — é *fail-closed* de propósito.
+   Ver [Período de agendamento](#período-de-agendamento).
 5. **Um agendamento cobre todas as disciplinas agendáveis de UM vínculo**, no
    mesmo horário. Aluno com dois cursos faz dois agendamentos.
 6. **Uma prova por PESSOA em cada horário** (decisão do cliente, 14/08/2026). O
@@ -452,6 +459,42 @@ prova nele — a regular e a **substitutiva**. O campo `rodada` (`"N2"` por padr
 - **Os períodos que já existiam ganharam `rodada = "N2"` na migration**, junto com
   os agendamentos deles. Nada a fazer à mão.
 
+#### `notaMinima`/`notaMaxima`: quem pode fazer a substitutiva
+
+A `rodada` cria a segunda janela; a **faixa de nota** diz quem entra nela. Sem
+ela, aberta a SUB, o portal ofereceria a substitutiva a todo mundo — inclusive a
+quem já passou —, porque o cruzamento de disciplinas filtra só pelo semestre.
+
+Preenchidos os dois campos, só entra na prova a disciplina em que a **nota final
+do aluno** está em `[notaMinima, notaMaxima)`: `>=` na mínima, `<` na máxima. Com
+1,5 e 6,75, quem tirou exatamente 1,50 **entra** e quem tirou 6,75 **fica de
+fora**. É por DISCIPLINA — um aluno com três matérias pode ver só uma na tela.
+
+- **Nulos = sem filtro**, e é o caso da N2 e de todo período que já existia: a
+  prova cobre as disciplinas do semestre e **nenhuma nota é consultada**.
+- **Os dois andam juntos.** Mandar um só responde 400: meio intervalo seria lido
+  como "sem filtro" e a prova abriria para todos, sem erro nenhum aparecendo.
+- ⚠️ **O gatilho são estes campos, nunca `rodada === "SUB"`.** `rodada` é texto
+  livre — quem a nomeia é a secretaria —, e amarrar a regra à string a faria
+  parar de valer no dia em que alguém cadastrasse "Substitutiva".
+- **A faixa é editável mesmo com a janela cheia**, ao contrário da `rodada`: ela
+  não fica gravada em reserva nenhuma. Mas as provas já marcadas **não** são
+  revistas, e a alteração vai para a auditoria.
+- **Sem conseguir ler a nota, ninguém agenda** (*fail-closed*). Valence fora,
+  `D2L_HABILITADO=false` ou escopo faltando: a tela diz que não foi possível
+  confirmar as notas e manda à secretaria. Não há degradação possível — liberar
+  sem conferir é o que a regra existe para impedir. Na N2 o fallback de sempre
+  continua valendo.
+- **Exige o escopo `grades:gradevalues:read`**, e escopo vive no
+  **consentimento**: acrescentá-lo ao `.env` sem `npm run d2l:autorizar` deixa
+  todo GET de nota em 403. Confira a leitura antes de abrir a janela com
+  `npm run d2l:notas -- <orgUnitId> <userId>`.
+- A nota que decidiu fica gravada em `AgendamentoDisciplina.notaFinal` — é a
+  resposta para "por que ele agendou substitutiva desta matéria?" meses depois.
+- No compulsório, quem fica de fora por nota aparece no relatório como
+  `NAO_ELEGIVEL_PELA_NOTA` — o único motivo que **não pede ação** da secretaria,
+  e o mais numeroso num lote de substitutiva.
+
 **Vigente = o cadastrado mais recentemente**, e não existe como marcar outro no
 lugar. Por isso cadastrar o semestre seguinte com antecedência **rouba o vigente
 do período em curso** — a linha nova passa a ser a única que o portal do aluno
@@ -767,6 +810,7 @@ ou sozinho por cron nos horários configurados.
 | `GET`/`PUT` | `/senhas-de-prova/horarios` | A que horas o cron aplica cada turno. Turno em branco não dispara |
 | `GET` | `/senhas-de-prova/turmas` | Pré-visualiza **quais turmas serão tocadas**, e quais não resolveram |
 | `POST` | `/senhas-de-prova/execucoes` | Dispara. Responde na hora com um `id`; **simula por padrão** |
+| `GET` | `/senhas-de-prova/execucoes/ultima?origem=` | A execução mais recente. É por aqui que a tela **enxerga o cron** — ele não tem quem o acompanhe |
 | `GET` | `/senhas-de-prova/execucoes/:id` | Andamento e contagens |
 | `GET` | `/senhas-de-prova/execucoes/:id/relatorio` | CSV do que aconteceu em cada turma. **Sem coluna de senha** |
 

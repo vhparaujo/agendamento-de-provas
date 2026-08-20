@@ -126,6 +126,7 @@ Peça só o mínimo. Para este projeto:
 | **Trocar a senha do quiz** (§5.7) | `quizzing:quizzes:write` | **PUT** quizzes/(quizId) |
 | Gravar special access | `quizzing:quizzes:write` | quizzes/(quizId)/specialaccess/(userId) |
 | Ler special access (verificação) | `quizzing:quizzes:read` | quizzes/(quizId)/specialaccess/ |
+| **Ler a nota final** (§4.5) | `grades:gradevalues:read` | grades/final/values/, grades/final/values/(userId) |
 
 String de exemplo (ajuste conforme o app):
 ```
@@ -190,6 +191,65 @@ mesmo tipo (string) antes de comparar**, senão a interseção falha silenciosam
 GET /d2l/api/lp/(version)/orgstructure/(orgUnitId)/descendants/
 GET /d2l/api/lp/(version)/enrollments/orgUnits/(orgUnitId)/users/(userId)   # checar 1 aluno
 ```
+
+---
+
+### 4.5 Ler a nota final do aluno (a faixa de nota da rodada)
+
+Quem usa: `src/d2l/service/d2l-grades.service.ts` (cliente REST) e
+`src/agendamento/service/elegibilidade-de-nota.service.ts` (a regra). É o que
+decide **quem pode fazer a prova substitutiva**: só entra na prova a disciplina
+em que a nota final do aluno está na faixa cadastrada no período
+(`notaMinima`/`notaMaxima`).
+
+⚠️ **É produto LE, não LP** — a versão é a `D2L_API_VERSION_LE` (1.82), não a do
+`lp`. Mesma armadilha do §4.2 ao contrário: número certo no produto errado dá
+**404 com corpo vazio**, e o sintoma parece "o aluno não tem nota".
+
+```
+GET /d2l/api/le/(version)/(orgUnitId)/grades/final/values/(userId)   # um aluno
+GET /d2l/api/le/(version)/(orgUnitId)/grades/final/values/           # a turma (paginado)
+GET /d2l/api/le/(version)/(orgUnitId)/grades/                        # os grade objects
+```
+
+Resposta de um aluno (campos que importam):
+
+```json
+{
+  "DisplayedGrade": "58 %",
+  "GradeObjectName": "Nota Calculada Final",
+  "PointsNumerator": 5.8,
+  "PointsDenominator": 10
+}
+```
+
+| Decisão | Por quê |
+|---|---|
+| Compara **`PointsNumerator`** (pontos), não o percentual | Decisão do cliente. A faixa (1,5 a 6,75) é em pontos, na mesma escala da nota que o aluno vê |
+| **404 = `SEM_NOTA`**, não erro | Turma sem notas fechadas e aluno que saiu da turma respondem 404. É o segundo ponto do projeto a usar `nuloEm404`, junto de `users/?orgDefinedId=` |
+| **`PointsNumerator` nulo = `SEM_NOTA`**, nunca 0,00 | Zero poria o curso inteiro abaixo do piso, e ninguém reclama de uma prova que não lhe foi oferecida |
+| A listagem por turma **segue a paginação até o fim**, e **estoura** se não terminar | Meia turma lida é pior que erro: os alunos que faltaram viram "sem nota", e sem nota ninguém agenda |
+| `PointsDenominator ≠ 10` só **avisa** no log | A comparação é em pontos, e um denominador menor quase sempre significa que o semestre ainda está correndo (com só a N1 lançada, a "Nota Calculada Final" vale 4,5) |
+
+**Calculada × Ajustada.** A rota devolve **uma** nota final por aluno, e
+`GradeObjectName` diz qual é ("Nota Calculada Final" / "Nota Ajustada Final", no
+idioma do tenant). O cliente lê esse nome e o expõe como `origem`
+(`AJUSTADA` · `CALCULADA` · `DESCONHECIDA`) — informação de diagnóstico, não um
+seletor. Confira com um aluno que **tenha** nota ajustada lançada:
+
+```
+npm run d2l:notas -- <orgUnitId> <userId>
+```
+
+Se toda turma responder `CALCULADA` mesmo com ajustadas lançadas, a leitura
+precisa passar a buscar o grade object ajustado em `GET /grades/` +
+`GET /grades/(gradeObjectId)/values/(userId)` — o que exige também
+`grades:gradeobjects:read`. O ponto de mudança é um método só
+(`D2lGradesService.notaFinal`); a regra de negócio não muda.
+
+**Escopo:** `grades:gradevalues:read`, e vale o mesmo aviso do §3 — ele vive no
+consentimento. Sem reautorizar, todo GET aqui volta **403**, e como o filtro é
+*fail-closed*, **ninguém** consegue agendar a substitutiva.
 
 ---
 

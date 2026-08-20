@@ -16,7 +16,7 @@ import {
 } from '../../generated/prisma/client';
 import { PeriodoService } from '../../periodo/service/periodo.service';
 import { AuditoriaService } from '../../seguranca/service/auditoria.service';
-import type { DisciplinaAgendavel } from '../../turma/service/turma.service';
+import type { DisciplinaComNota } from './elegibilidade-de-nota.service';
 import { totalDisponivel } from './alocacao';
 import { AUTOR_ALUNO, descreverOferta, registrarHistorico } from './historico';
 import { DisciplinasDoAlunoService } from './disciplinas-do-aluno.service';
@@ -214,7 +214,15 @@ export class AgendamentoService {
     return {
       alunoId: vinculo.id,
       curso: vinculo.curso,
-      disciplinas: agendaveis,
+      // A `notaFinal` que veio do cruzamento NAO sai daqui: nota e assunto do
+      // Brightspace e da secretaria, e o portal so precisa dizer QUAIS
+      // disciplinas a prova cobre. Devolve-la poria a nota de cada materia numa
+      // resposta que a tela nem usa — superficie de suporte que ninguem pediu.
+      // Ela continua indo para o banco em `AgendamentoDisciplina.notaFinal`.
+      disciplinas: agendaveis.map((d) => ({
+        orgUnitId: d.orgUnitId,
+        nomeDisciplina: d.nomeDisciplina,
+      })),
       podeAgendar: vinculo.ativo && agendaveis.length > 0,
       motivo: !vinculo.ativo
         ? motivoStatus(vinculo.curso, vinculo.statusCurso)
@@ -463,7 +471,7 @@ export class AgendamentoService {
     periodoLetivoId: string;
     /** Do periodo VIGENTE. Vai gravada na reserva como fotografia — ver o schema. */
     rodada: string;
-    disciplinas: DisciplinaAgendavel[];
+    disciplinas: DisciplinaComNota[];
   }): Promise<{ id: number; salaFaixaId: number }> {
     return this.prisma.$transaction(async (tx) => {
       await travarAluno(tx, dados.matricula);
@@ -528,6 +536,9 @@ export class AgendamentoService {
             create: dados.disciplinas.map((d) => ({
               orgUnitId: d.orgUnitId,
               nomeDisciplina: d.nomeDisciplina,
+              // A nota que decidiu a elegibilidade, quando a janela filtrou por
+              // nota. Nula na N2, em que nenhuma foi consultada. Ver o schema.
+              notaFinal: d.notaFinal,
             })),
           },
           // A fila de liberacao nasce junto, na MESMA transacao: um agendamento

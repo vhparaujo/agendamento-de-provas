@@ -1,6 +1,10 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsInt, IsOptional, Min } from 'class-validator';
-import type { SituacaoPeriodo } from '../../periodo/service/periodo.service';
+import { FiltroDeNotaDto } from '../../periodo/dto/periodo.dto';
+import type {
+  FiltroDeNota,
+  SituacaoPeriodo,
+} from '../../periodo/service/periodo.service';
 import type {
   AgendamentoConfirmado,
   DisciplinasDoVinculo,
@@ -241,6 +245,18 @@ export class SituacaoPeriodoDto implements SituacaoPeriodo {
       'a tela esta falando.',
   })
   rodada?: string;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    type: FiltroDeNotaDto,
+    description:
+      'A FAIXA DE NOTA desta janela, quando ela filtra por nota (a ' +
+      'substitutiva). Presente = a lista de disciplinas do aluno traz **so** as ' +
+      'materias em que a nota final dele esta em [minima, maxima); a tela ' +
+      'precisa dizer isso, senao quem tem tres disciplinas e ve uma acha que o ' +
+      'sistema errou. `null` = a prova cobre todas as disciplinas (a N2).',
+  })
+  filtroDeNota?: FiltroDeNota | null;
 
   @ApiPropertyOptional({ nullable: true, example: '2026/2 — provas finais' })
   descricao?: string | null;

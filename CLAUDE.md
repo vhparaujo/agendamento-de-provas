@@ -1055,6 +1055,7 @@ ela entra e onde **não** entra:
 | **`faixasBloqueadasParaOVinculo`** (`conflitaComOutraProva`) | ❌ | É o espelho exato da linha acima; filtrar aqui faria a tela oferecer o horário que a confirmação recusa |
 | **`reservaAnterior`** (disciplinas para o admin) | ❌ | A reserva da N2 é fonte válida para a SUB: mesmas disciplinas, mesmo `userIdD2L` |
 | `disciplinas-do-aluno`, importação, relatórios, senhas | ❌ (só usam `periodoLetivoId`) | O que define quais ofertas contam é o SEMESTRE; as duas rodadas cobrem as mesmas matérias |
+| **A faixa de nota** (`filtrarPorNota`) | ❌ — usa `notaMinima/notaMaxima` | O que separa a SUB da N2 é a faixa cadastrada, e não o TEXTO da rodada, que é livre. Ver "Quem pode fazer a substitutiva" |
 
 ⚠️ **`periodoLetivoVigente()` devolve `{ periodoLetivoId, rodada }`, não uma
 string.** É de propósito: obriga cada chamador a dizer, na desestruturação, se a
@@ -1077,6 +1078,79 @@ recentemente, então recriar embaralha essa ordem — é justamente o problema q
 **A migration deu `rodada = "N2"` a tudo que já existia** — períodos e
 agendamentos. Quem tinha um semestre cadastrado antes desta mudança continua
 consistente, sem nenhuma ação manual.
+
+### Quem pode fazer a substitutiva: a faixa de nota (20/08/2026)
+
+A `rodada` deu ao semestre duas janelas, mas as duas ofereciam ao aluno **as
+mesmas** disciplinas — `disciplinas-do-aluno` filtra só pelo `periodoLetivoId`,
+porque "as duas rodadas cobrem as mesmas matérias". Aberta a janela da SUB, a
+substitutiva ficaria liberada para todo mundo, inclusive para quem já passou.
+
+A regra do cliente é **por DISCIPLINA, não por aluno**: ele agenda a
+substitutiva das matérias em que a nota final está em **`[1,5 ; 6,75)`** —
+`>= 1,5` e `< 6,75`. Um aluno com três matérias pode ter uma elegível e duas
+não, e a prova dele cobre só a elegível. Isso **não** quebra a regra 4: a lista
+encolhe antes de chegar a ele, que continua sem escolher disciplina por
+disciplina.
+
+⚠️ **O gatilho é `PeriodoAgendamento.notaMinima/notaMaxima`, NUNCA
+`rodada === 'SUB'`.** `rodada` é texto livre — quem a nomeia é a secretaria —,
+então comparar a string faria a regra parar de valer em silêncio no dia em que
+alguém cadastrasse "Substitutiva" ou "sub". Colunas nulas (todo período
+existente) = sem filtro, e **nenhuma chamada de nota sai**: o caminho da N2
+continua custando zero.
+
+| Peça | Onde | O que faz |
+|---|---|---|
+| Cliente REST | `src/d2l/service/d2l-grades.service.ts` | Lê a nota, um aluno ou a turma inteira. Nenhuma regra |
+| A regra | `src/agendamento/service/elegibilidade-de-nota.service.ts` | Aplica a faixa, cacheia 5 min, pré-aquece por turma |
+| A costura | `disciplinas-do-aluno.service.ts` (`filtrarPorNota`) | Entra depois do CSV, nas DUAS portas — cobre portal, compulsório e balcão de uma vez |
+| A configuração | `PeriodoAgendamento` + `periodo.service.ts` (`FiltroDeNota`) | O admin cadastra a faixa na tela de Períodos |
+
+**Fail-closed, e é a diferença que mais importa.** Com a Valence fora, a N2
+degrada para a turma do launch ("agendar uma prova é melhor que agendar
+nenhuma"). Com filtro de nota, degradar liberaria a substitutiva **sem conferir
+nota nenhuma** — exatamente o que a regra existe para impedir. Então
+`cairParaOLaunch` não vale, `D2L_HABILITADO=false` com faixa cadastrada recusa
+(e loga `error`: é erro de configuração), e o aluno recebe a frase de
+`NOTAS_INDISPONIVEIS`, que fala em **notas** e não em disciplinas.
+
+**O mesmo erro vira coisas opostas nas duas portas**, e é de propósito:
+`cruzar` (portal) o transforma em `motivo` — 200 com o botão desabilitado, como
+todo o resto do portal; `cruzarPorUserId` (compulsório/balcão) o deixa **subir**,
+porque virado texto ele daria uma linha de relatório dizendo "este aluno passou
+de ano" quando a causa foi a rede — e ninguém a reprocessaria. Subindo, vira
+`FALHA_NA_INTEGRACAO`.
+
+**`causa: 'FILTRO_DE_NOTA'` existe para não comparar frase.** É o que separa
+`NAO_ELEGIVEL_PELA_NOTA` de `SEM_DISCIPLINA_AGENDAVEL` no compulsório: o segundo
+manda conferir o CSV de turmas, e quem passou de ano não tem nada para conferir.
+Num lote de substitutiva o motivo novo tende a ser a **maioria** das linhas.
+
+**O compulsório lê as notas por TURMA antes de começar** (fase 0,
+`preCarregarNotas`). Aluno a aluno seriam ~5 chamadas por pessoa — perto de 35
+mil num lote de 7 mil, somadas às 2 que já existem. Por turma são algumas
+centenas, uma vez. Falha de uma turma não para nada: ela volta a ser consultada
+aluno a aluno.
+
+**A faixa é editável com a janela CHEIA**, ao contrário da `rodada`. A rodada é
+fotografia gravada em cada reserva e trocá-la desalinha toda consulta; a faixa
+não é gravada em lugar nenhum, e mexer nela só muda quem agenda daqui para a
+frente. Vai para a auditoria (`PERIODO_FILTRO_DE_NOTA_ALTERADO`) e para o log
+quando já há reservas — as provas existentes **não** são revistas.
+
+**`AgendamentoDisciplina.notaFinal` é fotografia da nota que decidiu.** Nula na
+N2. Existe para responder "por que ele agendou substitutiva desta matéria?" com
+o aluno na frente, meses depois, quando a nota no Brightspace já mudou. O
+fallback `RESERVA_ANTERIOR` do balcão **recopia** a nota antiga e avisa em
+`avisos` que a lista não foi conferida contra a faixa.
+
+**Escopo novo: `grades:gradevalues:read`.** Como todo escopo, ele vive no
+consentimento — acrescentá-lo a `D2L_SCOPES` sem `npm run d2l:autorizar` deixa
+todo GET de nota em 403, e aí *ninguém* agenda a substitutiva. Confira o formato
+real da resposta com `npm run d2l:notas -- <orgUnitId> <userId>` antes de abrir a
+janela: é ele que mostra se `PointsDenominator` já vem 10 (nota fechada) e se a
+rota devolve a **ajustada** quando o professor a lançou. Ver §4.5 da referência.
 
 ### `DELETE /periodos/:id` — vigente é derivado, e por isso se erra fácil
 
@@ -1733,6 +1807,26 @@ aplicar o turno das 07:30.
 - **Cron ligado e nenhum horário cadastrado** avisa (`SENHA_QUIZ_CRON_SEM_HORARIO`)
   em vez de calar; e a tela avisa o inverso (horários salvos com o cron desligado
   no servidor). Um cron que *parece* armado e não está é pior que um desligado.
+- **A tela precisa enxergar o disparo que não foi dela** (20/08/2026). O manual
+  acompanha o lote pelo `id` que o POST devolveu; o do cron não tem dono, e a
+  tela ficava **muda** — nem "trocando agora", nem "acabou". Quem estava com a
+  grade aberta às 07:30 não via nada mudar, e quem chegava às 10h não tinha como
+  responder "a troca da manhã rodou?" sem abrir log de servidor.
+
+  `GET /senhas-de-prova/execucoes/ultima?origem=CRON` é a rota disso, e o filtro
+  por origem não é enfeite: sem ele, um lote manual rodado às 09h esconderia o
+  resultado das 07:30. Devolve **corpo vazio (200), não 404**, quando nunca
+  houve execução — "nunca rodou" é o estado normal de um ambiente recém-configurado
+  e a tela precisa distingui-lo de "não consegui perguntar".
+
+  Do lado da tela (`SenhasDeProvaView.vue`), a vigia pergunta a cada 20s (3s
+  enquanto o cron roda) e **só a diferença entre duas leituras vira toast** —
+  abrir a tela às 10h não pode anunciar a troca das 07:30 como se fosse agora. O
+  cartão, esse, mostra sempre. Duas armadilhas que ela evita de propósito: a
+  execução do cron **não** entra no mesmo estado do disparo manual (apagaria o
+  relatório que o admin está lendo), e a grade **não** se recarrega sozinha
+  quando há senha digitada e não salva (`carregarGrade` zera os rascunhos, e a
+  secretária veria o campo esvaziar sem ter tocado em nada).
 
 ### O resultado que mais dói é o menos barulhento
 

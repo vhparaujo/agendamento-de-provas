@@ -423,4 +423,75 @@ describe('SenhaQuizService', () => {
       ).resolves.toMatchObject({ id: 7, simulacao: false });
     });
   });
+
+  /**
+   * A rota que a tela usa para enxergar o CRON. O disparo automatico nao tem
+   * quem o acompanhe — sem ela, a tela ficava muda enquanto a senha da
+   * instituicao inteira era trocada, e muda depois de a troca acabar.
+   */
+  describe('ultima', () => {
+    const montarConsulta = (recente: Record<string, unknown> | null) => {
+      const findFirst = jest
+        .fn()
+        .mockResolvedValue(recente ? { id: recente.id } : null);
+
+      const prisma = {
+        execucaoSenhaQuiz: {
+          findFirst,
+          findUnique: jest.fn().mockResolvedValue(recente),
+        },
+        itemSenhaQuiz: { groupBy: jest.fn().mockResolvedValue([]) },
+      } as unknown as PrismaService;
+
+      const servico = new SenhaQuizService(
+        prisma,
+        new ConfigService({}),
+        {} as unknown as D2lQuizzesService,
+        {} as unknown as ResolucaoOrgUnitService,
+        {} as unknown as GradeSenhasService,
+        {} as unknown as PeriodoService,
+        {} as unknown as AuditoriaService,
+      );
+
+      return { servico, findFirst };
+    };
+
+    /**
+     * "Nunca rodou" e o estado normal de um ambiente recem-configurado. Se isso
+     * virasse excecao, a tela nao teria como distingui-lo de "nao consegui
+     * perguntar" — e mostraria erro num servidor que esta perfeitamente bem.
+     */
+    it('devolve null quando nunca houve execucao, sem lancar', async () => {
+      const { servico } = montarConsulta(null);
+
+      await expect(servico.ultima()).resolves.toBeNull();
+    });
+
+    /**
+     * Sem o filtro, um lote MANUAL rodado as 09h esconderia o resultado da troca
+     * automatica das 07:30 — justamente a pergunta que a tela precisa responder.
+     */
+    it('com origem CRON, pergunta so pelo disparo automatico', async () => {
+      const { servico, findFirst } = montarConsulta({
+        id: 9,
+        origem: OrigemExecucao.CRON,
+        status: StatusExecucao.CONCLUIDA,
+        data: new Date('2026-09-16T00:00:00.000Z'),
+        turno: Turno.MANHA,
+        comSenhaLida: 3,
+        atualizadoEm: new Date(),
+        concluidoEm: new Date(),
+      });
+
+      await expect(servico.ultima(OrigemExecucao.CRON)).resolves.toMatchObject({
+        id: 9,
+        origem: OrigemExecucao.CRON,
+        data: '2026-09-16',
+      });
+
+      expect(findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { origem: OrigemExecucao.CRON } }),
+      );
+    });
+  });
 });
