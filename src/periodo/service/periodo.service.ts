@@ -176,7 +176,7 @@ export class PeriodoService {
       return {
         ...base,
         encerrado: true,
-        motivo: 'O periodo de agendamento esta fechado.',
+        motivo: 'O período de agendamento está fechado.',
       };
     }
 
