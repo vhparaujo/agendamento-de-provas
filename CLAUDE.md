@@ -259,6 +259,21 @@ Por isso o handoff é em duas etapas, e `PORTAL_ALUNO_URL` decide qual caminho:
 | preenchida | **303** para `{PORTAL_ALUNO_URL}?code=<uuid>` |
 | vazia | o JSON do launch — é assim que se testa sem front |
 
+**O launch que NÃO passa segue a mesma tabela.** Quem clica no link é um aluno
+dentro do AVA, não um cliente de API: com `PORTAL_ALUNO_URL` preenchida, 400/401/
+403/503 viram **303** para `{PORTAL_ALUNO_URL}?erro=<código>`, e o portal mostra
+a tela explicando o caso (`RecadoEntrada.vue` + `erros-de-entrada.ts`, no front).
+Sem ela, o JSON de erro continua de pé — os dois casos têm teste em
+`test/auth.e2e-spec.ts`.
+
+Os códigos são um vocabulário curto e fechado (`CodigoErroLaunch`, em
+`lti.service.ts`): `sem-cadastro` (403), `sessao-invalida` (401),
+`dados-incompletos` (400), `indisponivel` (503) e `falha` (o resto). **A URL não
+carrega matrícula nem mensagem interna** — pelo mesmo motivo do token: ela vai
+para histórico, log de proxy e `Referer`. O detalhe fica no log da aplicação, que
+é onde `codigoDoErro` o escreve antes de traduzir; quem escreve o texto que o
+aluno lê é o front.
+
 O portal então chama `POST /lti/sessao` com o `code` e recebe o token. O código é
 UUID v4, **de uso único**, TTL de 2 min, guardado em `LtiCodeStore` — mesmo
 desenho e mesmas garantias do `state` em `LtiStateStore`, por isso os dois
@@ -1476,17 +1491,40 @@ botão que só produz 403 num banco recém-migrado.
 - **Os meses são uma lista no código**, não `toLocaleDateString('pt-BR')`: o texto
   vai impresso, e não pode mudar de grafia porque a imagem do Node subiu de versão
   ou veio sem os dados completos do ICU.
-- **O layout é o da "Declaração de Prova" do sistema anterior** (Avalia/Grupo A),
-  reproduzido de propósito — é o papel que a secretaria e os alunos reconhecem. As
-  coordenadas em `pdf-declaracao.ts` saem do PDF original.
+- **O layout é o TIMBRADO OFICIAL DA CATÓLICA EAD** para documentos online
+  (21/08/2026). Até então era o da "Declaração de Prova" do sistema anterior
+  (Avalia/Grupo A), com as coordenadas tiradas do PDF daquele fornecedor — um
+  papel que a secretaria reconhecia mas que não seguia a identidade visual da
+  instituição. **O texto não mudou nenhuma palavra**: `textoDaDeclaracao` é a
+  mesma função, e o teste que a lê continua valendo letra por letra.
+- **O timbrado é UMA IMAGEM, e por isso a troca foi barata.** O PDF de origem
+  (`EAD - TIMBRADO PARA DOC. ONLINE.pdf`) não tem texto nem vetor: é um único
+  PNG A4 de 2000×2830 (~240 dpi, 63 KB), extraído para
+  `src/agendamento/assets/timbrado-ead.png` e desenhado de canto a canto como
+  fundo, antes de qualquer texto. Não foi preciso `pdf-lib` nem redesenhar arte
+  — o `pdfkit` embute PNG truecolor sem recodificar.
+- **As medidas do texto saem da arte, não de um gosto.** A margem lateral (46pt)
+  é a do endereço no pé do timbrado; a área branca útil vai de ~100pt (fim da
+  curva do topo) a ~630pt (onde a curva do rodapé invade pela direita), e é ela
+  que limita até onde a assinatura pode descer. O título repete o azul da marca
+  (`#283489`, a cor dominante da arte).
+- **A assinatura acompanha o fim do parágrafo**, 34pt abaixo dele — não um `y`
+  fixo. O documento antigo a ancorava numa altura fixa, e o vão acima dela mudava
+  conforme o nome ocupasse duas ou três linhas (e, sem um piso, ela era impressa
+  POR CIMA do texto que assina). Medindo a partir do texto, os dois casos saem
+  iguais e o piso deixa de existir.
 - **O QR code e as duas linhas de validação ficaram de fora**, por decisão do
   cliente: apontavam para o `ValidacaoCertificados` do fornecedor antigo, que não
   existe deste lado. QR que leva a lugar nenhum é pior que nenhum QR, porque
   convida a conferir. O espaço está livre se um dia houver validação própria.
-- **O logo vai versionado** (`src/agendamento/assets/logo-catolica.png`), ao
-  contrário do da lista de presença, porque o cliente pediu a marca. A leitura
-  continua tolerante à ausência: derrubar o download por causa de um `.png` faltando
-  trocaria um papel imperfeito por papel nenhum.
+- **A arte vai versionada**, ao contrário do logo da lista de presença, porque é
+  a identidade visual que o cliente pediu. A leitura continua tolerante à
+  ausência: derrubar o download por causa de um `.png` faltando trocaria um papel
+  imperfeito por papel nenhum. O `nest build` a copia para o `dist` pelo mesmo
+  `**/*.png` de `nest-cli.json`.
+- **A fonte continua Helvetica.** A arte usa outra família, mas ela vem embutida
+  na imagem — é pixel, não texto, então não há o que casar. Aproximá-la exigiria
+  versionar um `.ttf` e o direito de uso dele.
 - **`Content-Type` e `Content-Disposition` vão no `StreamableFile`**, não num
   `@Header` da rota. `@Header('Content-Type', 'application/pdf')` — o jeito das
   rotas de relatório — marcaria também o 403 de prazo aberto e o 404 de prova

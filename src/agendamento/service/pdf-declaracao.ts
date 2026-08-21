@@ -12,13 +12,18 @@ import PDFDocument from 'pdfkit';
  * pode depender de nada que so o sistema entende (id de faixa, nome de sala,
  * codigo de polo).
  *
- * O layout e o da DECLARACAO DE PROVA do sistema anterior (Avalia/Grupo A),
- * reproduzido de proposito: e o papel que a secretaria e os alunos ja reconhecem.
- * As coordenadas abaixo saem do PDF original, convertidas para o sistema do
- * `pdfkit` (origem no topo-esquerda, e nao no rodape).
+ * O layout e o do TIMBRADO OFICIAL DA CATOLICA EAD para documentos online
+ * (`assets/timbrado-ead.png`): a arte cobre a folha inteira — curvas azuis no
+ * topo-esquerda e no rodape-direita, o selo Great Place to Work e a marca
+ * Catolica EAD no alto a direita, e o endereco da unidade no pe. O texto so
+ * ocupa a area branca no meio.
  *
- * DUAS COISAS DO ORIGINAL FICARAM DE FORA, por decisao do cliente: o QR code e
- * as duas linhas de validacao embaixo dele. Elas apontavam para o
+ * A FRASE E O MESMO TEXTO DE SEMPRE. O que mudou foi so onde ele e como ele e
+ * impresso; `textoDaDeclaracao` nao foi tocada, e o teste dela continua valendo
+ * palavra por palavra.
+ *
+ * DUAS COISAS DO DOCUMENTO ANTIGO FICARAM DE FORA, por decisao do cliente: o QR
+ * code e as duas linhas de validacao embaixo dele. Elas apontavam para o
  * `ValidacaoCertificados` do fornecedor antigo, que nao existe deste lado — um
  * QR que leva a lugar nenhum e pior que nenhum QR, porque convida a conferir.
  * Se um dia houver validacao propria, o espaco esta livre e a assinatura desta
@@ -47,65 +52,84 @@ export interface DeclaracaoDeAgendamento {
 // ----------------------------------------------------------------- geometria
 
 /**
- * A4 em pontos, e as coordenadas do documento original — todas ja em
- * topo-esquerda (`842 - y_do_pdf_original`). Ficam juntas aqui porque so fazem
- * sentido umas em relacao as outras: mexer no titulo sem mexer no sublinhado
- * deixaria o risco flutuando no meio da pagina.
+ * A4 em pontos — a mesma medida da arte do timbrado, que foi desenhada para
+ * esta folha e e impressa nela de canto a canto.
  */
 const PAGINA = { largura: 595, altura: 842 };
 
-/** Canto superior esquerdo, do jeito que o original o posiciona. */
-const LOGO = { x: 32, y: 29.04, largura: 100, altura: 28.96 };
+/**
+ * A MARGEM VEM DO PROPRIO TIMBRADO, e nao de um valor escolhido aqui: o
+ * endereco no pe da arte comeca a 45,8pt da borda. Alinhar o texto com ele e o
+ * que faz a folha parecer um documento so, em vez de um paragrafo solto por
+ * cima de um papel timbrado.
+ */
+const MARGEM = 46;
+const LARGURA_UTIL = PAGINA.largura - 2 * MARGEM;
+
+/**
+ * A FAIXA BRANCA UTIL fica entre ~100pt (onde termina a curva do topo) e ~630pt
+ * (onde a curva do rodape comeca a invadir pela direita). Todo o texto cabe com
+ * folga na parte de cima dela; os `topo` abaixo estao dentro desse intervalo de
+ * proposito, e e ele que limita o quanto a assinatura pode descer.
+ */
+const LIMITE_INFERIOR = 620;
+
+/**
+ * O azul da marca, tirado da propria arte (a cor dominante das curvas e da
+ * caixa do logotipo). O titulo o repete para amarrar o texto ao timbrado —
+ * preto puro no meio de uma folha azul-marinho fica parecendo colado depois.
+ */
+const AZUL = '#283489';
+const PRETO = '#000000';
 
 const TITULO = {
   texto: 'DECLARAÇÃO DE AGENDAMENTO',
-  tamanho: 13,
+  tamanho: 14,
   /**
    * `topo` e o topo da caixa de linha, nao a base do texto: o `pdfkit` desenha
-   * a partir dali. O original tem a base em 141,73 do topo, e a Helvetica sobe
-   * 718/1000 do corpo acima dela — dai o desconto.
+   * a partir dali. Trabalhamos com a base (mais facil de raciocinar quando se
+   * quer um risco embaixo) e descontamos o ascender da Helvetica, 718/1000 do
+   * corpo.
    */
-  topo: 141.73 - (718 / 1000) * 13,
+  base: 200,
   /** O risco embaixo, na largura exata do texto. */
-  linhaY: 143.35,
-  espessura: 0.75,
+  folgaDaLinha: 5,
+  espessura: 1,
 };
 
 const CORPO = {
   tamanho: 11,
-  topo: 175.09 - (718 / 1000) * 11,
+  base: 248,
   /**
-   * A largura em que o paragrafo quebra — a mesma da linha mais larga do
-   * original (595 menos as margens de 32,51 que o iText usou ali). Ela e o que
-   * mantem a quebra depois de "RA", como no documento que a secretaria conhece.
+   * Justificado, e nao centralizado como na versao anterior: com a largura do
+   * timbrado o paragrafo vira um bloco de texto de verdade, e bloco de texto
+   * justificado e o que se espera de uma declaracao. O `pdfkit` deixa a ultima
+   * linha alinhada a esquerda sozinho, que e o comportamento certo.
    */
-  largura: 530,
+  alinhamento: 'justify' as const,
   /**
-   * As duas linhas do original distam 16,49pt de base a base. A Helvetica 11 do
-   * `pdfkit` ja ocupa 12,72 (ascender + descender + gap da propria fonte), entao
-   * o que falta e o `lineGap`.
+   * Entrelinha de 18pt, base a base. A Helvetica 11 do `pdfkit` ja ocupa 12,72
+   * (ascender + descender + gap da propria fonte), entao o que falta e o
+   * `lineGap`.
    */
-  espacoEntreLinhas: 16.49 - (1156 / 1000) * 11,
+  espacoEntreLinhas: 18 - (1156 / 1000) * 11,
 };
 
-const RODAPE = {
+const ASSINATURA = {
   texto: 'UCB | UBEC - Católica',
   tamanho: 11,
-  topo: 232.06 - (718 / 1000) * 11,
   /**
-   * O minimo entre o fim do paragrafo e a assinatura, quando o paragrafo passa
-   * do ponto em que o original a colocava.
+   * A DISTANCIA ATE O FIM DO PARAGRAFO, e nao um `y` fixo na pagina.
    *
-   * A posicao fixa reproduz o documento antigo para o caso comum, mas ela e
-   * comum, nao garantida: nome longo ("MATEUS DA SILVA ALARÇÃO CARNEIRO") ganha
-   * uma linha, e ancorar a assinatura num `y` fixo a faria ser impressa POR CIMA
-   * do texto que ela assina. Com o piso, o caso comum fica identico ao original
-   * e o caso longo empurra a assinatura para baixo.
+   * O documento antigo ancorava a assinatura numa altura fixa, e o tamanho do
+   * espaco em branco acima dela mudava com o nome: "ANA SILVA" cabe em duas
+   * linhas e sobrava um vao; "MATEUS DA SILVA ALARÇÃO CARNEIRO DE VASCONCELOS
+   * FILHO" gasta tres e a assinatura quase encostava no texto — e, sem um piso,
+   * seria impressa POR CIMA dele. Medindo a partir do fim do paragrafo, os dois
+   * casos saem com o mesmo respiro e o piso deixa de ser necessario.
    */
-  folgaMinima: 12,
+  espacoAcima: 34,
 };
-
-const PRETO = '#000000';
 
 /**
  * Helvetica das 14 fontes-padrao do PDF, com `WinAnsiEncoding` — cobre Latin-1
@@ -113,9 +137,10 @@ const PRETO = '#000000';
  * "VINÍCIUS"), sem embutir arquivo de fonte no repositorio. Mesma escolha (e
  * mesmo limite) da lista de presenca.
  *
- * O titulo do original e Helvetica normal desenhada com contorno (`2 Tr`), um
- * negrito falso do iText. Aqui ele e a Helvetica-Bold de verdade: o resultado
- * impresso e o mesmo peso visual, sem depender de largura de traco.
+ * A arte do timbrado usa outra familia, mas ela vem embutida na imagem: e
+ * pixel, nao texto, entao nao ha o que casar. Trocar a Helvetica por uma fonte
+ * proxima exigiria versionar o arquivo `.ttf` e o direito de uso dele — custo
+ * que so faz sentido se o cliente pedir.
  */
 const REGULAR = 'Helvetica';
 const NEGRITO = 'Helvetica-Bold';
@@ -123,6 +148,11 @@ const NEGRITO = 'Helvetica-Bold';
 type Doc = typeof PDFDocument extends new (...args: never[]) => infer T
   ? T
   : never;
+
+/** O ascender da Helvetica, para converter base de texto em topo de caixa. */
+function topoDaCaixa(base: number, tamanho: number): number {
+  return base - (718 / 1000) * tamanho;
+}
 
 // -------------------------------------------------------------------- a frase
 
@@ -196,27 +226,39 @@ export function pdfDeDeclaracao(
     doc.on('error', reject);
   });
 
-  desenharLogo(doc);
+  // Primeiro de tudo: o resto da pagina e desenhado POR CIMA da arte.
+  desenharTimbrado(doc);
   desenharTitulo(doc);
 
   doc
     .font(REGULAR)
     .fontSize(CORPO.tamanho)
     .fillColor(PRETO)
-    .text(textoDaDeclaracao(dados), meio(CORPO.largura), CORPO.topo, {
-      width: CORPO.largura,
-      align: 'center',
-      lineGap: CORPO.espacoEntreLinhas,
-    });
+    .text(
+      textoDaDeclaracao(dados),
+      MARGEM,
+      topoDaCaixa(CORPO.base, CORPO.tamanho),
+      {
+        width: LARGURA_UTIL,
+        align: CORPO.alinhamento,
+        lineGap: CORPO.espacoEntreLinhas,
+      },
+    );
 
-  // `doc.y` e onde o paragrafo terminou. Ver `folgaMinima`.
-  const topoDoRodape = Math.max(RODAPE.topo, doc.y + RODAPE.folgaMinima);
+  // `doc.y` e onde o paragrafo terminou. O teto e a area branca do timbrado:
+  // um nome absurdamente longo nao pode empurrar a assinatura para dentro da
+  // curva azul do rodape, onde ela ficaria ilegivel.
+  const topoDaAssinatura = Math.min(
+    doc.y + ASSINATURA.espacoAcima,
+    LIMITE_INFERIOR,
+  );
 
   doc
     .font(REGULAR)
-    .fontSize(RODAPE.tamanho)
-    .text(RODAPE.texto, 0, topoDoRodape, {
-      width: PAGINA.largura,
+    .fontSize(ASSINATURA.tamanho)
+    .fillColor(PRETO)
+    .text(ASSINATURA.texto, MARGEM, topoDaAssinatura, {
+      width: LARGURA_UTIL,
       align: 'center',
     });
 
@@ -226,23 +268,29 @@ export function pdfDeDeclaracao(
 }
 
 /**
- * A marca no canto, se o arquivo estiver la.
+ * A arte do timbrado, folha inteira, se o arquivo estiver la.
  *
  * OPCIONAL pelo mesmo motivo do logo da lista de presenca: o documento continua
  * valido sem ela — o que declara e o texto —, e derrubar o download por causa de
  * um `.png` ausente trocaria um papel imperfeito por papel nenhum. A diferenca e
- * que este arquivo VAI versionado no repositorio, porque o cliente pediu a marca
- * explicitamente; a tolerancia existe para o caso de o build nao te-lo copiado.
+ * que este arquivo VAI versionado no repositorio, porque e a identidade visual
+ * que o cliente pediu; a tolerancia existe para o caso de o build nao te-lo
+ * copiado.
+ *
+ * Vai esticada de canto a canto (`width`/`height`, e nao `fit`) porque a arte e
+ * exatamente uma A4: no PDF de origem ela ocupa 593,4 x 839,7, e o 1,6pt que
+ * falta e a folga do sangramento. Deixar `fit` a centralizaria com uma tira
+ * branca em duas bordas, que numa arte de sangrar aparece na impressao.
  */
-function desenharLogo(doc: Doc): void {
-  const logo = carregarLogo();
+function desenharTimbrado(doc: Doc): void {
+  const arte = carregarTimbrado();
 
-  if (!logo) return;
+  if (!arte) return;
 
-  // `fit` e nao `width`: se um dia trocarem o arquivo por outro de proporcao
-  // diferente, ele encolhe dentro da caixa em vez de distorcer ou invadir o
-  // titulo.
-  doc.image(logo, LOGO.x, LOGO.y, { fit: [LOGO.largura, LOGO.altura] });
+  doc.image(arte, 0, 0, {
+    width: PAGINA.largura,
+    height: PAGINA.altura,
+  });
 }
 
 /** O titulo centralizado e o risco embaixo dele, na largura exata do texto. */
@@ -250,44 +298,40 @@ function desenharTitulo(doc: Doc): void {
   doc
     .font(NEGRITO)
     .fontSize(TITULO.tamanho)
-    .fillColor(PRETO)
-    .text(TITULO.texto, 0, TITULO.topo, {
-      width: PAGINA.largura,
+    .fillColor(AZUL)
+    .text(TITULO.texto, MARGEM, topoDaCaixa(TITULO.base, TITULO.tamanho), {
+      width: LARGURA_UTIL,
       align: 'center',
     });
 
   // Medido DEPOIS de `font`/`fontSize`: `widthOfString` responde para a fonte
   // corrente, e com a anterior o risco sairia de outro tamanho que o texto.
   const largura = doc.widthOfString(TITULO.texto);
-  const x = meio(largura);
+  const x = (PAGINA.largura - largura) / 2;
+  const y = TITULO.base + TITULO.folgaDaLinha;
 
   doc
     .lineWidth(TITULO.espessura)
-    .strokeColor(PRETO)
-    .moveTo(x, TITULO.linhaY)
-    .lineTo(x + largura, TITULO.linhaY)
+    .strokeColor(AZUL)
+    .moveTo(x, y)
+    .lineTo(x + largura, y)
     .stroke();
 }
 
-/** O x que centraliza uma caixa desta largura na pagina. */
-function meio(largura: number): number {
-  return (PAGINA.largura - largura) / 2;
-}
-
-// ---------------------------------------------------------------------- logo
+// ------------------------------------------------------------------ timbrado
 
 /**
  * `dist/` (build) e `src/` (dev, e tambem producao) — o `nest build` copia
  * `**\/*.png` para o `dist` (ver `nest-cli.json`), e a imagem Docker leva o `src`
  * inteiro. Procurar nos dois cobre os dois jeitos de a aplicacao subir.
  */
-const CAMINHOS_DO_LOGO = [
-  join(__dirname, '..', 'assets', 'logo-catolica.png'),
-  join(process.cwd(), 'src', 'agendamento', 'assets', 'logo-catolica.png'),
+const CAMINHOS_DO_TIMBRADO = [
+  join(__dirname, '..', 'assets', 'timbrado-ead.png'),
+  join(process.cwd(), 'src', 'agendamento', 'assets', 'timbrado-ead.png'),
 ];
 
-function carregarLogo(): Buffer | null {
-  for (const caminho of CAMINHOS_DO_LOGO) {
+function carregarTimbrado(): Buffer | null {
+  for (const caminho of CAMINHOS_DO_TIMBRADO) {
     if (existsSync(caminho)) return readFileSync(caminho);
   }
 

@@ -71,10 +71,11 @@ describe('pdfDeDeclaracao', () => {
   });
 
   /**
-   * Nome longo ganha uma linha no paragrafo, e a assinatura tem posicao fixa
-   * herdada do documento original. Sem o piso de `folgaMinima` ela seria
-   * impressa POR CIMA do texto que assina — continua sendo um PDF valido, e o
-   * defeito so aparece a olho.
+   * Nome longo ganha uma linha no paragrafo, e a assinatura desce junto — ela e
+   * medida a partir do fim do texto, nao de um `y` fixo. O defeito que isso
+   * evita (assinatura impressa POR CIMA do texto que assina) nao quebra o PDF,
+   * so aparece a olho; aqui o teste cobre a geracao, e o layout se confere no
+   * papel.
    */
   it('nao quebra com nome longo, que empurra a assinatura para baixo', async () => {
     const pdf = await pdfDeDeclaracao({

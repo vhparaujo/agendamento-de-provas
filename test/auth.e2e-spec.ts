@@ -222,6 +222,70 @@ describe('Auth admin (e2e)', () => {
     }
   });
 
+  /**
+   * ==========================================================================
+   * O LAUNCH QUE NAO PASSA TERMINA EM TELA, NAO EM JSON
+   * ==========================================================================
+   * Quem clica no link e um aluno dentro do AVA, nao um cliente de API: um 403
+   * com JSON cru na tela nao diz a ele o que fazer. Com `PORTAL_ALUNO_URL`
+   * preenchida, o erro vira redirect para o portal com `?erro=<codigo>` — e o
+   * portal escreve o recado (`erros-de-entrada.ts`, no front).
+   *
+   * O par de casos existe junto de proposito: o segundo prova que o JSON de erro
+   * continua de pe sem portal configurado, que e como se testa o launch sem front.
+   */
+  const comPortal = (portal?: string) => {
+    const config = app.get(ConfigService);
+    const original = config.get.bind(config) as (chave: string) => unknown;
+
+    return jest
+      .spyOn(config, 'get')
+      .mockImplementation((chave: string) =>
+        chave === 'PORTAL_ALUNO_URL'
+          ? portal
+          : chave.startsWith('LTI_')
+            ? LTI_COMPLETO[chave as keyof typeof LTI_COMPLETO]
+            : original(chave),
+      );
+  };
+
+  it('launch invalido com portal configurado redireciona com ?erro=', async () => {
+    const spy = comPortal('https://portal.exemplo.test/aluno');
+
+    try {
+      const res = await request(app.getHttpServer())
+        .post('/api/lti/launch')
+        .send({}) // sem id_token nem state
+        .expect(303);
+
+      const destino = new URL(res.headers.location);
+
+      expect(destino.origin + destino.pathname).toBe(
+        'https://portal.exemplo.test/aluno',
+      );
+      expect(destino.searchParams.get('erro')).toBe('dados-incompletos');
+
+      // O detalhe tecnico fica no log, nao na URL: ela vai para historico do
+      // navegador, log de proxy e header `Referer`.
+      expect(destino.searchParams.get('message')).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('launch invalido sem portal configurado continua respondendo o JSON de erro', async () => {
+    const spy = comPortal(undefined);
+
+    try {
+      await request(app.getHttpServer())
+        .post('/api/lti/launch')
+        .send({})
+        .expect(400);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('publica o JWKS da ferramenta', async () => {
     await request(app.getHttpServer())
       .get('/api/lti/jwks')

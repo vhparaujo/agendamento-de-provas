@@ -168,6 +168,25 @@ mensagem — não tente resgatar de novo, porque não vai funcionar.
 Quando `PORTAL_ALUNO_URL` está vazia no backend, `/lti/launch` responde o JSON do
 launch direto, sem redirect. É o modo de teste, não o de produção.
 
+**Quando o launch não passa, o redirect também acontece** — com `?erro=<código>`
+no lugar do `?code=`:
+
+```
+POST /api/lti/launch  (Brightspace → API)
+   ↓ 303  (em vez de 400/401/403/503)
+{PORTAL_ALUNO_URL}?erro=sem-cadastro     (navegador → portal)
+```
+
+O front trata igual ao `code`: lê, mostra a tela e **limpa a query** com
+`router.replace`. Os códigos são fechados — `sem-cadastro`, `sessao-invalida`,
+`dados-incompletos`, `indisponivel`, `falha` — e valor desconhecido cai em
+`falha`, porque a URL vem do navegador do aluno e pode ter sido editada à mão.
+
+**A URL não carrega a mensagem de erro**, pela regra da seção 1: ela iria para
+histórico, log de proxy e `Referer`, e a mensagem interna cita matrícula e nome
+de variável de ambiente. O texto que o aluno lê é do front
+(`src/views/aluno/erros-de-entrada.ts`); o detalhe fica no log da API.
+
 ### 4.2 Aluno com mais de um curso (`precisaEscolherCurso`)
 
 `POST /api/lti/launch` responde com um array `vinculos`. Se

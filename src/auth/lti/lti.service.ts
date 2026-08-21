@@ -1,6 +1,8 @@
 import {
   BadRequestException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Injectable,
   Logger,
   ServiceUnavailableException,
@@ -25,6 +27,41 @@ import {
 } from './lti.config';
 import { LtiCodeStore } from './lti-code.store';
 import { LtiStateStore } from './lti-state.store';
+
+/**
+ * Por que o launch nao passou, no vocabulario do PORTAL — nao no do HTTP.
+ *
+ * E uma lista curta de proposito: e ela que viaja na URL do redirect, e a URL
+ * vai para historico do navegador, log de proxy e header `Referer`
+ * (docs/SEGURANCA-FRONTEND.md, secao 1). Entao ela nao carrega matricula, nome
+ * de variavel de ambiente, nem nada do detalhe tecnico — quem escreve o texto
+ * que o aluno le e o front, a partir deste codigo.
+ *
+ * O detalhe continua existindo: vai para o log da aplicacao e, nos casos que
+ * envolvem uma pessoa identificada, para a auditoria (`LTI_LAUNCH_RECUSADO`).
+ */
+export type CodigoErroLaunch =
+  /** 403 — matricula valida no LMS, mas ausente da base importada. */
+  | 'sem-cadastro'
+  /** 401 — id_token, state ou nonce invalidos; link reaberto fora do AVA. */
+  | 'sessao-invalida'
+  /** 400 — o launch chegou sem `id_token` ou sem `state`. */
+  | 'dados-incompletos'
+  /** 503 — faltam variaveis LTI_* no ambiente. Problema nosso, nao do aluno. */
+  | 'indisponivel'
+  /** Qualquer outra coisa — inesperado, e por isso vai para o log como erro. */
+  | 'falha';
+
+/**
+ * De que status HTTP nasce cada codigo. Fora desta tabela, o erro e inesperado
+ * por definicao — e vira `falha`, com stack no log.
+ */
+const CODIGO_POR_STATUS: Record<number, CodigoErroLaunch> = {
+  [HttpStatus.BAD_REQUEST]: 'dados-incompletos',
+  [HttpStatus.UNAUTHORIZED]: 'sessao-invalida',
+  [HttpStatus.FORBIDDEN]: 'sem-cadastro',
+  [HttpStatus.SERVICE_UNAVAILABLE]: 'indisponivel',
+};
 
 export interface IniciacaoOidc {
   iss?: string;
@@ -265,6 +302,75 @@ export class LtiService {
     url.searchParams.set('code', this.codeStore.criar(resultado));
 
     return url.toString();
+  }
+
+  /**
+   * Para onde mandar o navegador do aluno quando o launch NAO passa.
+   *
+   * Sem isto, uma matricula fora da base termina o clique do aluno num JSON cru
+   * de 403 na tela — que nao diz o que fazer, nao parece a universidade e ainda
+   * expoe a mensagem interna. Com isto ele cai na mesma tela do portal, com o
+   * recado escrito para quem nao e da TI.
+   *
+   * `undefined` quando `PORTAL_ALUNO_URL` nao esta configurada: sem front nao ha
+   * tela para mostrar, e a rota volta a responder o JSON de erro de sempre — que
+   * e justamente como se testa o launch sem portal.
+   *
+   * NAO usa `exigirConfig()` de proposito: o erro que estamos traduzindo pode
+   * ser exatamente o dela (503, faltam variaveis LTI_*), e ai a tentativa de
+   * montar o destino morreria com a mesma excecao que veio tratar.
+   */
+  montarDestinoDeErro(erro: unknown): string | undefined {
+    const destino = carregarLtiConfig(this.config).portalAlunoUrl;
+
+    if (!destino) return undefined;
+
+    const url = new URL(destino);
+
+    url.searchParams.set('erro', this.codigoDoErro(erro));
+
+    return url.toString();
+  }
+
+  /**
+   * Traduz a excecao para o vocabulario do portal.
+   *
+   * O mapa e por STATUS e nao por `instanceof` porque cobre tambem as subclasses
+   * e qualquer excecao que outra camada resolva lancar com o mesmo status.
+   *
+   * Aqui e o ultimo ponto onde o detalhe tecnico ainda esta em maos: dali para a
+   * frente so viaja o codigo. Por isso o log acontece nesta funcao — sem ele, um
+   * launch que falhe por LTI_CLAIM_* errado viraria "sessao invalida" na tela do
+   * aluno, e silencio no servidor.
+   */
+  private codigoDoErro(erro: unknown): CodigoErroLaunch {
+    const mensagem = erro instanceof Error ? erro.message : String(erro);
+
+    const codigo =
+      erro instanceof HttpException
+        ? CODIGO_POR_STATUS[erro.getStatus()]
+        : undefined;
+
+    if (!codigo) {
+      // Inesperado: o redirect esconde o stack do aluno, entao ele precisa
+      // aparecer inteiro no log — e o unico registro que sobra deste caso.
+      this.logger.error(
+        `Falha inesperada no launch LTI: ${mensagem}`,
+        erro instanceof Error ? erro.stack : undefined,
+      );
+
+      return 'falha';
+    }
+
+    // `indisponivel` e configuracao faltando: problema NOSSO, nao do aluno, e
+    // por isso sobe de nivel — ninguem vai agendar nada ate alguem olhar.
+    if (codigo === 'indisponivel') {
+      this.logger.error(`Launch LTI indisponivel: ${mensagem}`);
+    } else {
+      this.logger.warn(`Launch LTI recusado (${codigo}): ${mensagem}`);
+    }
+
+    return codigo;
   }
 
   /**

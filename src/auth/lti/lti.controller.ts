@@ -33,7 +33,7 @@ import {
 import { ResgatarSessaoDto } from '../dto/resgatar-sessao.dto';
 import { LtiKeysService } from './lti-keys.service';
 import { LtiService } from './lti.service';
-import type { IniciacaoOidc } from './lti.service';
+import type { IniciacaoOidc, ResultadoLaunch } from './lti.service';
 
 interface CorpoLaunch {
   id_token?: string;
@@ -171,7 +171,11 @@ export class LtiController {
   @ApiResponse({
     status: 303,
     description:
-      'PORTAL_ALUNO_URL configurada: redirect para o portal com `?code=` de uso unico',
+      'PORTAL_ALUNO_URL configurada: redirect para o portal com `?code=` de uso unico. ' +
+      '**Tambem no erro** — em vez de 400/401/403/503 o navegador vai para ' +
+      '`?erro=<codigo>` e o portal mostra a tela explicando o que aconteceu ' +
+      '(`sem-cadastro`, `sessao-invalida`, `dados-incompletos`, `indisponivel`, ' +
+      '`falha`). Os status abaixo so aparecem com `PORTAL_ALUNO_URL` vazia.',
   })
   @ApiBadRequestResponse({ description: 'id_token ou state ausentes' })
   @ApiUnauthorizedResponse({
@@ -185,10 +189,27 @@ export class LtiController {
       'nem polo, entao nao ha o que agendar',
   })
   async launch(@Body() body: CorpoLaunch, @Res() res: Response): Promise<void> {
-    const resultado = await this.ltiService.processarLaunch(
-      body.id_token ?? '',
-      body.state ?? '',
-    );
+    let resultado: ResultadoLaunch;
+
+    try {
+      resultado = await this.ltiService.processarLaunch(
+        body.id_token ?? '',
+        body.state ?? '',
+      );
+    } catch (erro) {
+      const destinoDeErro = this.ltiService.montarDestinoDeErro(erro);
+
+      // Sem portal configurado nao ha tela onde mostrar o recado: deixa a
+      // excecao subir e virar o JSON de erro de sempre.
+      if (!destinoDeErro) throw erro;
+
+      // O aluno clicou num link dentro do AVA — quem chega aqui nao e um cliente
+      // de API, e uma pessoa. Um 403 com JSON cru na tela nao diz a ela o que
+      // fazer; o portal diz. Mesmo 303 do caminho feliz, pela mesma razao: o
+      // launch e POST e o navegador precisa buscar o portal com GET.
+      res.redirect(HttpStatus.SEE_OTHER, destinoDeErro);
+      return;
+    }
 
     const destino = this.ltiService.montarDestinoDoPortal(resultado);
 

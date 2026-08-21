@@ -996,10 +996,13 @@ semestre vigente — cancelada não emite. É **uma declaração por prova**, n�
 pessoa: quem tem dois cursos faz duas provas, em dias diferentes, e cada uma
 justifica uma ausência diferente.
 
-O layout reproduz a "Declaração de Prova" do sistema anterior (Avalia/Grupo A),
-que a secretaria e os alunos já reconhecem, sem o QR code e as duas linhas de
-validação — eles apontavam para o serviço do fornecedor antigo, que não existe
-deste lado. A marca fica em `src/agendamento/assets/logo-catolica.png`.
+O layout segue o **timbrado oficial da Católica EAD** para documentos online: a
+arte cobre a folha inteira (curvas azuis, o selo Great Place to Work e a marca no
+alto, o endereço da unidade no pé) e o texto ocupa a área branca, alinhado à
+mesma margem do rodapé da arte. O texto declarado é o de sempre — a troca foi só
+de layout. Ficam de fora o QR code e as duas linhas de validação do documento
+antigo: apontavam para o serviço do fornecedor anterior, que não existe deste
+lado. A arte fica em `src/agendamento/assets/timbrado-ead.png`.
 
 Toda alteração registra **quem a fez**, e o administrador consulta em
 `GET /agendamentos/:id/historico`. É a resposta para "mudaram minha prova e não
@@ -1620,6 +1623,9 @@ ar (a menos de `SWAGGER_ENABLED=true`), o `LTI_DEBUG_CLAIMS` é ignorado, e o
 **`PORTAL_ALUNO_URL` vazia é a pegadinha mais fácil de deixar passar**: sem ela o
 `POST /lti/launch` responde o JSON do launch em vez de redirecionar — é o modo de
 teste. O aluno vê um blob de JSON no lugar do portal, e nada no log parece errado.
+Vale **também para o erro**: com a variável preenchida, um launch recusado vira
+`303` para `{PORTAL_ALUNO_URL}?erro=<código>` e o portal explica o caso; sem ela,
+quem não está na base importada termina o clique num `403` em JSON na tela.
 
 **A autorização OAuth feita no ngrok não vale em produção**: o `redirect_uri` do
 refresh não vai bater. Autorize de novo, já apontando para o domínio real.
