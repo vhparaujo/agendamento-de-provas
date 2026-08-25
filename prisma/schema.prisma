@@ -91,6 +91,7 @@ model Modalidade {
   alunos       AlunoImportado[]
   salaFaixas   SalaFaixa[]
   agendamentos Agendamento[] // fotografia da modalidade do aluno na reserva
+  janelas      JanelaDeProva[] // horarios do questionario no dia da prova
 
   @@map("modalidade")
 }
@@ -717,6 +718,26 @@ enum OrigemExecucao {
   CRON
 }
 
+/// O QUE aquele lote foi mexer no questionario.
+///
+/// Os dois compartilham TUDO — a resolucao de orgUnitId, a tabela de execucao, o
+/// relatorio, o guard de "so um lote por vez". O discriminador existe porque o
+/// RECORTE difere: SENHA aplica uma celula da grade em TODAS as turmas do CSV;
+/// DATA aplica a janela de cada MODALIDADE, e por isso precisa saber a
+/// modalidade de cada turma (derivada dos agendamentos).
+///
+/// ⚠️ Eles moram na MESMA tabela de proposito, e nao por economia de codigo. Os
+/// dois fazem GET -> altera -> PUT no MESMO questionario, e o PUT substitui o
+/// objeto inteiro. Rodando em paralelo, os dois leriam antes de qualquer um
+/// gravar e o segundo PUT apagaria a alteracao do primeiro — o campo do outro
+/// lote voltaria ao valor antigo, em silencio. `recusarSeJaRodando()` serializa
+/// consultando ESTA tabela; com tabelas separadas ele teria de consultar as duas,
+/// e esquecer isso seria exatamente o bug que ninguem ve ate o dia da prova.
+enum TipoExecucaoQuiz {
+  SENHA
+  DATA
+}
+
 /// UMA celula da grade: dia x turno -> senha.
 ///
 /// Sem linha aqui, NADA acontece naquele turno. Esse e o humano no circuito que
@@ -800,16 +821,43 @@ model ExecucaoSenhaQuiz {
   /// e-mail do admin, ou "cron".
   iniciadoPor String
 
+  /// SENHA ou DATA. `@default(SENHA)` e o que classifica as execucoes que ja
+  /// existiam quando esta coluna nasceu — elas eram todas de senha.
+  tipo TipoExecucaoQuiz @default(SENHA)
+
   /// FK OPCIONAL de proposito: apagar a senha antiga (retencao) NAO pode apagar
   /// a prova de que o lote rodou. Por isso data/turno tambem sao desnormalizados.
+  ///
+  /// NULO em toda execucao `DATA` — ela nao le celula nenhuma da grade.
   senhaDeProvaId  Int?
+  /// O DIA que o lote mirou. Preenchido nos dois tipos: numa execucao `DATA` e o
+  /// dia que o questionario passa a ter, ja com o `diaSeguinte` aplicado.
   data            DateTime @db.Date
-  turno           Turno
+  /// NULO em `DATA`: turno e a chave da grade de SENHAS, e a grade continua com
+  /// tres turnos. Uma execucao de datas se identifica pela janela, abaixo.
+  turno           Turno?
   periodoLetivoId String
+
+  /// A janela aplicada. NULA em `SENHA`.
+  ///
+  /// FK opcional pelo mesmo motivo de `senhaDeProvaId`: apagar uma janela do
+  /// calendario nao pode apagar a prova de que o lote rodou. Por isso as horas
+  /// tambem sao desnormalizadas abaixo.
+  janelaDeProvaId    Int?
+  /// Congeladas no inicio, como `nomeQuizAlvo`: a janela pode ser editada na tela
+  /// durante a execucao, e o registro precisa dizer o que REALMENTE foi aplicado.
+  /// Nulas em `SENHA`.
+  horaInicioAplicada String? @db.VarChar(5)
+  horaFimAplicada    String? @db.VarChar(5)
 
   /// Congelados no inicio: a celula e a configuracao podem ser editadas durante
   /// a execucao, e o registro precisa dizer o que REALMENTE foi aplicado.
-  versaoAplicada Int
+  ///
+  /// Em `SENHA` e a versao da CELULA; em `DATA`, a da JANELA. Nos dois casos
+  /// responde a mesma pergunta — "qual versao da configuracao foi realmente
+  /// aplicada?" —, e e o que faz a idempotencia do cron liberar um novo disparo
+  /// quando o admin corrige o horario ou a senha.
+  versaoAplicada Int?
   nomeQuizAlvo   String
   matchQuizAlvo  TipoMatchQuiz
 
@@ -818,6 +866,16 @@ model ExecucaoSenhaQuiz {
   turmasResolvidas   Int @default(0)
   /// Quantos orgUnitId foram aprendidos NESTA execucao. Sinal de CSV novo.
   orgUnitsAprendidos Int @default(0)
+
+  /// Fase 1b, so em `DATA` — quantas turmas resolvidas ficaram DE FORA porque a
+  /// modalidade nao pode ser derivada dos agendamentos.
+  ///
+  /// Sao os dois contadores mais importantes do lote de datas, e pelo mesmo
+  /// motivo de `naoEncontradas`: nao sao falha de rede nem erro de ninguem, e
+  /// cada um e uma turma inteira que ficaria com a data velha — ou seja, alunos
+  /// que nao abrem a prova. Zero falhas com 30 aqui e um desastre silencioso.
+  semModalidade     Int @default(0)
+  modalidadeAmbigua Int @default(0)
 
   /// Fase 2 — os quizzes.
   processadas    Int @default(0)
@@ -846,12 +904,19 @@ model ExecucaoSenhaQuiz {
   /// sempre e bloquearia todo lote seguinte.
   atualizadoEm DateTime  @updatedAt
 
-  senhaDeProva SenhaDeProva?   @relation(fields: [senhaDeProvaId], references: [id], onDelete: SetNull)
-  itens        ItemSenhaQuiz[]
+  senhaDeProva  SenhaDeProva?   @relation(fields: [senhaDeProvaId], references: [id], onDelete: SetNull)
+  janelaDeProva JanelaDeProva?  @relation(fields: [janelaDeProvaId], references: [id], onDelete: SetNull)
+  itens         ItemSenhaQuiz[]
 
   /// A consulta de idempotencia do cron: "esta celula ja foi aplicada de verdade?"
   @@index([data, turno, simulacao, status])
+  /// A mesma pergunta do lado das datas: "esta janela ja foi aplicada hoje?".
+  /// `data` entra porque a janela se repete todo dia — sem ela, aplicar a janela
+  /// das 15:00 numa segunda impediria a de terca.
+  @@index([janelaDeProvaId, data, simulacao, status])
   @@index([status])
+  /// `ultima(origem, tipo)`, consultada em laco por toda tela aberta.
+  @@index([tipo, origem, id])
   @@map("execucao_senha_quiz")
 }
 
@@ -868,6 +933,19 @@ enum ResultadoSenhaQuiz {
   ORGUNIT_NAO_RESOLVIDO
   /// Duas ofertas casaram a mesma linha. NAO se escolhe uma: alguem decide.
   ORGUNIT_AMBIGUO
+
+  /// So em execucoes `DATA`. Nenhum agendamento CONFIRMADO aponta para esta
+  /// turma no periodo+rodada vigentes, entao nao ha de onde derivar a modalidade
+  /// — e sem modalidade nao ha janela. Ou ninguem agendou ainda, ou a turma do
+  /// CSV nao tem prova nesta rodada.
+  SEM_AGENDAMENTO
+
+  /// So em execucoes `DATA`. Alunos de DUAS modalidades diferentes tem prova
+  /// nesta turma, e o questionario tem UMA janela so. Escolher a maioria
+  /// deixaria a minoria sem conseguir abrir a prova, e o erro so apareceria no
+  /// dia — entao nada e gravado. Mesma regra de ORGUNIT_AMBIGUO.
+  MODALIDADE_AMBIGUA
+
   FALHA_AO_LISTAR
   FALHA_AO_LER
   FALHA_AO_GRAVAR
@@ -896,6 +974,22 @@ model ItemSenhaQuiz {
   /// postura de seguranca no cabecalho de senha-quiz.service.ts.
   senhaAnteriorLida Boolean @default(false)
 
+  /// So em execucoes `DATA`. O codigo da modalidade DERIVADA para esta turma
+  /// ("EAD", "SEMI", ...). Guardado como texto, e nao como FK, pelo mesmo motivo
+  /// de `codigoTurma`: o CSV do relatorio precisa dele sem join. Nulo quando a
+  /// derivacao falhou — que e justamente o caso que o relatorio existe para
+  /// mostrar.
+  modalidadeCodigo String?
+
+  /// So em execucoes `DATA`: a janela que o questionario passou a ter, em UTC —
+  /// o mesmo instante que foi para o `StartDate`/`EndDate` do PUT.
+  ///
+  /// Existe para responder "por que a prova abriu as 16h?" depois, com o cliente
+  /// na frente, mesmo que a janela ja tenha sido editada na tela. Fotografia,
+  /// como `AgendamentoDisciplina.notaFinal`.
+  startDateAplicado DateTime?
+  endDateAplicado   DateTime?
+
   detalhe String? @db.Text
 
   execucao ExecucaoSenhaQuiz @relation(fields: [execucaoId], references: [id], onDelete: Cascade)
@@ -903,4 +997,116 @@ model ItemSenhaQuiz {
   @@index([execucaoId])
   @@index([resultado])
   @@map("item_senha_quiz")
+}
+
+// ----------------------------------------------------------------------------
+// JANELA DE PROVA — a que horas o questionario abre e fecha, por MODALIDADE
+// ----------------------------------------------------------------------------
+//
+// Uma linha = um DISPARO. `horaDisparo` diz quando o cron aplica; `horaInicio` e
+// `horaFim` sao o StartDate e o EndDate que o questionario passa a ter. No dia
+// da prova o questionario fica aberto SO durante a sessao corrente, e a senha da
+// grade continua sendo o segundo fator.
+//
+// POR QUE POR MODALIDADE: a duracao da prova vem dela (EaD 3h, Semi/Modular 1h30
+// — ver `Modalidade.duracaoMinutos`), entao EaD cabe em 3 sessoes por dia e
+// Semi/Modular em 6. Nao ha um calendario unico possivel.
+//
+// POR QUE NO BANCO, E NAO CONSTANTE NO CODIGO: mesmo caminho que
+// `ConfiguracaoSenhaQuiz.horaManha/Tarde/Noite` seguiu em 19/08/2026, e pelo
+// mesmo motivo — quem conhece o calendario e a secretaria, que nao faz deploy.
+// Diferenca deliberada em relacao aquela tabela: AQUI HA SEED. O alvo do quiz
+// nao podia ter default (um nome plausivel casaria com o questionario errado em
+// silencio), mas um horario errado nao "casa" com nada: ou o admin o corrige na
+// tela, ou o dry-run o mostra. O custo de nao semear seria pior — um ambiente
+// novo subiria sem janela nenhuma e o cron nunca dispararia.
+//
+// O par (`horaInicio`, `horaFim`) NAO e derivado de `Faixa`. As faixas de hoje
+// batem com estes horarios, mas faixa e polo+sala+vaga: um dia sem faixa
+// cadastrada deixaria o questionario sem janela, e a prova nao abriria.
+model JanelaDeProva {
+  id           Int    @id @default(autoincrement())
+  modalidadeId Int
+  /// Sequencia da janela DENTRO da modalidade. Nao e ordem cronologica do dia:
+  /// a janela que dispara as 22:01 e a primeira (ela arma a prova das 09:00 de
+  /// amanha) e mesmo assim e a ultima do relogio.
+  ordem        Int
+  /// "HH:MM" em America/Sao_Paulo, quando o cron aplica. Ver `janela.ts`.
+  horaDisparo  String @db.VarChar(5)
+  /// "HH:MM" — vira o `StartDate` do questionario, convertido para UTC-Z.
+  horaInicio   String @db.VarChar(5)
+  /// "HH:MM" — vira o `EndDate`.
+  horaFim      String @db.VarChar(5)
+
+  /// A celula da GRADE DE SENHAS que esta janela usa.
+  ///
+  /// ⚠️ Nao e enfeite de relatorio: e o que impede o lote de datas de APAGAR a
+  /// senha de toda prova da instituicao. O PUT substitui o objeto inteiro, entao
+  /// ele precisa reenviar `Password` — e o GET **pode devolver `Password: null`
+  /// num questionario que tem senha** (o `QuizReadData` so expoe o campo se for
+  /// "nao nulo E visivel ao contexto do chamador"). Preservar a leitura seria o
+  /// bug que o comentario de `ExecucaoSenhaQuiz.comSenhaLida` ja registrava
+  /// sobre o CLI de origem. Com o turno aqui, o lote de datas le a senha da
+  /// GRADE — a mesma fonte autoritativa do lote de senhas — e a define.
+  ///
+  /// E DECLARADO, nao derivado de `horaInicio`. Derivar exigiria cravar no
+  /// codigo onde a manha vira tarde, e a resposta muda por instituicao e por
+  /// semestre; a grade tem tres turnos e o calendario de Semi/Modular tem seis
+  /// janelas, entao o mapa e N:1 e quem o conhece e a secretaria. E a mesma
+  /// recusa que `turno.ts` ja faz para `Faixa.horaInicio`.
+  ///
+  /// Consequencia aceita (decisao do cliente, 25/08/2026): em Semi/Modular, duas
+  /// janelas seguidas do mesmo turno dividem a mesma senha.
+  turno Turno
+
+  /// O disparo aponta para AMANHA, nao para hoje.
+  ///
+  /// E o ultimo disparo do dia: ele fecha a noite armando a PRIMEIRA sessao da
+  /// manha seguinte. Sem esta coluna, a janela das 08:30 teria de ser aplicada
+  /// de madrugada — um disparo a mais, num horario em que ninguem esta olhando
+  /// se ele falhou.
+  ///
+  /// ⚠️ **DERIVADO, nao configurado** (25/08/2026). Vale exatamente
+  /// `horaDisparo > horaInicio`: se o disparo acontece depois da hora de
+  /// abertura, ele nao PODE ser para hoje — nao da para abrir uma prova as 08:30
+  /// quando ja sao 22:01. Foi um checkbox na tela por um dia, e nao havia
+  /// resposta certa que o admin pudesse dar; marcar "hoje" ali produzia uma prova
+  /// que abre no passado, que a API aceita e nasce fechada.
+  ///
+  /// Fica GRAVADO mesmo sendo derivado, como `AlunoImportado.ativo`: e o que faz
+  /// a tabela ser legivel sozinha e o que o cron le sem recalcular. O calculo
+  /// roda em toda escrita (`salvarJanelas` e o seed), entao so um UPDATE manual
+  /// no banco desalinharia. A regra vive em `ehDoDiaSeguinte` (`janela.ts`).
+  diaSeguinte Boolean @default(false)
+
+  /// Desligar a janela sem apagar a linha, para nao perder o horario cadastrado
+  /// quando um semestre tiver menos sessoes que o outro.
+  ativo Boolean @default(true)
+
+  /// Sobe 1 a cada mudanca de HORARIO (nao a cada save).
+  ///
+  /// ⚠️ Gemea de `SenhaDeProva.versao`, e nasceu do mesmo bug — que aconteceu de
+  /// verdade em 25/08/2026. A idempotencia do cron pergunta "esta janela ja
+  /// rodou hoje?", e o `upsert` de `salvarJanelas` PRESERVA o id da linha. Sem a
+  /// versao, corrigir o horario de uma janela que ja disparou no mesmo dia nao a
+  /// libera: o cron encontra a execucao concluida daquele id e pula, EM
+  /// SILENCIO. O admin salva as 12:43, espera as 12:45 e nao acontece nada — e
+  /// so no dia seguinte funciona.
+  ///
+  /// Sobe so quando o horario MUDA (nao em todo PUT) pelo mesmo motivo da senha:
+  /// salvar de novo o mesmo calendario nao pode fazer o lote inteiro rodar outra
+  /// vez em toda a instituicao.
+  versao Int @default(1)
+
+  /// Fotografia do e-mail, como em `SenhaDeProva.atualizadoPor`.
+  atualizadoPor String?
+  atualizadoEm  DateTime @updatedAt
+
+  modalidade Modalidade @relation(fields: [modalidadeId], references: [id])
+
+  execucoes ExecucaoSenhaQuiz[]
+
+  @@unique([modalidadeId, ordem])
+  @@index([modalidadeId])
+  @@map("janela_de_prova")
 }

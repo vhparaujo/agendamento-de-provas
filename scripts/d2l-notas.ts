@@ -66,7 +66,10 @@ async function main(): Promise<void> {
     new AuditoriaService(),
   );
 
-  const grades = new D2lGradesService(config, new D2lHttpService(config, oauth));
+  const grades = new D2lGradesService(
+    config,
+    new D2lHttpService(config, oauth),
+  );
 
   try {
     console.log(`\nAPI LE ${grades.versaoDaApi()} · turma ${orgUnitId}\n`);

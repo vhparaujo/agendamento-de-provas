@@ -6,12 +6,14 @@ import { D2lQuizzesService } from '../../d2l/service/d2l-quizzes.service';
 import {
   OrigemExecucao,
   StatusExecucao,
+  TipoExecucaoQuiz,
   Turno,
 } from '../../generated/prisma/client';
 import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 import { carregarConfigDoCron } from '../config/senha-quiz.config';
 import { GradeSenhasService } from './grade-senhas.service';
-import { agoraNaOperacao, isoDeDataUtc } from './relogio';
+import { janelasParaDisparar } from './janela';
+import { agoraNaOperacao, diaSeguinteDe, isoDeDataUtc } from './relogio';
 import { SenhaQuizService } from './senha-quiz.service';
 import { minutosDaHora, rotuloDoTurno, turnoParaDisparar } from './turno';
 
@@ -40,6 +42,26 @@ import { minutosDaHora, rotuloDoTurno, turnoParaDisparar } from './turno';
  * e sair — mas a chave de operacao continua sendo `SENHA_QUIZ_CRON_HABILITADO=false`
  * na replica extra. E por isso que ESSA chave ficou no .env quando os horarios
  * foram para o banco: ela e por instancia, os horarios sao da instituicao.
+ *
+ * ============================================================================
+ * DESDE 25/08/2026 O TICK DECIDE DUAS COISAS
+ * ============================================================================
+ * A SENHA (uma celula da grade, em todas as turmas) e a DATA (uma janela, nas
+ * turmas de uma modalidade). Sao dois calendarios independentes: tres horarios
+ * de turno contra ate seis janelas por modalidade.
+ *
+ * ⚠️ **UM DISPARO POR TICK, e nunca dois.** Os dois lotes fazem GET -> altera ->
+ * PUT no MESMO questionario, e o PUT substitui o objeto inteiro;
+ * `recusarSeJaRodando()` ja os serializa, entao tentar dois no mesmo minuto so
+ * produziria um 409 e uma linha de erro. Em vez disso o tick escolhe UM e deixa
+ * o resto para o minuto seguinte — a janela de tolerancia (30 min por padrao)
+ * cobre folgadamente os tres disparos que as 12:01 tem a fazer.
+ *
+ * A DATA VEM PRIMEIRO quando as duas competem. Se o questionario ficar sem a
+ * janela nova, ele continua fechado (ou aberto na sessao anterior) e ninguem faz
+ * a prova; se ficar com a senha do turno anterior por mais um minuto, o pior
+ * caso e um aluno usando a senha velha numa prova que ja esta aberta para ele.
+ * A primeira falha impede a prova, a segunda so a adianta.
  */
 @Injectable()
 export class SenhaQuizCron {
@@ -86,6 +108,11 @@ export class SenhaQuizCron {
     if (!cfg.habilitado) return;
 
     const { data, hhmm } = agoraNaOperacao();
+
+    // (0) A DATA VEM PRIMEIRO. Ver o cabecalho: sem a janela nova o
+    // questionario nao abre, e ai ninguem faz a prova. `true` = disparou algo,
+    // e o tick para por aqui — um lote por minuto.
+    if (await this.decidirDatas(data, hhmm, cfg)) return;
 
     // (2) Os horarios vem do BANCO, escolhidos pelo admin. Ler a cada tick e o
     // que faz uma correcao pela tela as 07:25 valer as 07:30.
@@ -158,6 +185,214 @@ export class SenhaQuizCron {
   }
 
   /**
+   * A janela a aplicar neste minuto, se houver.
+   *
+   * Devolve `true` quando disparou alguma coisa — o tick para ai, e a senha (ou
+   * a proxima janela) fica para o minuto seguinte.
+   */
+  private async decidirDatas(
+    data: Date,
+    hhmm: string,
+    cfg: { toleranciaMin: number; maxTentativas: number },
+  ): Promise<boolean> {
+    // Os horarios vem do BANCO a cada tick, como os dos turnos: e o que faz uma
+    // correcao pela tela as 15:25 valer as 15:31.
+    const janelas = await this.prisma.janelaDeProva.findMany({
+      where: { ativo: true },
+      select: {
+        id: true,
+        modalidadeId: true,
+        horaDisparo: true,
+        horaInicio: true,
+        horaFim: true,
+        turno: true,
+        diaSeguinte: true,
+        ativo: true,
+        versao: true,
+        modalidade: { select: { codigo: true } },
+      },
+      orderBy: [{ modalidadeId: 'asc' }, { ordem: 'asc' }],
+    });
+
+    // Nenhuma janela ATIVA cadastrada. Nao e erro — pode ser um semestre sem
+    // prova online —, mas calar entregaria um cron que parece armado e nao esta.
+    // Mesma escolha de SENHA_QUIZ_CRON_SEM_HORARIO.
+    if (janelas.length === 0) {
+      this.avisarUmaVez(
+        `${isoDeDataUtc(data)}#sem-janela`,
+        'DATA_QUIZ_CRON_SEM_JANELA',
+        data,
+        null,
+      );
+      return false;
+    }
+
+    const candidatas = janelasParaDisparar(hhmm, janelas, cfg.toleranciaMin);
+    if (candidatas.length === 0) return false;
+
+    // A partir daqui HOUVE candidata. Toda saida abaixo precisa deixar rastro:
+    // um tick que encontra janelas no horario e nao aplica nenhuma, calado, e o
+    // pior estado possivel — foi assim que a correcao de horario das 12:43
+    // pareceu simplesmente nao funcionar em 25/08/2026.
+    const puladas: string[] = [];
+
+    if (!this.quizzes.habilitado()) {
+      this.avisarUmaVez(
+        `${isoDeDataUtc(data)}#${hhmm}#datas`,
+        'DATA_QUIZ_CRON_IGNORADO',
+        data,
+        null,
+      );
+      return false;
+    }
+
+    for (const janela of candidatas) {
+      // O dia que o QUESTIONARIO passa a ter. `diaSeguinte` cobre os disparos da
+      // noite (22:01 no EaD, 21:31 no Semi/Modular), que armam a prova da manha
+      // seguinte.
+      const alvo = janela.diaSeguinte ? diaSeguinteDe(data) : data;
+      const chave = `${isoDeDataUtc(alvo)}#janela${janela.id}`;
+
+      // Idempotencia NO BANCO — e o que sobrevive ao restart. Se esta janela ja
+      // rodou hoje, passa para a proxima candidata em vez de sair: as 12:01 sao
+      // tres modalidades, e parar na primeira ja concluida deixaria as outras
+      // duas para o minuto seguinte sem necessidade.
+      const motivoDoPulo = await this.motivoParaNaoDisparar(
+        janela.id,
+        janela.versao,
+        alvo,
+        cfg.maxTentativas,
+      );
+
+      if (motivoDoPulo) {
+        puladas.push(
+          `${janela.modalidade.codigo} ${janela.horaInicio}-${janela.horaFim}: ${motivoDoPulo}`,
+        );
+        continue;
+      }
+
+      // A senha da celula daquele turno. O lote RECUSA sem ela — e nao por
+      // disciplina: o PUT substitui o objeto inteiro e nao pode preservar a
+      // senha lida (o GET pode devolve-la nula num quiz que tem senha), entao
+      // sem a celula a janela apagaria a senha de toda a instituicao.
+      const celula = await this.prisma.senhaDeProva.findUnique({
+        where: { data_turno: { data: alvo, turno: janela.turno } },
+        select: { id: true },
+      });
+
+      if (!celula) {
+        this.avisarUmaVez(
+          chave,
+          'DATA_QUIZ_CRON_SEM_GRADE',
+          alvo,
+          janela.turno,
+        );
+        continue;
+      }
+
+      this.logger.log(
+        `Cron: aplicando a janela ${janela.horaInicio}-${janela.horaFim} ` +
+          `(${janela.modalidade.codigo}) em ${isoDeDataUtc(alvo)}.`,
+      );
+
+      await this.lote.iniciar(
+        {
+          tipo: TipoExecucaoQuiz.DATA,
+          janelaId: janela.id,
+          data: isoDeDataUtc(alvo),
+          // O cron existe para APLICAR. Ver o cabecalho.
+          simulacao: false,
+          forcar: false,
+        },
+        'cron',
+        OrigemExecucao.CRON,
+      );
+
+      this.avisadas.delete(chave);
+      // UM lote por tick: `recusarSeJaRodando` recusaria o proximo de qualquer
+      // forma, e a tolerancia cobre as outras candidatas no minuto seguinte.
+      return true;
+    }
+
+    // Todas as candidatas foram puladas. NAO e erro — na maior parte dos ticks
+    // da janela de tolerancia e o estado normal (ja aplicou, nao insiste). Mas
+    // precisa aparecer: e a unica resposta possivel para "editei o horario e o
+    // cron nao fez nada".
+    if (puladas.length > 0) {
+      this.avisarUmaVez(
+        `${isoDeDataUtc(data)}#${hhmm}#puladas`,
+        'DATA_QUIZ_CRON_NADA_A_FAZER',
+        data,
+        null,
+        puladas.join('; '),
+      );
+    }
+
+    return false;
+  }
+
+  /**
+   * Esta janela ainda precisa ser aplicada NESTE dia?
+   *
+   * Espelho de `podeDisparar`, com o recorte `(janela, dia)`: o calendario se
+   * repete todo dia, e travar so pela janela faria a sessao das 15:00 de segunda
+   * impedir a de terca.
+   */
+  /**
+   * Por que esta janela NAO deve disparar agora, ou `null` se deve.
+   *
+   * Devolve o motivo em vez de um booleano de proposito: quem chama precisa
+   * poder DIZER por que pulou. Um tick que encontra janelas no horario e nao
+   * aplica nenhuma, em silencio, e o pior estado possivel — foi exatamente
+   * assim que uma correcao de horario pareceu nao funcionar em 25/08/2026.
+   *
+   * ⚠️ **A VERSAO entra na chave.** `salvarJanelas` faz upsert e PRESERVA o id
+   * da linha, entao sem a versao a execucao concluida de manha bloquearia o
+   * disparo da tarde depois de o admin corrigir o horario — e so no dia seguinte
+   * funcionaria. Mesma solucao de `SenhaDeProva.versao`, do lado das senhas.
+   */
+  private async motivoParaNaoDisparar(
+    janelaDeProvaId: number,
+    versao: number,
+    data: Date,
+    maxTentativas: number,
+  ): Promise<string | null> {
+    const reais = await this.prisma.execucaoSenhaQuiz.findMany({
+      where: {
+        janelaDeProvaId,
+        data,
+        versaoAplicada: versao,
+        simulacao: false,
+      },
+      orderBy: { iniciadoEm: 'desc' },
+      select: { id: true, status: true, atualizadoEm: true },
+    });
+
+    const concluida = reais.find((e) => e.status === StatusExecucao.CONCLUIDA);
+    if (concluida) return `ja aplicada hoje pela execucao ${concluida.id}`;
+
+    const viva = reais.find(
+      (e) =>
+        e.status === StatusExecucao.EM_ANDAMENTO &&
+        Date.now() - e.atualizadoEm.getTime() <= 5 * 60_000,
+    );
+
+    if (viva) return `execucao ${viva.id} ainda rodando`;
+
+    // Mesmo teto de `podeDisparar`: sem ele, uma falha PERMANENTE (o caso real e
+    // o token sem escopo de quizzing, que devolve 403 sempre) bateria no
+    // Brightspace a cada minuto durante toda a janela de tolerancia.
+    if (reais.length >= maxTentativas) {
+      return (
+        `${reais.length} tentativa(s) ja falharam nesta versao; nao insiste — ` +
+        'verifique a ultima execucao'
+      );
+    }
+
+    return null;
+  }
+
+  /**
    * A celula ainda precisa ser aplicada?
    *
    * Tudo aqui e consulta ao BANCO, e nao memoria do processo: o cenario que esta
@@ -204,9 +439,14 @@ export class SenhaQuizCron {
     evento:
       | 'SENHA_QUIZ_CRON_SEM_GRADE'
       | 'SENHA_QUIZ_CRON_SEM_HORARIO'
-      | 'SENHA_QUIZ_CRON_IGNORADO',
+      | 'SENHA_QUIZ_CRON_IGNORADO'
+      | 'DATA_QUIZ_CRON_SEM_GRADE'
+      | 'DATA_QUIZ_CRON_SEM_JANELA'
+      | 'DATA_QUIZ_CRON_IGNORADO'
+      | 'DATA_QUIZ_CRON_NADA_A_FAZER',
     data: Date,
     turno: Turno | null,
+    extra?: string,
   ): void {
     if (this.avisadas.has(chave)) return;
     this.avisadas.add(chave);
@@ -221,9 +461,29 @@ export class SenhaQuizCron {
         `${celula}: o cron esta ligado no servidor mas nenhum horario de turno ` +
         'foi cadastrado na tela; ele nunca vai disparar',
       SENHA_QUIZ_CRON_IGNORADO: `${celula} ignorada: integracao D2L desligada`,
+      // A janela nao foi aplicada, e nao "so" ficou sem senha: o lote de datas
+      // depende da celula porque o PUT reenvia `Password` e nao pode preservar
+      // o que o GET devolveu. A prova continua com a janela anterior.
+      DATA_QUIZ_CRON_SEM_GRADE:
+        `${celula} sem senha na grade; a JANELA daquele horario NAO foi ` +
+        'aplicada, e a prova continua com a data anterior',
+      DATA_QUIZ_CRON_SEM_JANELA:
+        `${celula}: o cron esta ligado mas nenhuma janela de prova ativa foi ` +
+        'cadastrada na tela; as datas nunca vao mudar sozinhas',
+      DATA_QUIZ_CRON_IGNORADO: `${celula} ignorada: integracao D2L desligada`,
+      // NAO e falha: na maior parte dos ticks da janela de tolerancia este e o
+      // estado normal. Existe para responder "editei o horario e nada
+      // aconteceu" sem abrir o banco.
+      DATA_QUIZ_CRON_NADA_A_FAZER: `${celula}: havia janela no horario, e nenhuma precisou disparar — ${extra ?? ''}`,
     }[evento];
 
-    this.logger.warn(`Cron: ${detalhe}.`);
+    // `NADA_A_FAZER` sai como LOG e nao WARN: warn e para o que precisa de acao,
+    // e aqui o comportamento normal e nao fazer nada. Amarelo demais ensina o
+    // time a ignorar o amarelo que importa.
+    if (evento === 'DATA_QUIZ_CRON_NADA_A_FAZER')
+      this.logger.log(`Cron: ${detalhe}.`);
+    else this.logger.warn(`Cron: ${detalhe}.`);
+
     this.auditoria.registrar(evento, { ator: 'cron', detalhe });
   }
 }

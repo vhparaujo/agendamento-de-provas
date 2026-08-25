@@ -25,10 +25,14 @@ import type { Response } from 'express';
 import type { AdminJwtPayload } from '../../auth/jwt/jwt.types';
 import { AdminLogado, SomenteAdmin } from '../../auth/roles.decorator';
 import { TAGS } from '../../config/swagger';
-import { OrigemExecucao } from '../../generated/prisma/client';
+import {
+  OrigemExecucao,
+  TipoExecucaoQuiz,
+} from '../../generated/prisma/client';
 import {
   AndamentoDaSenhaQuizDto,
   ExecucaoSenhaIniciadaDto,
+  UltimaDataPorModalidadeDto,
   IniciarSenhaQuizDto,
 } from '../dto/senha-quiz.dto';
 import { SenhaQuizService } from '../service/senha-quiz.service';
@@ -53,11 +57,26 @@ export class SenhaQuizController {
   @Post()
   @ApiOperation({
     summary:
-      'Aplica a senha de um dia/turno nos questionarios (simula por padrao)',
+      'Aplica a senha de um turno, ou a janela de horario de uma modalidade ' +
+      '(simula por padrao)',
     description:
-      'Troca o campo `Password` do questionario da prova em **todas as turmas ' +
-      'do CSV importado que pertencem ao periodo letivo vigente**. Nao verifica ' +
-      'se ha agendamento na turma.\n\n' +
+      '### Dois lotes, a mesma maquinaria\n\n' +
+      '`tipo: SENHA` (padrao) troca o campo `Password` do questionario da prova ' +
+      'em **todas as turmas do CSV importado que pertencem ao periodo letivo ' +
+      'vigente**. Nao verifica se ha agendamento na turma.\n\n' +
+      '`tipo: DATA` troca `StartDate`/`EndDate` — a janela em que a prova fica ' +
+      'aberta — nas turmas de **UMA modalidade**, a da janela informada em ' +
+      '`janelaId`. A modalidade de cada turma e DERIVADA dos agendamentos ' +
+      'confirmados; turma sem modalidade derivavel fica de fora e vira linha de ' +
+      'relatorio (`SEM_AGENDAMENTO` / `MODALIDADE_AMBIGUA`).\n\n' +
+      '**`DATA` grava a senha tambem.** Nao e escopo a mais: o PUT do ' +
+      'questionario substitui o objeto inteiro, e a leitura da API pode devolver ' +
+      '`Password` nulo num quiz que TEM senha — preservar essa leitura apagaria ' +
+      'a senha de toda prova do CSV, em silencio. Por isso o lote le a senha da ' +
+      'grade, na celula do turno da janela, e recusa comecar sem ela.\n\n' +
+      '**Um lote por vez, os dois tipos juntos.** Eles escrevem no mesmo ' +
+      'questionario; rodando em paralelo, o segundo PUT desfaria o primeiro. ' +
+      'Uma execucao em andamento faz a proxima receber 409, seja de que tipo for.\n\n' +
       '**Responde na hora com um `id`, sem esperar o fim** — sao ~3 chamadas ao ' +
       'Brightspace por turma. Acompanhe em `GET /senhas-de-prova/execucoes/:id`.\n\n' +
       '**`simulacao: true` e o padrao e nao emite nenhum PUT.** Ela percorre tudo ' +
@@ -82,15 +101,35 @@ export class SenhaQuizController {
     @Body() dto: IniciarSenhaQuizDto,
     @AdminLogado() admin: AdminJwtPayload,
   ) {
-    return this.service.iniciar(
-      {
-        data: dto.data,
-        turno: dto.turno,
-        simulacao: dto.simulacao ?? true,
-        forcar: dto.forcar ?? false,
-      },
-      admin.email,
-    );
+    const comum = {
+      data: dto.data,
+      simulacao: dto.simulacao ?? true,
+      forcar: dto.forcar ?? false,
+    };
+
+    // `ValidateIf` no DTO ja garante a presenca do campo de cada tipo; o `!`
+    // aqui seria a unica alternativa, e trocar um contrato validado por uma
+    // assercao e o que faz um 500 nascer de um corpo malformado.
+    if (dto.tipo === TipoExecucaoQuiz.DATA) {
+      if (dto.janelaId === undefined) {
+        throw new BadRequestException(
+          'Informe `janelaId`: uma execucao de datas aplica UMA janela.',
+        );
+      }
+
+      return this.service.iniciar(
+        { ...comum, tipo: TipoExecucaoQuiz.DATA, janelaId: dto.janelaId },
+        admin.email,
+      );
+    }
+
+    if (dto.turno === undefined) {
+      throw new BadRequestException(
+        'Informe `turno`: uma execucao de senhas aplica UMA celula da grade.',
+      );
+    }
+
+    return this.service.iniciar({ ...comum, turno: dto.turno }, admin.email);
   }
 
   /**
@@ -108,6 +147,9 @@ export class SenhaQuizController {
       'tela nao dizia nada nem enquanto a troca acontecia nem depois dela.\n\n' +
       'Use `origem=CRON` para perguntar so pelo disparo automatico — senao um ' +
       'lote manual rodado depois esconderia o resultado do cron.\n\n' +
+      'Use `tipo` pelo mesmo motivo, um nivel acima: a tela acompanha os dois ' +
+      'calendarios lado a lado, e sem o filtro a troca de senha das 07:30 ' +
+      'esconderia a mudanca de janela das 12:01.\n\n' +
       '**Corpo vazio (200) quando nunca houve execucao.** Nao e 404: "nunca ' +
       'rodou" e o estado normal de um ambiente recem-configurado, e a tela ' +
       'precisa distingui-lo de "nao consegui perguntar".',
@@ -119,16 +161,72 @@ export class SenhaQuizController {
     description:
       'MANUAL ou CRON. Ausente = a mais recente, de qualquer origem.',
   })
+  @ApiQuery({
+    name: 'tipo',
+    required: false,
+    enum: TipoExecucaoQuiz,
+    description: 'SENHA ou DATA. Ausente = a mais recente, de qualquer tipo.',
+  })
   @ApiOkResponse({ type: AndamentoDaSenhaQuizDto })
-  @ApiBadRequestResponse({ description: 'Origem invalida' })
-  ultima(@Query('origem') origem?: string) {
+  @ApiBadRequestResponse({ description: 'Origem ou tipo invalido' })
+  ultima(@Query('origem') origem?: string, @Query('tipo') tipo?: string) {
     if (origem !== undefined && !(origem in OrigemExecucao)) {
       throw new BadRequestException(
         `Origem invalida: use ${Object.keys(OrigemExecucao).join(' ou ')}.`,
       );
     }
 
-    return this.service.ultima(origem as OrigemExecucao | undefined);
+    if (tipo !== undefined && !(tipo in TipoExecucaoQuiz)) {
+      throw new BadRequestException(
+        `Tipo invalido: use ${Object.keys(TipoExecucaoQuiz).join(' ou ')}.`,
+      );
+    }
+
+    return this.service.ultima(
+      origem as OrigemExecucao | undefined,
+      tipo as TipoExecucaoQuiz | undefined,
+    );
+  }
+
+  /**
+   * ⚠️ Como `ultima`, precisa vir ANTES de `@Get(':id')`.
+   */
+  @Get('datas-por-modalidade')
+  @ApiOperation({
+    summary: 'A ultima mudanca de datas de CADA modalidade',
+    description:
+      '`/ultima` responde "qual foi a mais recente?", e essa nao e a pergunta ' +
+      'que a secretaria faz.\n\n' +
+      'Um unico minuto de disparo produz **varias** execucoes: as 12:01 sao ' +
+      'tres (EaD 15:00-18:00, Semi e Modular 14:00-15:30), aplicadas em ticks ' +
+      'seguidos porque os dois lotes escrevem no mesmo questionario e o servidor ' +
+      'serializa. Mostrar so a mais recente exibe a terceira delas e esconde as ' +
+      'outras duas — quem le conclui que a janela errada foi aplicada.\n\n' +
+      'A pergunta util e por modalidade: **cada uma esta com a janela certa?**\n\n' +
+      'So lista modalidades que tem calendario cadastrado. `execucao: null` ' +
+      'significa "nunca rodou", que e o estado normal de uma modalidade sem ' +
+      'aluno importado — nao um erro.',
+  })
+  @ApiQuery({
+    name: 'origem',
+    required: false,
+    enum: OrigemExecucao,
+    description:
+      'MANUAL ou CRON. Ausente = a mais recente de cada modalidade, de qualquer ' +
+      'origem.',
+  })
+  @ApiOkResponse({ type: [UltimaDataPorModalidadeDto] })
+  @ApiBadRequestResponse({ description: 'Origem invalida' })
+  datasPorModalidade(@Query('origem') origem?: string) {
+    if (origem !== undefined && !(origem in OrigemExecucao)) {
+      throw new BadRequestException(
+        `Origem invalida: use ${Object.keys(OrigemExecucao).join(' ou ')}.`,
+      );
+    }
+
+    return this.service.ultimasDatasPorModalidade(
+      origem as OrigemExecucao | undefined,
+    );
   }
 
   @Get(':id')

@@ -16,6 +16,7 @@ import {
   OrigemExecucao,
   ResultadoSenhaQuiz,
   StatusExecucao,
+  TipoExecucaoQuiz,
   TipoMatchQuiz,
   Turno,
 } from '../../generated/prisma/client';
@@ -23,11 +24,23 @@ import { PeriodoService } from '../../periodo/service/periodo.service';
 import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 import { carregarRitmo, RitmoDoLote } from '../config/senha-quiz.config';
 import { GradeSenhasService } from './grade-senhas.service';
-import { casarPorNome, montarCorpoDoQuiz, QuizLido } from './quiz-body';
-import { dataUtcDeIso, isoDeDataUtc } from './relogio';
+import {
+  casarPorNome,
+  JanelaDoQuiz,
+  montarCorpoDoQuiz,
+  QuizLido,
+} from './quiz-body';
+import {
+  dataUtcDeIso,
+  FUSO_DA_OPERACAO,
+  instanteUtcDe,
+  isoDeDataUtc,
+} from './relogio';
+import { ModalidadeDaTurmaService } from './modalidade-da-turma.service';
 import {
   ResolucaoOrgUnitService,
   ResultadoResolucao,
+  TurmaNaoResolvida,
   TurmaResolvida,
 } from './resolucao-orgunit.service';
 import { rotuloDoTurno } from './turno';
@@ -66,14 +79,56 @@ interface ItemParaGravar {
   resultado: ResultadoSenhaQuiz;
   senhaAnteriorLida: boolean;
   detalhe: string | null;
+  /** So no lote de DATAS — fotografia do que aquela turma recebeu. */
+  modalidadeCodigo?: string | null;
+  startDateAplicado?: Date | null;
+  endDateAplicado?: Date | null;
 }
+
+/** O lote de senhas: uma celula da grade, em TODAS as turmas do CSV. */
+export interface OpcoesDeSenha {
+  tipo?: typeof TipoExecucaoQuiz.SENHA;
+  data: string;
+  turno: Turno;
+  simulacao: boolean;
+  forcar: boolean;
+}
+
+/** O lote de datas: UMA janela, nas turmas de UMA modalidade. */
+export interface OpcoesDeData {
+  tipo: typeof TipoExecucaoQuiz.DATA;
+  /**
+   * A janela a aplicar. Ela ja carrega a modalidade (que recorta as turmas), as
+   * horas e o turno de onde sai a senha.
+   */
+  janelaId: number;
+  /**
+   * O dia que o QUESTIONARIO passa a ter — ja com o `diaSeguinte` resolvido pelo
+   * chamador.
+   *
+   * E o alvo, nao a referencia: o cron dispara as 22:01 de segunda com
+   * `data = terca`, e a tela mostra ao admin a data que a prova vai ficar. Fazer
+   * o servico somar o dia aqui esconderia do admin o que ele esta mandando
+   * gravar — e "amanha" e ambiguo perto da meia-noite.
+   */
+  data: string;
+  simulacao: boolean;
+  forcar: boolean;
+}
+
+export type OpcoesDoLote = OpcoesDeSenha | OpcoesDeData;
 
 export interface ExecucaoIniciada {
   id: number;
+  tipo: TipoExecucaoQuiz;
   simulacao: boolean;
   turmasNoCsv: number;
+  /** Quantas turmas o lote vai realmente tocar. */
   totalTurmas: number;
   naoResolvidas: number;
+  /** So em `DATA`: turmas resolvidas que ficaram de fora por falta de modalidade. */
+  semModalidade: number;
+  modalidadeAmbigua: number;
 }
 
 @Injectable()
@@ -85,6 +140,7 @@ export class SenhaQuizService {
     private readonly config: ConfigService,
     private readonly quizzes: D2lQuizzesService,
     private readonly resolucao: ResolucaoOrgUnitService,
+    private readonly modalidades: ModalidadeDaTurmaService,
     private readonly grade: GradeSenhasService,
     private readonly periodo: PeriodoService,
     private readonly auditoria: AuditoriaService,
@@ -100,29 +156,26 @@ export class SenhaQuizService {
    * uma execucao FALHOU que ele so descobre no polling.
    */
   async iniciar(
-    opcoes: {
-      data: string;
-      turno: Turno;
-      simulacao: boolean;
-      forcar: boolean;
-    },
+    opcoes: OpcoesDoLote,
     iniciadoPor: string,
     origem: OrigemExecucao = OrigemExecucao.MANUAL,
   ): Promise<ExecucaoIniciada> {
+    const tipo = opcoes.tipo ?? TipoExecucaoQuiz.SENHA;
+
     if (!this.quizzes.habilitado()) {
       // Sem a Valence nao ha como resolver o orgUnitId das turmas do CSV nem
       // falar com os quizzes — o lote rodaria em zero turma relatando sucesso.
       throw new BadRequestException(
-        'A troca de senhas depende da integracao com o Brightspace ' +
+        'A troca de senhas e datas depende da integracao com o Brightspace ' +
           '(D2L_HABILITADO). Sem ela nao ha como descobrir o orgUnitId das ' +
           'turmas do CSV nem gravar no questionario.',
       );
     }
 
-    const { periodoLetivoId } =
+    const { periodoLetivoId, rodada } =
       (await this.periodo.periodoLetivoVigente()) ?? {};
 
-    if (!periodoLetivoId) {
+    if (!periodoLetivoId || !rodada) {
       throw new BadRequestException(
         'Nenhum periodo letivo cadastrado. Sem ele nao ha como separar as ' +
           'turmas deste semestre das dos semestres passados.',
@@ -138,7 +191,7 @@ export class SenhaQuizService {
     if (!configurado.nomeQuiz) {
       throw new BadRequestException(
         'Nenhum questionario-alvo configurado. Informe o nome da prova em ' +
-          'Senhas de prova > Questionario antes de aplicar.',
+          'Senhas e datas > Questionario antes de aplicar.',
       );
     }
 
@@ -147,74 +200,152 @@ export class SenhaQuizService {
       matchQuiz: configurado.matchQuiz,
     };
 
+    // A janela, quando houver. Lida ANTES do lock para que um id inexistente
+    // devolva 404 na hora, em vez de derrubar o lote depois de ele comecar.
+    const janela =
+      tipo === TipoExecucaoQuiz.DATA
+        ? await this.janelaDoLote((opcoes as OpcoesDeData).janelaId)
+        : null;
+
+    const dataAlvo = dataUtcDeIso(opcoes.data);
+
+    // O turno de onde sai a senha: da propria opcao, no lote de senhas; da
+    // janela, no de datas.
+    const turnoDaSenha = janela
+      ? janela.turno
+      : (opcoes as OpcoesDeSenha).turno;
+
     const celula = await this.prisma.senhaDeProva.findUnique({
-      where: {
-        data_turno: { data: dataUtcDeIso(opcoes.data), turno: opcoes.turno },
-      },
+      where: { data_turno: { data: dataAlvo, turno: turnoDaSenha } },
     });
 
+    // ⚠️ A celula e obrigatoria NOS DOIS LOTES, e no de datas por um motivo mais
+    // duro que "o humano no circuito": o PUT substitui o objeto inteiro, entao o
+    // lote de datas TEM de reenviar `Password`. Ele nao pode preservar o que o
+    // GET devolveu, porque o `QuizReadData` so expoe a senha se ela for "nao
+    // nula E visivel ao contexto do chamador" — um GET nulo num quiz que tem
+    // senha apagaria a senha de toda prova do CSV, em silencio. A grade e a
+    // unica fonte autoritativa em texto claro. Ver `quiz-body.ts`.
     if (!celula) {
       throw new BadRequestException(
-        `Nao ha senha cadastrada para ${opcoes.data} (${rotuloDoTurno(opcoes.turno)}). ` +
-          'Preencha a celula na grade antes de aplicar.',
+        `Nao ha senha cadastrada para ${opcoes.data} (${rotuloDoTurno(turnoDaSenha)}). ` +
+          'Preencha a celula na grade antes de aplicar — o questionario precisa ' +
+          'receber a senha junto com a janela, senao ela seria apagada.',
       );
     }
 
     await this.recusarSeJaRodando();
 
     if (!opcoes.simulacao && !opcoes.forcar) {
-      await this.recusarSeJaAplicada(celula.id, celula.versao);
+      if (janela) {
+        await this.recusarSeJaAplicadaAJanela(
+          janela.id,
+          dataAlvo,
+          janela.versao,
+        );
+      } else {
+        await this.recusarSeJaAplicada(celula.id, celula.versao);
+      }
     }
 
     const resolvidas = await this.resolucao.resolver(periodoLetivoId);
 
+    // No lote de datas o conjunto encolhe: so as turmas DA MODALIDADE da janela.
+    // As demais nao sao erro — cada uma tem a sua janela, no horario dela.
+    const recorte = janela
+      ? await this.recortarPelaModalidade(
+          resolvidas,
+          janela.modalidadeId,
+          periodoLetivoId,
+          rodada,
+        )
+      : {
+          turmas: resolvidas.resolvidas,
+          foraDaModalidade: [] as ItemParaGravar[],
+          semModalidade: 0,
+          modalidadeAmbigua: 0,
+          codigoDaModalidade: null as string | null,
+        };
+
     const execucao = await this.prisma.execucaoSenhaQuiz.create({
       data: {
+        tipo,
         simulacao: opcoes.simulacao,
         origem,
         iniciadoPor,
         senhaDeProvaId: celula.id,
-        data: celula.data,
-        turno: celula.turno,
+        data: dataAlvo,
+        // Nulo no lote de datas: turno e a chave da GRADE, e uma execucao de
+        // datas nao "pertence" a um turno — ela pertence a uma janela.
+        turno: janela ? null : celula.turno,
+        janelaDeProvaId: janela?.id ?? null,
+        horaInicioAplicada: janela?.horaInicio ?? null,
+        horaFimAplicada: janela?.horaFim ?? null,
         periodoLetivoId,
-        versaoAplicada: celula.versao,
+        // A versao do que foi REALMENTE aplicado: da celula no lote de senhas, da
+        // janela no de datas. E ela que faz a idempotencia liberar um novo
+        // disparo quando o admin corrige o horario ou a senha.
+        versaoAplicada: janela ? janela.versao : celula.versao,
         nomeQuizAlvo: alvo.nomeQuiz,
         matchQuizAlvo: alvo.matchQuiz,
         turmasNoCsv: resolvidas.totalNoCsv,
-        turmasResolvidas: resolvidas.resolvidas.length,
+        turmasResolvidas: recorte.turmas.length,
         orgUnitsAprendidos: resolvidas.aprendidos,
+        semModalidade: recorte.semModalidade,
+        modalidadeAmbigua: recorte.modalidadeAmbigua,
       },
       select: { id: true },
     });
 
-    this.auditoria.registrar('SENHA_QUIZ_INICIADA', {
-      ator: iniciadoPor,
-      // Sem a senha, por definicao — so a celula e o tamanho do trabalho.
-      detalhe:
-        `execucao ${execucao.id}; celula ${opcoes.data} ${rotuloDoTurno(opcoes.turno)}; ` +
-        `${opcoes.simulacao ? 'SIMULACAO' : 'APLICANDO'}; origem ${origem}; ` +
-        `${resolvidas.resolvidas.length} de ${resolvidas.totalNoCsv} turma(s) do CSV; ` +
-        `alvo "${alvo.nomeQuiz}" (${alvo.matchQuiz})`,
-    });
+    const descricao = janela
+      ? `janela ${janela.horaInicio}-${janela.horaFim} de ${recorte.codigoDaModalidade ?? janela.modalidadeId} em ${opcoes.data}`
+      : `celula ${opcoes.data} ${rotuloDoTurno(celula.turno)}`;
+
+    this.auditoria.registrar(
+      tipo === TipoExecucaoQuiz.DATA
+        ? 'DATA_QUIZ_INICIADA'
+        : 'SENHA_QUIZ_INICIADA',
+      {
+        ator: iniciadoPor,
+        // Sem a senha, por definicao — so o recorte e o tamanho do trabalho.
+        detalhe:
+          `execucao ${execucao.id}; ${descricao}; ` +
+          `${opcoes.simulacao ? 'SIMULACAO' : 'APLICANDO'}; origem ${origem}; ` +
+          `${recorte.turmas.length} de ${resolvidas.totalNoCsv} turma(s) do CSV; ` +
+          `alvo "${alvo.nomeQuiz}" (${alvo.matchQuiz})`,
+      },
+    );
 
     // Fire-and-forget: o lote leva minutos e nenhum navegador segura a conexao.
     // O `catch` dentro de `executar` e o que garante que uma falha vire FALHOU
     // na tabela, em vez de um unhandled rejection derrubando o processo.
-    void this.executar(
-      execucao.id,
-      resolvidas,
-      celula.senha,
+    void this.executar({
+      execucaoId: execucao.id,
+      turmas: recorte.turmas,
+      naoResolvidas: resolvidas.naoResolvidas,
+      foraDaModalidade: recorte.foraDaModalidade,
+      senha: celula.senha,
       alvo,
-      opcoes.simulacao,
+      janela: janela
+        ? {
+            inicio: instanteUtcDe(dataAlvo, janela.horaInicio),
+            fim: instanteUtcDe(dataAlvo, janela.horaFim),
+            codigo: recorte.codigoDaModalidade,
+          }
+        : null,
+      simulacao: opcoes.simulacao,
       iniciadoPor,
-    );
+    });
 
     return {
       id: execucao.id,
+      tipo,
       simulacao: opcoes.simulacao,
       turmasNoCsv: resolvidas.totalNoCsv,
-      totalTurmas: resolvidas.resolvidas.length,
+      totalTurmas: recorte.turmas.length,
       naoResolvidas: resolvidas.naoResolvidas.length,
+      semModalidade: recorte.semModalidade,
+      modalidadeAmbigua: recorte.modalidadeAmbigua,
     };
   }
 
@@ -234,9 +365,9 @@ export class SenhaQuizService {
    * Ordenada por `id`, e nao por `iniciadoEm`: a chave primaria ja e crescente e
    * indexada, e esta rota e consultada em laco por toda tela aberta.
    */
-  async ultima(origem?: OrigemExecucao) {
+  async ultima(origem?: OrigemExecucao, tipo?: TipoExecucaoQuiz) {
     const recente = await this.prisma.execucaoSenhaQuiz.findFirst({
-      where: origem ? { origem } : {},
+      where: { ...(origem ? { origem } : {}), ...(tipo ? { tipo } : {}) },
       orderBy: { id: 'desc' },
       select: { id: true },
     });
@@ -244,10 +375,70 @@ export class SenhaQuizService {
     return recente ? await this.consultar(recente.id) : null;
   }
 
+  /**
+   * A ultima execucao de DATAS de CADA modalidade.
+   *
+   * `ultima()` responde "qual foi a mais recente?", e essa nao e a pergunta que
+   * a secretaria faz. Um unico minuto de disparo produz VARIAS execucoes — as
+   * 12:01 sao tres (EaD, Semi e Modular), aplicadas em ticks seguidos porque os
+   * dois lotes escrevem no mesmo questionario e o servidor serializa. Mostrar so
+   * a mais recente exibe a terceira delas e esconde as outras duas, e quem le
+   * conclui que a janela errada foi aplicada.
+   *
+   * A pergunta util e por modalidade: **cada uma esta com a janela certa?**
+   *
+   * Uma consulta por modalidade, e nao um `take: N` com deduplicacao em memoria:
+   * sao 4 modalidades, o indice `[tipo, origem, id]` cobre cada uma, e o
+   * resultado e EXATO — um teto arbitrario faria a modalidade que nao rodou hoje
+   * sumir da lista em vez de aparecer como "nunca rodou", que e justamente o
+   * estado que precisa ser visto.
+   */
+  async ultimasDatasPorModalidade(origem?: OrigemExecucao) {
+    // So as modalidades que tem calendario: as outras nao disparam nunca, e uma
+    // linha "nunca rodou" para elas seria ruido permanente.
+    const comJanela = await this.prisma.modalidade.findMany({
+      where: { janelas: { some: {} } },
+      select: { id: true, codigo: true, nome: true },
+      orderBy: { id: 'asc' },
+    });
+
+    return Promise.all(
+      comJanela.map(async (modalidade) => {
+        const recente = await this.prisma.execucaoSenhaQuiz.findFirst({
+          where: {
+            tipo: TipoExecucaoQuiz.DATA,
+            ...(origem ? { origem } : {}),
+            janelaDeProva: { modalidadeId: modalidade.id },
+          },
+          orderBy: { id: 'desc' },
+          select: { id: true },
+        });
+
+        return {
+          modalidadeId: modalidade.id,
+          modalidadeCodigo: modalidade.codigo,
+          modalidadeNome: modalidade.nome,
+          // `null` = nunca rodou. E o estado normal de uma modalidade sem aluno
+          // importado (o Presencial, hoje), e a tela precisa distingui-lo de
+          // "rodou e falhou".
+          execucao: recente ? await this.consultar(recente.id) : null,
+        };
+      }),
+    );
+  }
+
   /** O andamento, para a tela perguntar de tempos em tempos. */
   async consultar(id: number) {
     const execucao = await this.prisma.execucaoSenhaQuiz.findUnique({
       where: { id },
+      // A modalidade da janela. Sem ela a tela mostra "Janela 14:00-15:30" e nao
+      // diz de QUEM — e as 12:01 tres modalidades disparam, duas delas com a
+      // mesma janela. Quem le nao tem como saber qual execucao esta vendo.
+      include: {
+        janelaDeProva: {
+          include: { modalidade: { select: { codigo: true, nome: true } } },
+        },
+      },
     });
 
     if (!execucao)
@@ -261,9 +452,13 @@ export class SenhaQuizService {
 
     const totalItens = porResultado.reduce((s, l) => s + l._count._all, 0);
 
+    const { janelaDeProva, ...campos } = execucao;
+
     return {
-      ...execucao,
+      ...campos,
       data: isoDeDataUtc(execucao.data),
+      modalidadeCodigo: janelaDeProva?.modalidade.codigo ?? null,
+      modalidadeNome: janelaDeProva?.modalidade.nome ?? null,
       interrompida: this.pareceMorta(execucao),
       /**
        * O GET nao devolveu senha em NENHUM quiz. E diagnostico, nao alarme: este
@@ -298,17 +493,25 @@ export class SenhaQuizService {
       orderBy: [{ resultado: 'asc' }, { codigoTurma: 'asc' }],
     });
 
+    // As colunas de janela so entram no relatorio de DATAS: no de senhas elas
+    // sairiam vazias em toda linha, e coluna vazia num CSV que a secretaria abre
+    // no Excel e convite a procurar o que nao existe.
+    const comDatas = execucao.tipo === TipoExecucaoQuiz.DATA;
+
+    const cabecalho = [
+      'Resultado',
+      'Codigo da turma',
+      'Disciplina',
+      'OrgUnitId',
+      'Questionario',
+      'QuizId',
+      'Tinha senha antes',
+      ...(comDatas ? ['Modalidade', 'Abre em', 'Fecha em'] : []),
+      'Observacao',
+    ];
+
     return montarCsv(
-      [
-        'Resultado',
-        'Codigo da turma',
-        'Disciplina',
-        'OrgUnitId',
-        'Questionario',
-        'QuizId',
-        'Tinha senha antes',
-        'Observacao',
-      ],
+      cabecalho,
       itens.map((i) => [
         i.resultado,
         i.codigoTurma,
@@ -317,24 +520,81 @@ export class SenhaQuizService {
         i.nomeQuiz,
         i.quizId,
         i.senhaAnteriorLida ? 'Sim' : 'Nao',
+        ...(comDatas
+          ? [
+              i.modalidadeCodigo,
+              // No FUSO DA OPERACAO, e nao em UTC. O CSV e lido por pessoas, e
+              // "18:00Z" faria a secretaria achar que a prova das 15h abre as 18h.
+              this.horarioLegivel(i.startDateAplicado),
+              this.horarioLegivel(i.endDateAplicado),
+            ]
+          : []),
         i.detalhe,
       ]),
     );
   }
 
-  nomeDoArquivo(execucao: { id: number; data: Date; turno: Turno }): string {
-    return `senhas-${isoDeDataUtc(execucao.data)}-${rotuloDoTurno(execucao.turno)}-execucao-${execucao.id}.csv`;
+  /**
+   * O nome do arquivo diz de que LOTE ele e — os dois recortes sao diferentes e
+   * o admin baixa os dois no mesmo dia.
+   *
+   * `:` e invalido em nome de arquivo, dai o `h`, a mesma convencao de
+   * `relatorio/service/nome-de-arquivo.ts`.
+   */
+  nomeDoArquivo(execucao: {
+    id: number;
+    tipo: TipoExecucaoQuiz;
+    data: Date;
+    turno: Turno | null;
+    horaInicioAplicada: string | null;
+    horaFimAplicada: string | null;
+    modalidadeCodigo: string | null;
+  }): string {
+    const dia = isoDeDataUtc(execucao.data);
+
+    if (execucao.tipo === TipoExecucaoQuiz.DATA) {
+      const janela = [execucao.horaInicioAplicada, execucao.horaFimAplicada]
+        .filter((h): h is string => h !== null)
+        .map((h) => h.replace(':', 'h'))
+        .join('-');
+
+      // A modalidade entra no nome pelo mesmo motivo que entra na tela: as 12:01
+      // saem tres arquivos, dois deles com a MESMA janela. Sem ela, dois
+      // downloads no mesmo dia sao indistinguiveis na pasta de quem baixou.
+      const modalidade = execucao.modalidadeCodigo
+        ? `-${execucao.modalidadeCodigo}`
+        : '';
+
+      return `datas-${dia}${modalidade}${janela ? `-${janela}` : ''}-execucao-${execucao.id}.csv`;
+    }
+
+    // `turno` so e nulo em execucoes DATA, tratadas acima. O fallback existe
+    // para nao produzir "undefined" no nome se essa invariante mudar.
+    const turno = execucao.turno ? rotuloDoTurno(execucao.turno) : 'sem-turno';
+    return `senhas-${dia}-${turno}-execucao-${execucao.id}.csv`;
   }
 
   async dadosDaExecucao(id: number) {
     const execucao = await this.prisma.execucaoSenhaQuiz.findUnique({
       where: { id },
-      select: { id: true, data: true, turno: true },
+      select: {
+        id: true,
+        tipo: true,
+        data: true,
+        turno: true,
+        horaInicioAplicada: true,
+        horaFimAplicada: true,
+        janelaDeProva: { select: { modalidade: { select: { codigo: true } } } },
+      },
     });
 
     if (!execucao)
       throw new NotFoundException(`Execucao ${id} nao encontrada.`);
-    return execucao;
+
+    return {
+      ...execucao,
+      modalidadeCodigo: execucao.janelaDeProva?.modalidade.codigo ?? null,
+    };
   }
 
   // ------------------------------------------------------------------ interno
@@ -397,6 +657,168 @@ export class SenhaQuizService {
     );
   }
 
+  /**
+   * A janela do lote, com a modalidade e o turno que ela usa.
+   *
+   * Lida antes do lock de propósito: um `janelaId` que nao existe precisa virar
+   * 404 no clique do admin, e nao uma execucao FALHOU que ele so descobre no
+   * polling.
+   */
+  private async janelaDoLote(janelaId: number) {
+    const janela = await this.prisma.janelaDeProva.findUnique({
+      where: { id: janelaId },
+      select: {
+        id: true,
+        modalidadeId: true,
+        horaInicio: true,
+        horaFim: true,
+        turno: true,
+        ativo: true,
+        versao: true,
+      },
+    });
+
+    if (!janela) {
+      throw new NotFoundException(`Janela ${janelaId} nao encontrada.`);
+    }
+
+    // Desativada NAO bloqueia o disparo MANUAL, so o do cron (que nem a
+    // enxerga, porque `janelasParaDisparar` a filtra). E a mesma logica da faixa
+    // inativa no agendamento administrativo: quem esta clicando e a secretaria,
+    // e usar uma janela fora do calendario e caso de uso real — consertar o dia
+    // em que o cron falhou. Recusar seria decidir no lugar dela.
+    if (!janela.ativo) {
+      this.logger.warn(
+        `Janela ${janelaId} esta desativada e foi aplicada manualmente.`,
+      );
+    }
+
+    return janela;
+  }
+
+  /**
+   * Recorta as turmas resolvidas para as de UMA modalidade.
+   *
+   * ============================================================================
+   * DE ONDE SAI A MODALIDADE DE UMA TURMA
+   * ============================================================================
+   * De lugar nenhum no cadastro: `TurmaImportada` nao tem a coluna, e isso e
+   * deliberado (ver `modalidade-da-turma.service.ts`). Ela e DERIVADA dos
+   * agendamentos confirmados da rodada vigente.
+   *
+   * Tres destinos, e a diferenca entre eles importa:
+   *
+   *   - modalidade == a da janela  -> entra no lote;
+   *   - modalidade de OUTRA        -> sai em silencio, e NAO e erro: aquela
+   *                                   turma tem a janela dela, no horario dela.
+   *                                   Relatar isso encheria o CSV de linhas que
+   *                                   ninguem deve tratar, que e justamente o
+   *                                   ruido que ensina o time a ignorar o
+   *                                   relatorio;
+   *   - sem modalidade / ambigua   -> vira LINHA DE RELATORIO. Sao turmas que
+   *                                   ficariam com a data velha, ou seja, alunos
+   *                                   que nao abrem a prova.
+   */
+  private async recortarPelaModalidade(
+    resolvidas: ResultadoResolucao,
+    modalidadeId: number,
+    periodoLetivoId: string,
+    rodada: string,
+  ): Promise<{
+    turmas: TurmaResolvida[];
+    foraDaModalidade: ItemParaGravar[];
+    semModalidade: number;
+    modalidadeAmbigua: number;
+    codigoDaModalidade: string | null;
+  }> {
+    const mapa = await this.modalidades.resolver(periodoLetivoId, rodada);
+
+    const turmas: TurmaResolvida[] = [];
+    const foraDaModalidade: ItemParaGravar[] = [];
+    let semModalidade = 0;
+    let modalidadeAmbigua = 0;
+    let codigoDaModalidade: string | null = null;
+
+    for (const turma of resolvidas.resolvidas) {
+      const decisao = mapa.de(turma.orgUnitId);
+
+      if (decisao.situacao === 'ENCONTRADA') {
+        if (decisao.modalidadeId === modalidadeId) {
+          turmas.push(turma);
+          codigoDaModalidade ??= decisao.codigo;
+        }
+        // Outra modalidade: silencio proposital, ver o cabecalho.
+        continue;
+      }
+
+      const ambigua = decisao.motivo === 'AMBIGUA';
+      if (ambigua) modalidadeAmbigua += 1;
+      else semModalidade += 1;
+
+      foraDaModalidade.push({
+        orgUnitId: turma.orgUnitId,
+        codigoTurma: turma.codigoTurma,
+        nomeDisciplina: turma.nomeDisciplina,
+        quizId: null,
+        nomeQuiz: null,
+        resultado: ambigua
+          ? ResultadoSenhaQuiz.MODALIDADE_AMBIGUA
+          : ResultadoSenhaQuiz.SEM_AGENDAMENTO,
+        senhaAnteriorLida: false,
+        detalhe: decisao.detalhe,
+        modalidadeCodigo: null,
+        startDateAplicado: null,
+        endDateAplicado: null,
+      });
+    }
+
+    return {
+      turmas,
+      foraDaModalidade,
+      semModalidade,
+      modalidadeAmbigua,
+      codigoDaModalidade,
+    };
+  }
+
+  /**
+   * A janela ja foi aplicada NESTE dia?
+   *
+   * O recorte e `(janela, dia)` e nao so a janela: o calendario se repete todo
+   * dia, e travar pela janela sozinha faria a sessao das 15:00 de segunda
+   * impedir a de terca.
+   *
+   * Como em `recusarSeJaAplicada`, isto e guarda contra CARGA e CONFUSAO, nao
+   * contra corrupcao — o PUT e idempotente. Por isso `forcar` continua barato.
+   */
+  private async recusarSeJaAplicadaAJanela(
+    janelaDeProvaId: number,
+    data: Date,
+    versao: number,
+  ): Promise<void> {
+    const ja = await this.prisma.execucaoSenhaQuiz.findFirst({
+      where: {
+        janelaDeProvaId,
+        data,
+        // ⚠️ A VERSAO entra na chave. Sem ela, corrigir o horario de uma janela
+        // que ja rodou hoje nao a libera — o `upsert` preserva o id da linha, e
+        // esta consulta encontraria a execucao antiga. Bug real de 25/08/2026.
+        versaoAplicada: versao,
+        simulacao: false,
+        status: StatusExecucao.CONCLUIDA,
+      },
+      orderBy: { concluidoEm: 'desc' },
+    });
+
+    if (!ja) return;
+
+    throw new ConflictException(
+      `Esta janela ja foi aplicada em ${isoDeDataUtc(data)} pela execucao ${ja.id}, ` +
+        'com estes mesmos horarios. Se quiser aplicar de novo sem mudar nada, ' +
+        'use a opcao de forcar — corrigir o horario na tela ja libera sozinho.',
+    );
+  }
+
   private pareceMorta(execucao: {
     status: StatusExecucao;
     atualizadoEm: Date;
@@ -408,22 +830,44 @@ export class SenhaQuizService {
   }
 
   /** O trabalho de verdade. NUNCA lanca: toda falha vira estado na tabela. */
-  private async executar(
-    execucaoId: number,
-    resolucao: ResultadoResolucao,
-    senha: string,
-    alvo: { nomeQuiz: string; matchQuiz: TipoMatchQuiz },
-    simulacao: boolean,
-    iniciadoPor: string,
-  ): Promise<void> {
+  private async executar(entrada: {
+    execucaoId: number;
+    turmas: TurmaResolvida[];
+    naoResolvidas: TurmaNaoResolvida[];
+    /** Turmas descartadas por falta de modalidade — so no lote de DATAS. */
+    foraDaModalidade: ItemParaGravar[];
+    senha: string;
+    alvo: { nomeQuiz: string; matchQuiz: TipoMatchQuiz };
+    /** `null` = lote de senhas: o calendario do questionario nao e tocado. */
+    janela: { inicio: Date; fim: Date; codigo: string | null } | null;
+    simulacao: boolean;
+    iniciadoPor: string;
+  }): Promise<void> {
+    const {
+      execucaoId,
+      turmas,
+      naoResolvidas,
+      foraDaModalidade,
+      senha,
+      alvo,
+      janela,
+      simulacao,
+      iniciadoPor,
+    } = entrada;
+
     const ritmo = carregarRitmo(this.config);
+
+    // Ja em UTC-Z, como a Valence exige. A conversao aconteceu uma vez, em
+    // `instanteUtcDe`; daqui para a frente a string trafega verbatim.
+    const janelaDoQuiz = janela
+      ? { inicio: janela.inicio.toISOString(), fim: janela.fim.toISOString() }
+      : undefined;
 
     try {
       // As turmas que nem chegam a ter chamada: entram como item para o
       // relatorio explicar por que ficaram de fora.
-      await this.gravarItens(
-        execucaoId,
-        resolucao.naoResolvidas.map((t) => ({
+      await this.gravarItens(execucaoId, [
+        ...naoResolvidas.map((t) => ({
           orgUnitId: null,
           codigoTurma: t.codigoTurma,
           nomeDisciplina: t.nomeDisciplina,
@@ -435,7 +879,11 @@ export class SenhaQuizService {
           senhaAnteriorLida: false,
           detalhe: t.motivo,
         })),
-      );
+        // Resolveram o orgUnitId mas nao tem modalidade derivavel. Sao as linhas
+        // que mais importam no lote de datas: cada uma e uma turma inteira que
+        // fica com a data velha.
+        ...foraDaModalidade,
+      ]);
 
       const contagem = {
         processadas: 0,
@@ -445,8 +893,6 @@ export class SenhaQuizService {
         comSenhaLida: 0,
       };
 
-      const turmas = resolucao.resolvidas;
-
       // Fatias de `concorrencia` turmas. Dentro da turma e sequencial: sao ~3
       // chamadas encadeadas (listar -> ler -> gravar) e paraleliza-las nao
       // ganharia nada alem de bater mais forte no mesmo tenant.
@@ -455,7 +901,15 @@ export class SenhaQuizService {
 
         const resultados = await Promise.all(
           fatia.map((turma) =>
-            this.aplicarNaTurma(turma, senha, alvo, simulacao, ritmo),
+            this.aplicarNaTurma({
+              turma,
+              senha,
+              alvo,
+              janela: janelaDoQuiz,
+              modalidadeCodigo: janela?.codigo ?? null,
+              simulacao,
+              ritmo,
+            }),
           ),
         );
 
@@ -493,14 +947,20 @@ export class SenhaQuizService {
         data: { status: StatusExecucao.CONCLUIDA, concluidoEm: new Date() },
       });
 
-      this.auditoria.registrar('SENHA_QUIZ_CONCLUIDA', {
-        ator: iniciadoPor,
-        detalhe:
-          `execucao ${execucaoId}: ${contagem.definidas} questionario(s) ` +
-          `${simulacao ? 'simulado(s)' : 'atualizado(s)'}, ` +
-          `${contagem.naoEncontradas} sem questionario, ${contagem.falhas} falha(s), ` +
-          `${resolucao.naoResolvidas.length} turma(s) nao resolvida(s)`,
-      });
+      this.auditoria.registrar(
+        janela ? 'DATA_QUIZ_CONCLUIDA' : 'SENHA_QUIZ_CONCLUIDA',
+        {
+          ator: iniciadoPor,
+          detalhe:
+            `execucao ${execucaoId}: ${contagem.definidas} questionario(s) ` +
+            `${simulacao ? 'simulado(s)' : 'atualizado(s)'}, ` +
+            `${contagem.naoEncontradas} sem questionario, ${contagem.falhas} falha(s), ` +
+            `${naoResolvidas.length} turma(s) nao resolvida(s)` +
+            (janela
+              ? `, ${foraDaModalidade.length} sem modalidade derivavel`
+              : ''),
+        },
+      );
     } catch (erro) {
       const motivo = erro instanceof Error ? erro.message : String(erro);
 
@@ -515,10 +975,10 @@ export class SenhaQuizService {
         })
         .catch(() => undefined);
 
-      this.auditoria.registrar('SENHA_QUIZ_FALHOU', {
-        ator: iniciadoPor,
-        detalhe: `execucao ${execucaoId}: ${motivo}`,
-      });
+      this.auditoria.registrar(
+        janela ? 'DATA_QUIZ_FALHOU' : 'SENHA_QUIZ_FALHOU',
+        { ator: iniciadoPor, detalhe: `execucao ${execucaoId}: ${motivo}` },
+      );
 
       this.logger.error(`Execucao ${execucaoId} falhou: ${motivo}`);
     }
@@ -531,18 +991,26 @@ export class SenhaQuizService {
    * junto as outras da fatia inteira no `Promise.all`. Mesma decisao do
    * `resolverUm` no compulsorio.
    */
-  private async aplicarNaTurma(
-    turma: TurmaResolvida,
-    senha: string,
-    alvo: { nomeQuiz: string; matchQuiz: TipoMatchQuiz },
-    simulacao: boolean,
-    ritmo: RitmoDoLote,
-  ): Promise<ItemParaGravar[]> {
+  private async aplicarNaTurma(entrada: {
+    turma: TurmaResolvida;
+    senha: string;
+    alvo: { nomeQuiz: string; matchQuiz: TipoMatchQuiz };
+    janela?: JanelaDoQuiz;
+    modalidadeCodigo: string | null;
+    simulacao: boolean;
+    ritmo: RitmoDoLote;
+  }): Promise<ItemParaGravar[]> {
+    const { turma, senha, alvo, janela, modalidadeCodigo, simulacao, ritmo } =
+      entrada;
+
     const base = {
       orgUnitId: turma.orgUnitId,
       codigoTurma: turma.codigoTurma,
       nomeDisciplina: turma.nomeDisciplina,
       senhaAnteriorLida: false,
+      modalidadeCodigo,
+      startDateAplicado: janela ? new Date(janela.inicio) : null,
+      endDateAplicado: janela ? new Date(janela.fim) : null,
     };
 
     let lista: QuizDaLista[];
@@ -589,35 +1057,43 @@ export class SenhaQuizService {
     for (const casado of casados) {
       const quizId = String(casado.QuizId ?? '');
       itens.push(
-        await this.aplicarNoQuiz(
+        await this.aplicarNoQuiz({
           base,
           turma,
           quizId,
-          casado.Name ?? null,
+          nomeQuiz: casado.Name ?? null,
           senha,
+          janela,
           simulacao,
           ritmo,
-        ),
+        }),
       );
     }
 
     return itens;
   }
 
-  private async aplicarNoQuiz(
+  private async aplicarNoQuiz(entrada: {
     base: {
       orgUnitId: string;
       codigoTurma: string;
       nomeDisciplina: string;
       senhaAnteriorLida: boolean;
-    },
-    turma: TurmaResolvida,
-    quizId: string,
-    nomeQuiz: string | null,
-    senha: string,
-    simulacao: boolean,
-    ritmo: RitmoDoLote,
-  ): Promise<ItemParaGravar> {
+      modalidadeCodigo: string | null;
+      startDateAplicado: Date | null;
+      endDateAplicado: Date | null;
+    };
+    turma: TurmaResolvida;
+    quizId: string;
+    nomeQuiz: string | null;
+    senha: string;
+    janela?: JanelaDoQuiz;
+    simulacao: boolean;
+    ritmo: RitmoDoLote;
+  }): Promise<ItemParaGravar> {
+    const { base, turma, quizId, nomeQuiz, senha, janela, simulacao, ritmo } =
+      entrada;
+
     let quiz: QuizLido;
 
     try {
@@ -655,7 +1131,9 @@ export class SenhaQuizService {
       await this.quizzes.gravarQuiz(
         turma.orgUnitId,
         quizId,
-        montarCorpoDoQuiz(quiz, senha),
+        // `senha` SEMPRE vai, nos dois lotes. Preservar a lida apagaria a senha
+        // quando o GET a esconde — ver o cabecalho de `quiz-body.ts`.
+        montarCorpoDoQuiz(quiz, senha, janela),
         ritmo,
       );
     } catch (erro) {
@@ -688,6 +1166,22 @@ export class SenhaQuizService {
     await this.prisma.itemSenhaQuiz.createMany({
       data: itens.map((item) => ({ ...item, execucaoId })),
     });
+  }
+
+  /**
+   * Um instante UTC como a secretaria le: dia e hora de Brasilia.
+   *
+   * O relatorio e um documento para PESSOAS. Despejar o ISO em UTC faria a
+   * janela das 15:00 aparecer como 18:00 e alguem "corrigir" o que estava certo.
+   */
+  private horarioLegivel(instante: Date | null): string | null {
+    if (!instante) return null;
+
+    return new Intl.DateTimeFormat('pt-BR', {
+      timeZone: FUSO_DA_OPERACAO,
+      dateStyle: 'short',
+      timeStyle: 'short',
+    }).format(instante);
   }
 
   /** A mensagem do erro, truncada: `detalhe` e para ler, nao para despejar stack. */

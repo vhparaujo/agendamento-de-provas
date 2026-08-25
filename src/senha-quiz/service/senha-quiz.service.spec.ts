@@ -12,6 +12,7 @@ import {
 import { PeriodoService } from '../../periodo/service/periodo.service';
 import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 import { GradeSenhasService } from './grade-senhas.service';
+import { ModalidadeDaTurmaService } from './modalidade-da-turma.service';
 import { ResolucaoOrgUnitService } from './resolucao-orgunit.service';
 import { SenhaQuizService } from './senha-quiz.service';
 
@@ -49,6 +50,9 @@ describe('SenhaQuizService', () => {
     habilitado?: boolean;
     /** `null` = ninguem escolheu o questionario ainda. */
     alvo?: string | null;
+    /** orgUnitId -> a decisao do `ModalidadeDaTurmaService`. */
+    modalidadePorTurma?: Record<string, unknown>;
+    janela?: Record<string, unknown> | null;
   }) => {
     itensGravados = [];
     gravacoes = [];
@@ -90,6 +94,21 @@ describe('SenhaQuizService', () => {
           itensGravados.push(...data);
           return Promise.resolve({ count: data.length });
         }),
+      },
+      janelaDeProva: {
+        findUnique: jest.fn().mockResolvedValue(
+          opcoes.janela === undefined
+            ? {
+                id: 10,
+                modalidadeId: 1,
+                horaInicio: '15:00',
+                horaFim: '18:00',
+                turno: Turno.TARDE,
+                ativo: true,
+                versao: 3,
+              }
+            : opcoes.janela,
+        ),
       },
     } as unknown as PrismaService;
 
@@ -145,6 +164,22 @@ describe('SenhaQuizService', () => {
 
     const auditoria = { registrar: jest.fn() } as unknown as AuditoriaService;
 
+    // Por padrao o lote de SENHAS nem consulta isto — ele nao recorta por
+    // modalidade. Fica mockado para o construtor, e os testes de DATA o
+    // sobrescrevem.
+    const modalidades = {
+      resolver: jest.fn().mockResolvedValue({
+        totalComAgendamento: 0,
+        de: (orgUnitId: string) =>
+          opcoes.modalidadePorTurma?.[orgUnitId] ?? {
+            situacao: 'SEM_MODALIDADE',
+            motivo: 'SEM_AGENDAMENTO',
+            candidatas: [],
+            detalhe: 'sem agendamento confirmado nesta turma',
+          },
+      }),
+    } as unknown as ModalidadeDaTurmaService;
+
     const servico = new SenhaQuizService(
       prisma,
       new ConfigService({
@@ -153,12 +188,13 @@ describe('SenhaQuizService', () => {
       }),
       quizzes,
       resolucao,
+      modalidades,
       grade,
       periodo,
       auditoria,
     );
 
-    return { servico };
+    return { servico, prisma };
   };
 
   const QUIZZES = { '156126': [{ QuizId: 42, Name: 'Prova N1' }] };
@@ -448,6 +484,7 @@ describe('SenhaQuizService', () => {
         new ConfigService({}),
         {} as unknown as D2lQuizzesService,
         {} as unknown as ResolucaoOrgUnitService,
+        {} as unknown as ModalidadeDaTurmaService,
         {} as unknown as GradeSenhasService,
         {} as unknown as PeriodoService,
         {} as unknown as AuditoriaService,
@@ -492,6 +529,259 @@ describe('SenhaQuizService', () => {
       expect(findFirst).toHaveBeenCalledWith(
         expect.objectContaining({ where: { origem: OrigemExecucao.CRON } }),
       );
+    });
+  });
+
+  /**
+   * ==========================================================================
+   * O LOTE DE DATAS
+   * ==========================================================================
+   * Mesma maquinaria, outro recorte: uma JANELA aplicada nas turmas de UMA
+   * modalidade — derivada dos agendamentos, porque `TurmaImportada` nao guarda
+   * modalidade e nao deve guardar.
+   */
+  describe('lote de DATAS', () => {
+    const EAD = {
+      situacao: 'ENCONTRADA',
+      modalidadeId: 1,
+      codigo: 'EAD',
+      nome: 'EaD',
+      reservas: 40,
+    };
+    const SEMI = {
+      situacao: 'ENCONTRADA',
+      modalidadeId: 2,
+      codigo: 'SEMI',
+      nome: 'Semi',
+      reservas: 12,
+    };
+    const AMBIGUA = {
+      situacao: 'SEM_MODALIDADE',
+      motivo: 'AMBIGUA',
+      candidatas: [],
+      detalhe: 'duas modalidades nesta turma',
+    };
+
+    const OPCOES = {
+      tipo: 'DATA' as const,
+      janelaId: 10,
+      data: '2026-09-16',
+      simulacao: false,
+      forcar: false,
+    };
+
+    const tresTurmas = {
+      resolucao: {
+        totalNoCsv: 3,
+        resolvidas: [
+          turmaResolvida(1, '156126'),
+          turmaResolvida(2, '156127'),
+          turmaResolvida(3, '156128'),
+        ],
+        naoResolvidas: [],
+        aprendidos: 0,
+      },
+      quizzesPorTurma: {
+        '156126': [{ QuizId: 42, Name: 'Prova N1' }],
+        '156127': [{ QuizId: 43, Name: 'Prova N1' }],
+        '156128': [{ QuizId: 44, Name: 'Prova N1' }],
+      },
+    };
+
+    it('grava StartDate e EndDate em UTC-Z, preservando o resto', async () => {
+      const { servico } = montar({
+        ...tresTurmas,
+        modalidadePorTurma: { '156126': EAD, '156127': SEMI, '156128': SEMI },
+      });
+
+      await servico.iniciar(OPCOES, 'admin@ucb.br');
+      await deixarOLoteTerminar();
+
+      expect(gravacoes).toHaveLength(1);
+      const corpo = gravacoes[0].corpo as Record<string, unknown>;
+
+      // 15:00-18:00 em Sao Paulo = 18:00-21:00 UTC.
+      expect(corpo.StartDate).toBe('2026-09-16T18:00:00.000Z');
+      expect(corpo.EndDate).toBe('2026-09-16T21:00:00.000Z');
+      expect(corpo.Name).toBe('Prova N1');
+    });
+
+    /**
+     * A trava contra o apagamento silencioso: o GET pode devolver `Password`
+     * nulo num quiz que TEM senha, entao o lote de datas grava a senha da GRADE
+     * em vez de preservar a leitura.
+     */
+    it('grava tambem a SENHA DA GRADE, nunca a lida', async () => {
+      const { servico } = montar({
+        ...tresTurmas,
+        modalidadePorTurma: { '156126': EAD },
+        quizLido: { QuizId: 42, Name: 'Prova N1', Password: null },
+      });
+
+      await servico.iniciar(OPCOES, 'admin@ucb.br');
+      await deixarOLoteTerminar();
+
+      const corpo = gravacoes[0].corpo as Record<string, unknown>;
+      expect(corpo.Password).toBe('manha1609');
+    });
+
+    /**
+     * Turma de OUTRA modalidade nao e erro: ela tem a janela dela, no horario
+     * dela. Relatar isso encheria o CSV de linhas que ninguem deve tratar.
+     */
+    it('so toca as turmas DA MODALIDADE da janela, em silencio quanto as outras', async () => {
+      const { servico } = montar({
+        ...tresTurmas,
+        modalidadePorTurma: { '156126': EAD, '156127': SEMI, '156128': SEMI },
+      });
+
+      const resultado = await servico.iniciar(OPCOES, 'admin@ucb.br');
+      await deixarOLoteTerminar();
+
+      expect(listagens).toEqual(['156126']);
+      expect(resultado.totalTurmas).toBe(1);
+      // Nenhuma linha de relatorio para as duas turmas SEMI.
+      expect(itensGravados).toHaveLength(1);
+    });
+
+    /**
+     * Estas SIM viram linha de relatorio: sao turmas que ficam com a data velha,
+     * ou seja, alunos que nao abrem a prova.
+     */
+    it('turma sem modalidade derivavel vira linha de relatorio', async () => {
+      const { servico } = montar({
+        ...tresTurmas,
+        modalidadePorTurma: { '156126': EAD, '156127': AMBIGUA },
+      });
+
+      const resultado = await servico.iniciar(OPCOES, 'admin@ucb.br');
+      await deixarOLoteTerminar();
+
+      expect(resultado.modalidadeAmbigua).toBe(1);
+      // 156128 nao esta no mapa -> SEM_AGENDAMENTO.
+      expect(resultado.semModalidade).toBe(1);
+
+      const porResultado = itensGravados.map((i) => i.resultado).sort();
+      expect(porResultado).toEqual([
+        ResultadoSenhaQuiz.DEFINIDA,
+        ResultadoSenhaQuiz.MODALIDADE_AMBIGUA,
+        ResultadoSenhaQuiz.SEM_AGENDAMENTO,
+      ]);
+    });
+
+    it('a fotografia da janela e da modalidade vai para o item', async () => {
+      const { servico } = montar({
+        ...tresTurmas,
+        modalidadePorTurma: { '156126': EAD },
+      });
+
+      await servico.iniciar(OPCOES, 'admin@ucb.br');
+      await deixarOLoteTerminar();
+
+      const aplicado = itensGravados.find(
+        (i) => i.resultado === ResultadoSenhaQuiz.DEFINIDA,
+      );
+      expect(aplicado?.modalidadeCodigo).toBe('EAD');
+      expect((aplicado?.startDateAplicado as Date).toISOString()).toBe(
+        '2026-09-16T18:00:00.000Z',
+      );
+    });
+
+    it('dry-run de datas NAO emite nenhum PUT', async () => {
+      const { servico } = montar({
+        ...tresTurmas,
+        modalidadePorTurma: { '156126': EAD },
+      });
+
+      await servico.iniciar({ ...OPCOES, simulacao: true }, 'admin@ucb.br');
+      await deixarOLoteTerminar();
+
+      expect(listagens).toEqual(['156126']);
+      expect(gravacoes).toHaveLength(0);
+    });
+
+    /**
+     * O lote de datas depende da celula da grade tanto quanto o de senhas — e
+     * por um motivo mais duro: sem ela o PUT apagaria a senha.
+     */
+    it('recusa quando nao ha senha na grade daquele turno', async () => {
+      const { servico } = montar({ ...tresTurmas, celula: null });
+
+      await expect(servico.iniciar(OPCOES, 'admin@ucb.br')).rejects.toThrow(
+        /senha cadastrada/i,
+      );
+      expect(gravacoes).toHaveLength(0);
+    });
+
+    /**
+     * O BUG DE 25/08/2026, travado.
+     *
+     * `salvarJanelas` faz upsert e PRESERVA o id da linha. Sem a versao na chave
+     * de idempotencia, a execucao concluida das 12:01 bloqueava o disparo das
+     * 12:45 depois de o admin corrigir o horario — e a correcao so passava a
+     * valer no dia seguinte, sem nada no log.
+     */
+    it('a checagem de "ja aplicada" leva a VERSAO da janela', async () => {
+      const { servico, prisma } = montar({
+        ...tresTurmas,
+        modalidadePorTurma: { '156126': EAD },
+      });
+
+      await servico.iniciar(OPCOES, 'admin@ucb.br');
+      await deixarOLoteTerminar();
+
+      const consultas = (
+        prisma.execucaoSenhaQuiz.findFirst as unknown as jest.Mock
+      ).mock.calls.map(
+        (c) => (c[0] as { where: Record<string, unknown> }).where,
+      );
+
+      const idempotencia = consultas.find(
+        (w) => w.janelaDeProvaId !== undefined,
+      );
+
+      expect(idempotencia).toMatchObject({
+        janelaDeProvaId: 10,
+        versaoAplicada: 3,
+        simulacao: false,
+      });
+    });
+
+    it('recusa um janelaId inexistente com 404', async () => {
+      const { servico } = montar({ ...tresTurmas, janela: null });
+
+      await expect(servico.iniciar(OPCOES, 'admin@ucb.br')).rejects.toThrow(
+        /Janela 10 nao encontrada/,
+      );
+    });
+
+    /**
+     * `turno` nulo e o que separa uma execucao de datas de uma de senhas nas
+     * consultas da grade: gravar um turno "plausivel" faria a celula parecer
+     * aplicada antes de o turno dela ter rodado.
+     *
+     * `versaoAplicada` guarda a versao da JANELA (e nao da celula) — e o que faz
+     * a idempotencia liberar um novo disparo hoje quando o admin corrige o
+     * horario. Ver o bug de 25/08/2026 na coluna `janela_de_prova.versao`.
+     */
+    it('a execucao nasce com tipo DATA, sem turno e com a versao da JANELA', async () => {
+      const { servico, prisma } = montar({
+        ...tresTurmas,
+        modalidadePorTurma: { '156126': EAD },
+      });
+
+      await servico.iniciar(OPCOES, 'admin@ucb.br');
+      await deixarOLoteTerminar();
+
+      const criacao = (prisma.execucaoSenhaQuiz.create as unknown as jest.Mock)
+        .mock.calls[0][0] as { data: Record<string, unknown> };
+
+      expect(criacao.data.tipo).toBe('DATA');
+      expect(criacao.data.turno).toBeNull();
+      // A versao da JANELA (3 no mock), nao a da celula da grade (1).
+      expect(criacao.data.versaoAplicada).toBe(3);
+      expect(criacao.data.janelaDeProvaId).toBe(10);
+      expect(criacao.data.horaInicioAplicada).toBe('15:00');
     });
   });
 });

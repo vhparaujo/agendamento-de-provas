@@ -127,6 +127,8 @@ async function main(): Promise<void> {
 }
 
 main().catch((erro: unknown) => {
-  console.error(`\n[token:aluno] ${erro instanceof Error ? erro.message : String(erro)}\n`);
+  console.error(
+    `\n[token:aluno] ${erro instanceof Error ? erro.message : String(erro)}\n`,
+  );
   process.exit(1);
 });

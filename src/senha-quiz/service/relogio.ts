@@ -77,3 +77,94 @@ export function dataUtcDeIso(iso: string): Date {
 export function isoDeDataUtc(data: Date): string {
   return data.toISOString().slice(0, 10);
 }
+
+/**
+ * (dia em `@db.Date`, "HH:MM" no fuso da operacao) -> o INSTANTE em UTC.
+ *
+ * E o que o Brightspace exige no `StartDate`/`EndDate` do questionario: ISO 8601
+ * em UTC, com `Z`. Mandar `-03:00` faz alguns endpoints da Valence responderem
+ * `400 Invalid Parameters` — foi o que o CLI de origem aprendeu na pratica
+ * (`brightspace-change-dates/src/updateDates.js`, `toApiDate`).
+ *
+ * ⚠️ NAO subtraia 3 horas. O Brasil aboliu o horario de verao em 2019, entao
+ * `-03:00` esta certo HOJE — mas a regra ja mudou uma vez, e um `-3` cravado no
+ * codigo so falharia se ela voltasse: silenciosamente, uma hora errada em toda
+ * prova da instituicao. O deslocamento e sempre PERGUNTADO ao ICU, para a data
+ * em questao, pelo mesmo `Intl.DateTimeFormat` que `agoraNaOperacao` usa.
+ *
+ * Como o deslocamento e descoberto: formatamos um instante candidato NO FUSO e
+ * comparamos com o que queriamos ler. A diferenca e o offset. Uma segunda
+ * passada resolve o caso em que o proprio offset muda entre o palpite e o
+ * resultado (a virada do horario de verao) — mais que isso nao ha, porque
+ * nenhum fuso salta duas vezes no mesmo dia.
+ */
+export function instanteUtcDe(
+  dia: Date,
+  hhmm: string,
+  fuso: string = FUSO_DA_OPERACAO,
+): Date {
+  const casado = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(hhmm ?? '').trim());
+
+  if (!casado) {
+    // Lancar aqui e o certo, ao contrario de `minutosDaHora`: quem chama nao e o
+    // tick (que precisa continuar de pe), e sim a montagem do corpo do PUT. Uma
+    // hora invalida virando data invalida produziria `Invalid Date` -> `null` no
+    // JSON -> `StartDate` APAGADO em toda turma, sem erro nenhum.
+    throw new Error(`Hora invalida para conversao em UTC: "${String(hhmm)}"`);
+  }
+
+  const desejado =
+    Date.UTC(
+      dia.getUTCFullYear(),
+      dia.getUTCMonth(),
+      dia.getUTCDate(),
+      Number(casado[1]),
+      Number(casado[2]),
+    ) / 1000;
+
+  let palpite = desejado * 1000;
+
+  for (let passada = 0; passada < 2; passada += 1) {
+    // O que o relogio DAQUELE fuso marca no instante do palpite, lido como se
+    // fosse UTC. A diferenca para o que queriamos e exatamente o offset.
+    const lido = leituraComoUtc(new Date(palpite), fuso) / 1000;
+    const erro = desejado - lido;
+    if (erro === 0) break;
+    palpite += erro * 1000;
+  }
+
+  return new Date(palpite);
+}
+
+/** O relogio do fuso naquele instante, reinterpretado como epoch UTC (ms). */
+function leituraComoUtc(instante: Date, fuso: string): number {
+  const partes = new Intl.DateTimeFormat('en-CA', {
+    timeZone: fuso,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(instante);
+
+  const valor = (tipo: Intl.DateTimeFormatPartTypes) =>
+    Number(partes.find((p) => p.type === tipo)?.value ?? '0');
+
+  return Date.UTC(
+    valor('year'),
+    valor('month') - 1,
+    valor('day'),
+    // Mesma armadilha de `agoraNaOperacao`: `hour12: false` produz "24" a
+    // meia-noite em algumas versoes do ICU.
+    valor('hour') % 24,
+    valor('minute'),
+    valor('second'),
+  );
+}
+
+/** O dia seguinte de um `@db.Date`, sem passar pelo fuso local. */
+export function diaSeguinteDe(dia: Date): Date {
+  return new Date(dia.getTime() + 24 * 60 * 60 * 1000);
+}

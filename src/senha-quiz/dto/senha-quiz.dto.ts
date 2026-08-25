@@ -1,23 +1,67 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsDateString, IsEnum, IsOptional } from 'class-validator';
+import {
+  IsBoolean,
+  IsDateString,
+  IsEnum,
+  IsInt,
+  IsOptional,
+  Min,
+  ValidateIf,
+} from 'class-validator';
 import {
   ResultadoSenhaQuiz,
   StatusExecucao,
+  TipoExecucaoQuiz,
   TipoMatchQuiz,
   Turno,
 } from '../../generated/prisma/client';
 
 export class IniciarSenhaQuizDto {
+  @ApiPropertyOptional({
+    enum: TipoExecucaoQuiz,
+    default: TipoExecucaoQuiz.SENHA,
+    description:
+      '`SENHA` aplica uma celula da grade em TODAS as turmas do CSV (exige ' +
+      '`turno`). `DATA` aplica UMA janela de horario nas turmas de UMA ' +
+      'modalidade (exige `janelaId`), e grava junto a senha da celula daquele ' +
+      'turno — o PUT do questionario substitui o objeto inteiro e nao pode ' +
+      'preservar a senha lida.',
+  })
+  @IsOptional()
+  @IsEnum(TipoExecucaoQuiz)
+  tipo?: TipoExecucaoQuiz;
+
   @ApiProperty({
     example: '2026-09-16',
-    description: 'Dia da prova (AAAA-MM-DD).',
+    description:
+      'Em `SENHA`, o dia da celula da grade. Em `DATA`, o dia que o ' +
+      'QUESTIONARIO passa a ter — ja com o "dia seguinte" resolvido, se a ' +
+      'janela for uma das noturnas.',
   })
   @IsDateString()
   data!: string;
 
-  @ApiProperty({ enum: Turno, example: Turno.MANHA })
+  @ApiPropertyOptional({
+    enum: Turno,
+    example: Turno.MANHA,
+    description:
+      'Obrigatorio em `SENHA`. Ignorado em `DATA`, onde o turno vem da janela.',
+  })
+  @ValidateIf((dto: IniciarSenhaQuizDto) => dto.tipo !== TipoExecucaoQuiz.DATA)
   @IsEnum(Turno)
-  turno!: Turno;
+  turno?: Turno;
+
+  @ApiPropertyOptional({
+    example: 10,
+    description:
+      'Obrigatorio em `DATA`: a janela a aplicar. Ela carrega a modalidade ' +
+      '(que recorta as turmas), as horas de abertura e fechamento, e o turno ' +
+      'de onde sai a senha.',
+  })
+  @ValidateIf((dto: IniciarSenhaQuizDto) => dto.tipo === TipoExecucaoQuiz.DATA)
+  @IsInt()
+  @Min(1)
+  janelaId?: number;
 
   /**
    * `true` e o PADRAO, como no compulsorio: a simulacao percorre tudo e nao
@@ -50,6 +94,9 @@ export class ExecucaoSenhaIniciadaDto {
   @ApiProperty({ example: 12, description: 'Id da execucao, para acompanhar.' })
   id!: number;
 
+  @ApiProperty({ enum: TipoExecucaoQuiz, example: TipoExecucaoQuiz.SENHA })
+  tipo!: TipoExecucaoQuiz;
+
   @ApiProperty({ example: true })
   simulacao!: boolean;
 
@@ -69,6 +116,24 @@ export class ExecucaoSenhaIniciadaDto {
       'saem detalhadas no relatorio.',
   })
   naoResolvidas!: number;
+
+  @ApiProperty({
+    example: 4,
+    description:
+      'So em `DATA`: turmas resolvidas que ficaram de fora porque nenhum ' +
+      'agendamento confirmado aponta para elas — nao ha de onde derivar a ' +
+      'modalidade, e portanto nao ha janela a aplicar.',
+  })
+  semModalidade!: number;
+
+  @ApiProperty({
+    example: 1,
+    description:
+      'So em `DATA`: turmas com alunos de DUAS modalidades. O questionario tem ' +
+      'uma janela so, entao nenhuma foi escolhida — a turma fica com a data ' +
+      'antiga e precisa de decisao humana.',
+  })
+  modalidadeAmbigua!: number;
 }
 
 export class AndamentoDaSenhaQuizDto {
@@ -87,11 +152,47 @@ export class AndamentoDaSenhaQuizDto {
   @ApiProperty({ example: 'admin@ucb.br' })
   iniciadoPor!: string;
 
+  @ApiProperty({ enum: TipoExecucaoQuiz, example: TipoExecucaoQuiz.SENHA })
+  tipo!: TipoExecucaoQuiz;
+
   @ApiProperty({ example: '2026-09-16' })
   data!: string;
 
-  @ApiProperty({ enum: Turno, example: Turno.MANHA })
-  turno!: Turno;
+  @ApiProperty({
+    enum: Turno,
+    example: Turno.MANHA,
+    nullable: true,
+    description:
+      'Nulo nas execucoes `DATA`: turno e a chave da GRADE de senhas, e uma ' +
+      'execucao de datas se identifica pela janela, nao pelo turno.',
+  })
+  turno!: Turno | null;
+
+  @ApiProperty({
+    example: '15:00',
+    nullable: true,
+    description:
+      'So em `DATA`: a abertura que foi aplicada. Congelada no inicio — a ' +
+      'janela pode ser editada na tela durante a execucao, e o registro precisa ' +
+      'dizer o que REALMENTE foi gravado.',
+  })
+  horaInicioAplicada!: string | null;
+
+  @ApiProperty({ example: '18:00', nullable: true })
+  horaFimAplicada!: string | null;
+
+  @ApiProperty({
+    example: 'EAD',
+    nullable: true,
+    description:
+      'So em `DATA`: a modalidade da janela aplicada. **Sem ela a tela nao tem ' +
+      'como dizer de quem e a execucao** — as 12:01 tres modalidades disparam, ' +
+      'e duas delas com a mesma janela.',
+  })
+  modalidadeCodigo!: string | null;
+
+  @ApiProperty({ example: 'EaD', nullable: true })
+  modalidadeNome!: string | null;
 
   @ApiProperty({ example: 'Prova' })
   nomeQuizAlvo!: string;
@@ -107,6 +208,23 @@ export class AndamentoDaSenhaQuizDto {
 
   @ApiProperty({ example: 12 })
   orgUnitsAprendidos!: number;
+
+  @ApiProperty({
+    example: 4,
+    description:
+      'So em `DATA`: turmas sem agendamento confirmado, das quais nao ha como ' +
+      'derivar a modalidade. Ficam com a data antiga.',
+  })
+  semModalidade!: number;
+
+  @ApiProperty({
+    example: 1,
+    description:
+      'So em `DATA`: turmas com alunos de duas modalidades. **Tao importante ' +
+      'quanto `naoEncontradas`** e pelo mesmo motivo: nao contam como falha e ' +
+      'sao turmas inteiras que nao abririam a prova no horario certo.',
+  })
+  modalidadeAmbigua!: number;
 
   @ApiProperty({ example: 200 })
   processadas!: number;
@@ -163,4 +281,26 @@ export class AndamentoDaSenhaQuizDto {
 
   @ApiProperty({ example: '2026-09-16T10:36:00.000Z', nullable: true })
   concluidoEm!: Date | null;
+}
+
+export class UltimaDataPorModalidadeDto {
+  @ApiProperty({ example: 1 })
+  modalidadeId!: number;
+
+  @ApiProperty({ example: 'EAD' })
+  modalidadeCodigo!: string;
+
+  @ApiProperty({ example: 'EaD' })
+  modalidadeNome!: string;
+
+  @ApiProperty({
+    type: AndamentoDaSenhaQuizDto,
+    nullable: true,
+    description:
+      'A ultima execucao de datas desta modalidade, ou `null` se ela nunca ' +
+      'rodou. **Nulo nao e erro**: e o estado normal de uma modalidade que tem ' +
+      'calendario cadastrado mas ainda nao teve prova — o Presencial, enquanto ' +
+      'nao houver aluno presencial importado.',
+  })
+  execucao!: AndamentoDaSenhaQuizDto | null;
 }

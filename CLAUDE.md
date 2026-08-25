@@ -46,6 +46,11 @@ regra de negócio ou estrutura, atualize os dois.
   enum — quem nomeia a rodada é a secretaria. Default `"N2"`.
 - **Turma real**: turma/disciplina que efetivamente terá prova (CSV de turmas). Filtro
   final do que aparece para o aluno.
+- **Janela de prova**: o par (abertura, fechamento) que o questionário do
+  Brightspace tem num dia, mais a hora em que o servidor o move para lá. Vive em
+  `JanelaDeProva`, **uma linha por disparo, por modalidade** — o número de
+  sessões cai da duração: EaD 3 de 3h, Semi/Modular 6 de 1h30, Presencial 5 de
+  2h. Ver "Datas das provas".
 
 ## Regras de negócio que NÃO podem ser violadas
 
@@ -359,7 +364,8 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `GET /agendamentos/:id/historico` | admin | Quem alterou: aluno ou administrador |
 | `GET/PUT /senhas-de-prova` · `GET /:id/revelar` · `DELETE /:id` | admin | A grade dia × turno das senhas das provas. **A listagem nunca devolve o valor** |
 | `GET/PUT /senhas-de-prova/alvo` · `/horarios` · `GET /senhas-de-prova/turmas` | admin | Questionário-alvo, horários do cron, e quais turmas o lote vai tocar |
-| `POST /senhas-de-prova/execucoes` · `GET /:id` · `/:id/relatorio` | admin | Troca a senha dos questionários no Brightspace; acompanha e baixa o CSV |
+| `GET/PUT /senhas-de-prova/janelas` | admin | O calendário de abertura/fechamento do questionário, por modalidade |
+| `POST /senhas-de-prova/execucoes` · `GET /:id` · `/:id/relatorio` | admin | Troca a **senha** (`tipo: SENHA`) ou a **janela de datas** (`tipo: DATA`) dos questionários no Brightspace; acompanha e baixa o CSV |
 | `GET /d2l/callback` | — | Callback OAuth da Valence: troca o `code` e grava o refresh token |
 
 Pendente: special access no quiz (adiado pelo cliente). OAuth, leitura de
@@ -830,8 +836,14 @@ npm run prisma:studio
 npm run db:down              # derruba o compose
 npm run db:reset             # migrate reset — APAGA os dados
 
-# seeds idempotentes: modalidades + polos + 1º admin
+# seeds idempotentes: modalidades + janelas de prova + polos + 1º admin
 npm run seed                 # lê SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD do .env
+
+# so o calendario das janelas, sem tocar em polo/admin/modalidade. Para quando a
+# unica coisa que mudou foi o horario de uma modalidade nova. NAO sobrescreve
+# janela existente: cria o que falta e deixa o resto como esta — mudar horario
+# ja cadastrado se faz na TELA, nunca aqui.
+npm run seed:janelas
 
 # LTI
 npm run lti:keygen           # gera a chave RSA da ferramenta (LTI_TOOL_PRIVATE_KEY)
@@ -843,6 +855,13 @@ npm run token:aluno -- <RA> [orgUnitId]
 # em status-curso.enum.ts. Sem `--gravar` e simulacao.
 npm run alunos:recalcular
 npm run alunos:recalcular -- --gravar
+
+# Qual a modalidade de cada turma, segundo os agendamentos confirmados. E o que
+# decide qual janela de horario o lote de DATAS aplica em cada questionario, e a
+# unica forma de ver as turmas AMBIGUAS antes do dia da prova (elas ficariam com
+# a data antiga, e ninguem abriria a prova). So leitura; sai com codigo 1 se
+# houver ambiguidade. RODE ANTES DO PRIMEIRO DIA.
+npm run turmas:modalidades
 
 # "id_token do LTI invalido" e generico de proposito (nao conta a quem sonda a
 # rota o que forjar). Este script decodifica o token e diz QUAL claim diverge do
@@ -1892,6 +1911,277 @@ cada questionário casado; use `EXATO` assim que os nomes estiverem padronizados
    o bastante — com ~300 turmas o lote leva ~6 min a 10 req/s; com 1.500 passa de
    30 min.
 
+## Datas das provas (etapa 11)
+
+A mesma aba passou a fazer duas coisas: trocar a **senha** e mover a **janela de
+datas** do questionário. No dia da prova a prova fica aberta *só* durante a
+sessão corrente, e a senha (que já rodava por turno) continua sendo o segundo
+fator. Quem fez a prova das 15h não consegue nem abrir o questionário às 19h.
+
+### ⚠️ A turma NÃO tem modalidade — ela é DERIVADA dos agendamentos
+
+O lote de datas precisa de uma modalidade por turma, porque o calendário é dela:
+EaD (3h) cabe em 3 sessões por dia, Semi/Modular (1h30) em 6, Presencial (2h) em
+5 — e o questionário tem **uma** janela. Mas `TurmaImportada` não guarda modalidade, e não deve
+guardar — é o mesmo argumento que removeu `curso` em 10/08/2026 ("uma turma tem
+alunos de VÁRIOS cursos"). Como a modalidade vem do curso, ela o herda.
+
+O único caminho verdadeiro que o modelo oferece:
+
+```
+agendamento (CONFIRMADO, periodoLetivoId + rodada vigentes)
+  └─ agendamento_disciplina.orgUnitId  ==  turma_importada.orgUnitId
+       ⇒ agendamento.modalidadeId
+```
+
+`ModalidadeDaTurmaService` faz isso em **uma consulta agregada**, não uma por
+turma. `Agendamento.modalidadeId` é fotografia da reserva, e é o certo: a prova
+acontece na duração com que foi marcada, mesmo que o aluno tenha trocado de curso
+depois. Ler de `aluno_importado` faria a janela mudar por baixo de uma reserva
+confirmada — o problema que a migration `snapshot_modalidade_polo_agendamento`
+existe para resolver.
+
+**O timing funciona, e não por sorte:** o cron de datas roda nos dias de prova,
+com o prazo de agendamento já fechado. É o oposto do lote de senhas, que ignora
+agendamentos de propósito.
+
+**Nada é chutado**, como em todo match do projeto:
+
+| Modalidades distintas na turma | Resultado |
+|---|---|
+| 1 | entra no lote daquela modalidade |
+| ≥ 2 | `MODALIDADE_AMBIGUA` — linha de relatório, **nada é gravado** |
+| 0 | `SEM_AGENDAMENTO` — linha de relatório |
+
+Não há voto de maioria: o questionário tem uma janela só, e a minoria ficaria sem
+conseguir abrir a prova, com o erro aparecendo no dia.
+
+⚠️ **Uma turma ambígua não tem caminho de recuperação automático.** Ela fica com
+a data antiga. **Rode `npm run turmas:modalidades` antes do primeiro dia** — ele
+mede exatamente isso na base real e sai com código 1 se houver ambiguidade. Se
+aparecerem linhas, a correção mínima é uma coluna de modalidade fixada,
+preenchida à mão só nessas turmas.
+
+### 🔴 Por que o lote de datas TAMBÉM grava a senha
+
+O caminho óbvio — preservar a senha lida, `Password: quiz.Password`, que é o que
+o CLI de origem `../brightspace-change-dates` faz — **apagaria a senha de toda
+prova da instituição**.
+
+O `QuizReadData` só expõe `Password` se ele for "não nulo **E** visível ao
+contexto do chamador". Ou seja: o GET pode devolver `Password: null` num
+questionário **que tem senha**. Como o PUT substitui o objeto inteiro, reenviar
+esse nulo apaga o campo — sem erro nenhum, descoberto no dia. É exatamente o
+risco que o comentário de `ExecucaoSenhaQuiz.comSenhaLida` já registrava sobre o
+CLI de origem, e ele volta no instante em que nasce um lote que *preserva*.
+
+Por isso `montarCorpoDoQuiz` mantém `novaSenha` **obrigatória nos dois lotes**, e
+`JanelaDeProva.turno` existe: ele diz de qual célula da grade o lote de datas
+tira a senha. **Sem senha cadastrada naquele turno, a janela não é aplicada** —
+`DATA_QUIZ_CRON_SEM_GRADE`, que é evento de falha, não aviso.
+
+Consequência aceita (decisão do cliente): a grade continua com **três turnos**, e
+em Semi/Modular duas janelas seguidas do mesmo turno dividem a mesma senha. O que
+ainda segura o aluno é a própria janela — às 10:30 o questionário das 08:30 já
+está fechado.
+
+### Um lote por vez, e por que os dois moram na mesma tabela
+
+Os dois fazem `GET → altera → PUT` no **mesmo** questionário. Rodando em
+paralelo, os dois leriam antes de qualquer um gravar e o segundo PUT devolveria o
+campo do outro ao valor antigo, em silêncio.
+
+`recusarSeJaRodando()` já serializa tudo **consultando `execucao_senha_quiz`**.
+Foi por isso que o `tipo` entrou naquela tabela em vez de nascer uma tabela nova:
+com duas tabelas, o guard teria de consultar as duas, e esquecer isso seria
+justamente esse bug. Serializados, cada lote faz o próprio GET imediatamente
+antes do próprio PUT e preserva verbatim o campo do outro — não há atualização
+perdida.
+
+O tick do cron dispara **um** lote por minuto, e a **data vem primeiro**: sem a
+janela nova o questionário não abre e ninguém faz a prova; com a senha do turno
+anterior por mais um minuto, o pior caso é um aluno usando a senha velha numa
+prova que já está aberta para ele. A primeira falha impede a prova, a segunda só
+a adianta. Às 12:01 três modalidades têm janela — vão nos minutos seguintes,
+dentro da tolerância de 30 min.
+
+### As janelas são configuração de tela
+
+`JanelaDeProva` fica no banco pelo mesmo motivo que os horários dos turnos saíram
+do `.env` em 19/08/2026: quem conhece o calendário é a secretaria, e ela não faz
+deploy. `janelasParaDisparar` (`janela.ts`, **pura e testada**) é lida a cada
+tick, então salvar 15:31 às 15:25 vale às 15:31.
+
+**Diferença deliberada em relação a `ConfiguracaoSenhaQuiz`: aqui HÁ seed.** Um
+*nome* de questionário chutado casa com o questionário errado em silêncio; um
+*horário* errado não casa com nada — ou o admin o corrige na tela, ou o dry-run o
+mostra. Não semear seria pior: um ambiente novo subiria sem janela e o cron nunca
+dispararia. O seed **cria o que falta e não sobrescreve** o que a secretaria
+ajustou.
+
+`ordem` **não é a ordem do relógio**: a primeira janela é a que dispara à noite
+com `diaSeguinte`, armando a prova da manhã seguinte. Sem essa coluna a sessão
+das 08:30 teria de ser aplicada de madrugada, quando ninguém está olhando se ela
+falhou.
+
+⚠️ **`diaSeguinte` é DERIVADO, não configurado** (25/08/2026). Vale exatamente
+`horaDisparo > horaInicio` (`ehDoDiaSeguinte`, em `janela.ts`): se o disparo
+acontece depois da hora de abertura, ele **não pode** ser para hoje — não há como
+abrir uma prova às 08:30 quando já são 22:01. Foi um checkbox na tela por um dia,
+e não havia resposta certa que o admin pudesse dar; marcar "mesmo dia" ali produz
+uma prova que abre no passado, que a API aceita e nasce fechada. Fica **gravado**
+mesmo sendo derivado, como `AlunoImportado.ativo` — recalculado em toda escrita
+(`salvarJanelas` e o seed), e recusado se vier no corpo de um PUT.
+
+### A regra que gera os horários de disparo
+
+```
+horaDisparo = fim da janela ANTERIOR + 1 minuto
+```
+
+…e a primeira janela do dia é armada na noite anterior, um minuto depois do fim
+da **última** — o ciclo fecha em si mesmo. O minuto de folga não é estética: a
+janela só pode ser movida depois de a sessão anterior ter **fechado**; disparar
+no mesmo minuto do fechamento abriria a prova seguinte com alguém ainda na
+anterior, que é o que este recurso existe para impedir.
+
+Vale para os quatro calendários semeados, e é o que permite montar o de uma
+modalidade nova sem perguntar a ninguém — basta a lista de janelas em ordem de
+relógio. Os semeados hoje:
+
+| Modalidade | Sessões | Disparos |
+|---|---|---|
+| EaD (3h) | 09:00–12:00 · 15:00–18:00 · 19:00–22:00 | 22:01 (D+1) · 12:01 · 18:01 |
+| Semi e Modular (1h30) | 08:30–10:00 · 10:30–12:00 · 14:00–15:30 · 16:00–17:30 · 18:00–19:30 · 20:00–21:30 | 21:31 (D+1) · 10:01 · 12:01 · 15:31 · 17:31 · 19:31 |
+| Presencial (2h) | 08:30–10:30 · 11:00–13:00 · 15:00–17:00 · 17:30–19:30 · 20:00–22:00 | 22:01 (D+1) · 10:31 · 13:01 · 17:01 · 19:31 |
+
+**Minutos compartilhados entre modalidades são normais, não conflito.** Às 12:01
+disparam EaD, Semi e Modular; às 19:31, Semi, Modular e Presencial; às 22:01, EaD
+e Presencial. `janelasParaDisparar` devolve no máximo uma por modalidade e o cron
+aplica **uma por tick** — três candidatas entram em três minutos, contra 30 de
+tolerância. Há teste travando o pior minuto do calendário real.
+
+### ⚠️ Corrigir o horário de uma janela precisa liberá-la para rodar HOJE
+
+Bug real, 25/08/2026, e o mais instrutivo desta etapa. O admin viu que a janela
+do EaD tinha disparado às 12:01 com o horário errado, corrigiu para 12:45 às
+12:43 e salvou. Às 12:45 **o cron não fez nada, e nada apareceu no log.**
+
+`salvarJanelas` faz upsert por `(modalidadeId, ordem)`, então a linha editada
+**mantém o id**. A checagem de idempotência perguntava "já existe execução
+concluída para (janela, dia)?" — e existia, a das 12:01. Ela pulava, em silêncio,
+e a correção só passaria a valer no dia seguinte.
+
+`SenhaDeProva` já tinha resolvido exatamente isso com `versao` +
+`ExecucaoSenhaQuiz.versaoAplicada`. As janelas nasceram sem, e ganharam o mesmo
+remédio: `JanelaDeProva.versao` sobe quando **o horário muda** (não em todo PUT —
+salvar o mesmo calendário não pode reprocessar a instituição inteira), e
+`versaoAplicada` passou a guardar a versão da **janela** nas execuções `DATA`.
+
+Duas lições que ficaram no código:
+
+- **Um cron que encontra trabalho e não faz nada, calado, é indistinguível de um
+  cron quebrado.** `motivoParaNaoDisparar` devolve o motivo em vez de um booleano,
+  e o tick registra `DATA_QUIZ_CRON_NADA_A_FAZER` (LOG, não WARN — na maior parte
+  dos ticks da tolerância isso é o normal) dizendo qual janela pulou e por quê.
+- **`turno` entrou na linha de auditoria das janelas.** É ele que decide de qual
+  célula da grade sai a senha; sem ele no log, "por que a janela das 15h não
+  rodou?" não tem resposta.
+
+### ⚠️ Os dois lotes NÃO tocam as mesmas turmas
+
+| | Quais turmas alcança |
+|---|---|
+| Senha | **todas** as turmas do CSV no período letivo vigente |
+| Data | só aquelas cuja **modalidade pôde ser derivada** dos agendamentos |
+
+É por isso que uma turma pode receber a senha nova e continuar com a data velha —
+e foi o primeiro sintoma real (`GSPS01N20001`, 26/08/2026). Não é falha: é a
+regra "nada é chutado" funcionando. Sem modalidade não há janela a escolher, e o
+lote prefere deixar a data antiga a abrir a prova no horário de outra modalidade.
+
+Os três caminhos que levam a isso, todos reportados por turma no CSV da execução:
+`SEM_AGENDAMENTO`, `MODALIDADE_AMBIGUA`, ou a turma derivou para **outra**
+modalidade (aí ela foi tocada, mas por outro disparo, com outra janela).
+
+**`semModalidade` tem o mesmo peso de `naoEncontradas` na tela.** Ficou fora da
+contagem de pendências até 26/08/2026, e o efeito foi exatamente o previsto no
+comentário daquele contador: uma execução em que *toda* turma caiu em
+`SEM_AGENDAMENTO` aparecia verde, com "0 pendência(s)". Nenhum dos quatro é falha
+de sistema, e todos significam a mesma coisa para o aluno — a prova não abre no
+horário.
+
+### ⚠️ Um minuto de disparo produz VÁRIAS execuções
+
+Às 12:01 disparam três modalidades — EaD (15:00–18:00), Semi e Modular
+(14:00–15:30). O tick aplica **uma por minuto**, então saem três execuções em
+12:01, 12:02 e 12:03.
+
+Por isso `GET /senhas-de-prova/execucoes/ultima?tipo=DATA` **não serve para a
+tela**: ele devolve a terceira delas e esconde as outras duas. Quem abrisse a
+aba às 12:03 leria "Janela 14:00–15:30" — sem saber de qual modalidade — e
+concluiria que a janela do EaD tinha sido aplicada errada. Foi exatamente o que
+aconteceu no primeiro teste real.
+
+A rota da tela é `GET /senhas-de-prova/execucoes/datas-por-modalidade`, que
+responde a pergunta que a secretaria faz: **cada modalidade está com a janela
+certa?** Uma linha por modalidade com calendário cadastrado; `execucao: null`
+significa "nunca rodou", que é o estado normal de quem ainda não teve prova — não
+um erro. Pelo mesmo motivo `modalidadeCodigo` entrou no andamento e no nome do
+arquivo do relatório: dois downloads do mesmo dia seriam indistinguíveis.
+
+### ⚠️ O disparo da noite lê a célula de AMANHÃ
+
+A última janela do dia arma a primeira sessão da manhã seguinte — às 21:31 de
+segunda o servidor grava a janela de terça 08:30. E ele lê a senha da célula
+**`(terça, manhã)`**, não da de hoje, porque o PUT substitui o questionário por
+inteiro e não pode preservar a senha lida.
+
+Consequência operacional que a grade sozinha não conta: **a senha de amanhã de
+manhã precisa estar digitada antes do disparo desta noite.** Esquecer não produz
+erro no momento — a prova de amanhã simplesmente amanhece com o horário de ontem,
+e a descoberta é às 08:30, com os alunos na frente.
+
+| Cron | Dispara em | Lê a célula de |
+|---|---|---|
+| Senhas | os 3 horários de turno | o próprio dia |
+| Datas — sessões diurnas | 2 a 4 horários | o próprio dia |
+| Datas — sessão da noite | 21:31 ou 22:01 | **o dia seguinte** |
+
+Do lado do servidor isso vira `DATA_QUIZ_CRON_SEM_GRADE`, que é **evento de
+falha** e não aviso: a janela não foi aplicada. Do lado da tela, a grade destaca
+a célula que faltará e explica o prazo enquanto ainda há o dia inteiro para
+consertar (`celulasDaVespera`, em `SenhasDeProvaView.vue`).
+
+O aviso é deliberadamente **calado em dois casos**, para não virar ruído que se
+aprende a ignorar: quando não há nenhuma senha cadastrada hoje (fora de período
+de prova, não há o que cobrar) e quando "amanhã" está fora do intervalo carregado
+na grade — ali a célula não foi buscada, e ausência não é vazio.
+
+⚠️ **Presencial só passa a ter efeito quando houver aluno presencial
+importado.** A modalidade da turma vem dos agendamentos, e até hoje não houve CSV
+na aba Presencial: sem aluno, nenhuma turma resolve para PRESENCIAL e o lote roda
+em zero turma — o cron dispara e conclui limpo. Quem mostra a contagem real por
+modalidade é `GET /senhas-de-prova/turmas`. O calendário existir antes do
+primeiro aluno é o certo; a alternativa seria descobrir no dia da primeira prova
+presencial que não havia horário nenhum cadastrado.
+
+### Detalhes que já custaram tempo
+
+- **Sempre UTC-`Z` nas datas.** `instanteUtcDe` (`relogio.ts`) pergunta o
+  deslocamento ao ICU para *aquela* data — nunca `-3` cravado. `-03:00` é
+  recusado por endpoints da Valence com `400 Invalid Parameters`, e um `""` numa
+  data devolve **500**.
+- **`DueDate` é preservado.** O cliente pediu abertura e fechamento; mover o
+  prazo de entrega mudaria a nota de quem entregou atrasado.
+- **`turno` e `versaoAplicada` são NULOS em execuções `DATA`.** Gravar um turno
+  "plausível" faria a célula da grade parecer aplicada antes de o turno dela ter
+  rodado — por isso `GradeSenhasService.listar` filtra `tipo: SENHA`.
+- **A "exibir data" (results view) ficou de fora**: no CLI de origem ela é um
+  `PATCH` num microserviço Siren separado (`quizzes.api.brightspace.com`), com o
+  host tirado do claim `tenantid` do JWT. Segunda integração, e o cliente não
+  pediu.
+
 ## Ao implementar, priorize nesta ordem
 
 1. ✅ Prisma schema + migrations + Docker + seed do admin.
@@ -1913,6 +2203,10 @@ cada questionário casado; use `EXATO` assim que os nomes estiverem padronizados
 10. ✅ Senha das provas: a grade dia × turno e o lote que troca o campo
    `Password` dos questionários no Brightspace, manual e por cron. **Exige
    `D2L_HABILITADO`** e escopo `quizzing:` no consentimento OAuth.
+11. ✅ Datas das provas (25/08/2026): o mesmo lote passa a mover
+   `StartDate`/`EndDate` do questionário, por **modalidade**, em até 6 janelas
+   por dia. A modalidade da turma é **derivada dos agendamentos** — não há, e não
+   deve haver, coluna para ela. Ver "Datas das provas".
 
 **Bloqueios externos:** o consentimento OAuth precisa incluir
 `quizzing:quizzes:read quizzing:quizzes:write` — acrescentar ao `D2L_SCOPES` não

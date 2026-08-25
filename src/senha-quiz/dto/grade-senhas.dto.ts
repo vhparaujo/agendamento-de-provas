@@ -1,6 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  IsArray,
+  IsBoolean,
   IsDateString,
   IsEnum,
   IsIn,
@@ -10,6 +12,7 @@ import {
   IsString,
   Matches,
   Min,
+  ValidateNested,
 } from 'class-validator';
 import {
   StatusExecucao,
@@ -282,6 +285,31 @@ export class TurmaDoLoteDto {
 
   @ApiProperty({ example: 'HISTORIA E CULTURA DO CORPO' })
   nomeDisciplina!: string;
+
+  @ApiProperty({
+    example: 'EAD',
+    nullable: true,
+    description:
+      'A modalidade DERIVADA dos agendamentos confirmados da rodada vigente — ' +
+      'e ela que decide qual janela de horario o lote de datas aplica nesta ' +
+      'turma. Nula quando nao foi possivel derivar; o motivo vem em ' +
+      '`motivoSemModalidade`, e a turma fica de fora do lote de datas.',
+  })
+  modalidadeCodigo!: string | null;
+
+  @ApiProperty({ example: 'EaD', nullable: true })
+  modalidadeNome!: string | null;
+
+  @ApiProperty({
+    example:
+      'Alunos de 2 modalidades tem prova nesta turma: EAD (9), SEMI (7). ' +
+      'O questionario tem uma janela so, entao nenhuma foi escolhida.',
+    nullable: true,
+    description:
+      'Por que a modalidade nao pode ser derivada. **Revise antes do primeiro ' +
+      'dia**: cada linha destas e uma turma que ficaria com a data antiga.',
+  })
+  motivoSemModalidade!: string | null;
 }
 
 export class TurmaForaDoLoteDto {
@@ -353,4 +381,163 @@ export class IdDaCelulaDto {
   @IsInt()
   @Min(1)
   id!: number;
+}
+
+// ---------------------------------------------------------------------------
+// JANELAS DO QUESTIONARIO (as datas)
+// ---------------------------------------------------------------------------
+
+/**
+ * "HH:MM" em 24h, OBRIGATORIO.
+ *
+ * Diferente de `PADRAO_HORA_OU_VAZIO`: nos turnos o vazio significa "desligado",
+ * mas uma janela sem hora nao existe — para desligar uma sessao ha `ativo`, que
+ * preserva o horario cadastrado para o semestre seguinte.
+ */
+const PADRAO_HORA = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
+const MSG_HORA_OBRIGATORIA = (campo: string) =>
+  `${campo} deve estar em HH:MM (24h, com zero a esquerda), ex.: 15:00`;
+
+export class JanelaDeProvaDto {
+  @ApiProperty({
+    example: 2,
+    description:
+      'Sequencia da sessao dentro da modalidade. NAO e a ordem do relogio: ' +
+      'a primeira e a que dispara a noite armando a prova do dia seguinte.',
+  })
+  @IsInt()
+  @Min(1)
+  ordem!: number;
+
+  @ApiProperty({
+    example: '12:01',
+    description:
+      'A que horas o cron aplica esta janela (fuso de Brasilia). Duas janelas ' +
+      'ativas da mesma modalidade nao podem disparar no mesmo minuto.',
+  })
+  @Matches(PADRAO_HORA, { message: MSG_HORA_OBRIGATORIA('horaDisparo') })
+  horaDisparo!: string;
+
+  @ApiProperty({
+    example: '15:00',
+    description: 'Vira o StartDate do questionario, convertido para UTC.',
+  })
+  @Matches(PADRAO_HORA, { message: MSG_HORA_OBRIGATORIA('horaInicio') })
+  horaInicio!: string;
+
+  @ApiProperty({
+    example: '18:00',
+    description:
+      'Vira o EndDate. Precisa ser depois de horaInicio — uma prova que fecha ' +
+      'antes de abrir nao e aplicavel.',
+  })
+  @Matches(PADRAO_HORA, { message: MSG_HORA_OBRIGATORIA('horaFim') })
+  horaFim!: string;
+
+  @ApiProperty({
+    enum: Turno,
+    example: Turno.TARDE,
+    description:
+      'De qual celula da grade sai a senha desta janela. NAO e enfeite: o PUT ' +
+      'do questionario substitui o objeto inteiro e precisa reenviar a senha, ' +
+      'e a leitura da API pode devolve-la nula num quiz que tem senha — sem ' +
+      'este turno, aplicar a janela apagaria a senha da prova.',
+  })
+  @IsEnum(Turno)
+  turno!: Turno;
+
+  @ApiPropertyOptional({
+    example: true,
+    default: true,
+    description:
+      'Sessao desligada nao dispara, mas guarda o horario para o semestre em ' +
+      'que ela voltar.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  ativo?: boolean;
+}
+
+export class SalvarJanelasDto {
+  @ApiProperty({
+    example: 1,
+    description:
+      'A modalidade cujo calendario esta sendo salvo. O PUT substitui as ' +
+      'janelas DESTA modalidade e nao toca nas outras.',
+  })
+  @IsInt()
+  @Min(1)
+  modalidadeId!: number;
+
+  @ApiProperty({
+    type: [JanelaDeProvaDto],
+    description:
+      'O calendario completo da modalidade. Sessao que nao vier aqui e ' +
+      'REMOVIDA — e assim que a tela apaga uma janela.',
+  })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => JanelaDeProvaDto)
+  janelas!: JanelaDeProvaDto[];
+}
+
+export class JanelaDeProvaResponseDto extends JanelaDeProvaDto {
+  @ApiProperty({ example: 10 })
+  id!: number;
+
+  @ApiProperty({
+    example: false,
+    description:
+      'O disparo arma a prova de AMANHA — a janela da noite, que abre o ciclo ' +
+      'do dia seguinte.\n\n' +
+      '**DERIVADO e so leitura**: vale `horaDisparo > horaInicio`. Nao e ' +
+      'configuracao porque nao ha resposta certa que o admin possa dar — se o ' +
+      'disparo acontece depois da hora de abertura, ele nao pode ser para hoje ' +
+      '(nao da para abrir uma prova as 08:30 quando ja sao 22:01). Enviar este ' +
+      'campo num PUT e recusado com 400.',
+  })
+  diaSeguinte!: boolean;
+
+  @ApiProperty({ example: 1 })
+  modalidadeId!: number;
+
+  @ApiProperty({ example: 'EAD' })
+  modalidadeCodigo!: string;
+
+  @ApiProperty({ example: 'EaD' })
+  modalidadeNome!: string;
+}
+
+export class JanelasDeProvaDto {
+  @ApiProperty({
+    type: [JanelaDeProvaResponseDto],
+    description:
+      'Todas as janelas, inclusive as inativas — a tela precisa mostrar o ' +
+      'horario guardado de uma sessao desligada.',
+  })
+  janelas!: JanelaDeProvaResponseDto[];
+
+  @ApiProperty({ example: 'secretaria@ucb.br', nullable: true })
+  atualizadoPor!: string | null;
+
+  @ApiProperty({ example: '2026-09-01T12:00:00.000Z', nullable: true })
+  atualizadoEm!: Date | null;
+
+  @ApiProperty({
+    example: true,
+    description:
+      'Do `.env` (`SENHA_QUIZ_CRON_HABILITADO`), **so leitura**. E a MESMA ' +
+      'chave do cron de senhas: uma instancia com ela em `false` nao dispara ' +
+      'nem senha nem data.',
+  })
+  cronHabilitado!: boolean;
+
+  @ApiProperty({
+    example: 30,
+    description:
+      'Do `.env`, so leitura. Janela em minutos apos o disparo em que um ' +
+      'servidor que estava fora ainda aplica a sessao.',
+  })
+  toleranciaMin!: number;
 }

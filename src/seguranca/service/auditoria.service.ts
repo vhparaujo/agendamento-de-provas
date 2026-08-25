@@ -69,6 +69,25 @@ export type EventoSeguranca =
   // dispararia, e sem este aviso ninguem descobriria antes do dia.
   | 'SENHA_QUIZ_CRON_SEM_HORARIO'
   | 'SENHA_QUIZ_CRON_IGNORADO'
+  // Datas dos questionarios (25/08/2026). O mesmo lote, outro recorte: uma
+  // JANELA (horario de abertura e fechamento) aplicada nas turmas de UMA
+  // modalidade. Separados dos de senha de proposito — quem investiga "por que a
+  // prova abriu as 16h?" nao quer as trocas de senha no meio, e vice-versa.
+  | 'DATA_QUIZ_JANELAS_ALTERADAS'
+  | 'DATA_QUIZ_INICIADA'
+  | 'DATA_QUIZ_CONCLUIDA'
+  | 'DATA_QUIZ_FALHOU'
+  // A janela chegou e nao havia senha na celula daquele turno. O lote de datas
+  // PRECISA da senha (o PUT substitui o objeto inteiro e nao pode preservar a
+  // lida), entao aqui isto nao e so aviso: a janela nao foi aplicada.
+  | 'DATA_QUIZ_CRON_SEM_GRADE'
+  | 'DATA_QUIZ_CRON_SEM_JANELA'
+  | 'DATA_QUIZ_CRON_IGNORADO'
+  // Havia janela no horario e nenhuma precisou disparar (ja aplicada, rodando,
+  // ou teto de tentativas). NAO e falha — e o estado normal da maior parte dos
+  // ticks da janela de tolerancia. Existe porque um cron que encontra trabalho e
+  // nao faz nada, calado, e indistinguivel de um cron quebrado.
+  | 'DATA_QUIZ_CRON_NADA_A_FAZER'
   | 'ACESSO_NEGADO'
   | 'LIMITE_REQUISICOES'
   | 'ROTA_SEM_CONTROLE_DE_ACESSO'
@@ -140,6 +159,12 @@ const EVENTOS_DE_FALHA = new Set<EventoSeguranca>([
   // cron acordou no horario e nao havia senha cadastrada para aquele turno.
   'SENHA_QUIZ_CRON_SEM_GRADE',
   'SENHA_QUIZ_CRON_SEM_HORARIO',
+  'DATA_QUIZ_FALHOU',
+  // Mesmo peso que os de senha, e pela mesma razao: a janela chegou e o
+  // questionario nao foi aberto. A diferenca e que aqui a prova fica com a data
+  // do turno ANTERIOR — ou seja, fechada.
+  'DATA_QUIZ_CRON_SEM_GRADE',
+  'DATA_QUIZ_CRON_SEM_JANELA',
 ]);
 
 /**

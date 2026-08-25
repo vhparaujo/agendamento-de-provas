@@ -29,12 +29,15 @@ import {
   CelulaDaGradeDto,
   DefinirSenhaDto,
   HorariosDoCronDto,
+  JanelasDeProvaDto,
   SalvarAlvoDto,
   SalvarHorariosDto,
+  SalvarJanelasDto,
   SenhaReveladaDto,
   TurmasDoLoteDto,
 } from '../dto/grade-senhas.dto';
 import { GradeSenhasService } from '../service/grade-senhas.service';
+import { ModalidadeDaTurmaService } from '../service/modalidade-da-turma.service';
 import { ResolucaoOrgUnitService } from '../service/resolucao-orgunit.service';
 import { PeriodoService } from '../../periodo/service/periodo.service';
 import { BadRequestException } from '@nestjs/common';
@@ -55,6 +58,7 @@ export class GradeSenhasController {
   constructor(
     private readonly grade: GradeSenhasService,
     private readonly resolucao: ResolucaoOrgUnitService,
+    private readonly modalidades: ModalidadeDaTurmaService,
     private readonly periodo: PeriodoService,
   ) {}
 
@@ -113,7 +117,18 @@ export class GradeSenhasController {
       'turma do CSV cujo `orgUnitId` nao foi descoberto — e ela ficaria sem senha, ' +
       'silenciosamente.\n\n' +
       'Esta rota tambem APRENDE: o `orgUnitId` descoberto e gravado em ' +
-      '`turma_importada`, nunca sobrescrevendo o que ja existia.',
+      '`turma_importada`, nunca sobrescrevendo o que ja existia.\n\n' +
+      '### A modalidade de cada turma\n\n' +
+      'Cada turma resolvida traz tambem a **modalidade derivada**, que e o que ' +
+      'decide qual janela de horario o lote de datas aplica nela. Ela NAO vem do ' +
+      'cadastro: `turma_importada` nao tem essa coluna, e nao deve ter (uma turma ' +
+      'tem alunos de varios cursos, decisao de 10/08/2026). Ela e derivada dos ' +
+      '**agendamentos confirmados** da rodada vigente.\n\n' +
+      '**Revise as turmas sem modalidade antes do primeiro dia**, com o mesmo ' +
+      'cuidado de `naoResolvidas`. `MODALIDADE_AMBIGUA` (alunos de duas ' +
+      'modalidades na mesma turma) e `SEM_AGENDAMENTO` (ninguem agendou ali) ' +
+      'ficam **de fora do lote de datas** — nada e chutado, porque o questionario ' +
+      'tem uma janela so e a escolha errada trancaria a prova de quem sobrou.',
   })
   @ApiOkResponse({ type: TurmasDoLoteDto })
   @ApiBadRequestResponse({
@@ -121,17 +136,37 @@ export class GradeSenhasController {
       'Integracao D2L desligada, ou nenhum periodo letivo cadastrado',
   })
   async turmas(): Promise<TurmasDoLoteDto> {
-    const { periodoLetivoId } =
+    const { periodoLetivoId, rodada } =
       (await this.periodo.periodoLetivoVigente()) ?? {};
 
-    if (!periodoLetivoId) {
+    if (!periodoLetivoId || !rodada) {
       throw new BadRequestException(
         'Nenhum periodo letivo cadastrado. Sem ele nao ha como separar as turmas ' +
           'deste semestre das dos semestres passados.',
       );
     }
 
-    return this.resolucao.resolver(periodoLetivoId);
+    const resolucao = await this.resolucao.resolver(periodoLetivoId);
+    const mapa = await this.modalidades.resolver(periodoLetivoId, rodada);
+
+    return {
+      ...resolucao,
+      resolvidas: resolucao.resolvidas.map((turma) => {
+        const decisao = mapa.de(turma.orgUnitId);
+
+        return {
+          ...turma,
+          modalidadeCodigo:
+            decisao.situacao === 'ENCONTRADA' ? decisao.codigo : null,
+          modalidadeNome:
+            decisao.situacao === 'ENCONTRADA' ? decisao.nome : null,
+          // A frase que explica a ausencia — a mesma que iria para o CSV do
+          // relatorio se o lote rodasse agora.
+          motivoSemModalidade:
+            decisao.situacao === 'ENCONTRADA' ? null : decisao.detalhe,
+        };
+      }),
+    };
   }
 
   @Get('alvo')
@@ -183,6 +218,54 @@ export class GradeSenhasController {
     @AdminLogado() admin: AdminJwtPayload,
   ) {
     return this.grade.salvarHorarios(dto, admin.email);
+  }
+
+  @Get('janelas')
+  @ApiOperation({
+    summary: 'As janelas do questionario, por modalidade',
+    description:
+      'A que horas a prova ABRE e FECHA no dia, e a que horas o cron aplica ' +
+      'cada uma dessas mudancas.\n\n' +
+      'E **por modalidade** porque a duracao da prova vem dela: EaD (3h) cabe ' +
+      'em tres sessoes por dia, Semi/Modular (1h30) em seis. Nao ha calendario ' +
+      'unico possivel.\n\n' +
+      'Devolve tambem as janelas **inativas** — a tela precisa mostrar o ' +
+      'horario guardado de uma sessao desligada, senao reativa-la significaria ' +
+      'digitar tudo de novo.',
+  })
+  @ApiOkResponse({ type: JanelasDeProvaDto })
+  lerJanelas() {
+    return this.grade.lerJanelas();
+  }
+
+  @Put('janelas')
+  @ApiOperation({
+    summary: 'Define o calendario de UMA modalidade',
+    description:
+      'Substitui as janelas da modalidade informada; as demais nao sao ' +
+      'tocadas. Sessao que **nao vier** no corpo e removida — e assim que a ' +
+      'tela apaga uma janela. Para apenas desligar uma sessao sem perder o ' +
+      'horario, mande-a com `ativo: false`.\n\n' +
+      'Vale a partir do minuto seguinte, sem reiniciar nada: o cron le as ' +
+      'janelas a cada tick.\n\n' +
+      '**`turno` nao e enfeite de relatorio.** O PUT do questionario no ' +
+      'Brightspace substitui o objeto inteiro, entao aplicar a janela obriga a ' +
+      'reenviar a senha — e a leitura da API pode devolver a senha nula num ' +
+      'quiz que tem senha. Por isso o lote de datas le a senha da **grade**, ' +
+      'na celula daquele turno, em vez de confiar no que leu. Sem senha ' +
+      'cadastrada ali, a janela nao e aplicada.',
+  })
+  @ApiOkResponse({ type: JanelasDeProvaDto })
+  @ApiBadRequestResponse({
+    description:
+      'Hora fora de HH:MM, fechamento antes da abertura, ordem repetida, ' +
+      'dois disparos ativos no mesmo minuto, ou modalidade inexistente',
+  })
+  salvarJanelas(
+    @Body() dto: SalvarJanelasDto,
+    @AdminLogado() admin: AdminJwtPayload,
+  ) {
+    return this.grade.salvarJanelas(dto.modalidadeId, dto.janelas, admin.email);
   }
 
   @Put('alvo')

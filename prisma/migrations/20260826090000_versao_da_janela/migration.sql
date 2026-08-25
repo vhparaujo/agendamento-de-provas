@@ -1,0 +1,26 @@
+-- CORRIGIR O HORARIO DE UMA JANELA PRECISA LIBERA-LA PARA RODAR DE NOVO HOJE.
+--
+-- Bug real, 25/08/2026: o admin viu que a janela do EaD tinha disparado as 12:01
+-- com o horario errado, editou para 12:45 as 12:43 e salvou. As 12:45 o cron nao
+-- fez nada, e nada apareceu no log.
+--
+-- A causa: `salvarJanelas` faz UPSERT por (modalidadeId, ordem), entao a linha
+-- editada MANTEM o id. A checagem de idempotencia do cron pergunta "ja existe
+-- execucao concluida para (janela, dia)?" — e existia, a das 12:01. Ela pulou,
+-- em silencio, e a correcao so passaria a valer no dia seguinte.
+--
+-- `SenhaDeProva` ja tinha resolvido exatamente isto com `versao` +
+-- `execucao_senha_quiz.versaoAplicada`: editar a senha sobe a versao, e a
+-- consulta de idempotencia filtra pela versao atual. As janelas nasceram sem, e
+-- este e o mesmo remedio.
+--
+-- Sobe so quando o HORARIO muda, nao em todo PUT: salvar de novo o mesmo
+-- calendario nao pode fazer o lote rodar outra vez em toda a instituicao.
+--
+-- Aditiva. `DEFAULT 1` classifica as janelas existentes como versao 1 — que e o
+-- que elas sao, e o que as execucoes ja gravadas (com `versaoAplicada` NULO)
+-- deixam de casar, liberando o proximo disparo. Isso e desejado: nenhuma
+-- execucao anterior a esta migration tem versao registrada, entao nenhuma deve
+-- bloquear.
+ALTER TABLE `janela_de_prova`
+    ADD COLUMN `versao` INTEGER NOT NULL DEFAULT 1;

@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { PrismaClient } from '../src/generated/prisma/client';
 import { createMariaDbAdapter } from '../src/database/mariadb-adapter';
 import { seedAdmin } from './seed-admin';
+import { seedJanelas } from './seed-janelas';
 import { seedModalidades } from './seed-modalidades';
 import { seedPolos } from './seed-polos';
 
@@ -14,6 +15,8 @@ async function main(): Promise<void> {
 
   try {
     await seedModalidades(prisma);
+    // Depois das modalidades: as janelas as referenciam por `codigo`.
+    await seedJanelas(prisma);
     await seedPolos(prisma);
     await seedAdmin(prisma);
     console.log('[seed] concluido');

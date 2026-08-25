@@ -152,6 +152,106 @@ describe('montarCorpoDoQuiz', () => {
     expect(JSON.stringify(corpo)).not.toContain('segredo-do-turno');
   });
 
+  describe('a janela da prova (lote de DATAS)', () => {
+    const JANELA = {
+      inicio: '2026-08-26T18:00:00.000Z',
+      fim: '2026-08-26T21:00:00.000Z',
+    };
+
+    it('com janela, produz os MESMOS campos congelados', () => {
+      const corpo = montarCorpoDoQuiz(quizLido(), 'nova', JANELA);
+      expect(Object.keys(corpo).sort()).toEqual(
+        [...CAMPOS_DO_CORPO_DO_QUIZ].sort(),
+      );
+    });
+
+    it('troca StartDate e EndDate, e preserva DueDate', () => {
+      const lido = quizLido({ DueDate: '2026-09-20T02:59:00.000Z' });
+      const corpo = montarCorpoDoQuiz(lido, 'nova', JANELA);
+
+      expect(corpo.StartDate).toBe(JANELA.inicio);
+      expect(corpo.EndDate).toBe(JANELA.fim);
+      // O cliente pediu abertura e fechamento. Mover o prazo de entrega sem
+      // pedido mudaria a nota de quem entregou atrasado.
+      expect(corpo.DueDate).toBe(lido.DueDate);
+    });
+
+    it('passa a janela VERBATIM: nao reformata a ISO recebida', () => {
+      // A conversao fuso -> UTC vive em `instanteUtcDe`, com teste. Um
+      // `new Date(x).toISOString()` aqui seria uma segunda chance de mover a
+      // data em silencio.
+      const corpo = montarCorpoDoQuiz(quizLido(), 'nova', JANELA);
+
+      expect(corpo.StartDate).toBe('2026-08-26T18:00:00.000Z');
+      expect(corpo.EndDate).toBe('2026-08-26T21:00:00.000Z');
+    });
+
+    it('sem janela, o calendario lido sai intacto', () => {
+      const lido = quizLido();
+      const corpo = montarCorpoDoQuiz(lido, 'nova');
+
+      expect(corpo.StartDate).toBe(lido.StartDate);
+      expect(corpo.EndDate).toBe(lido.EndDate);
+    });
+
+    it('a janela nao mexe em mais nada do corpo', () => {
+      const lido = quizLido();
+      const semJanela = montarCorpoDoQuiz(lido, 'nova');
+      const comJanela = montarCorpoDoQuiz(lido, 'nova', JANELA);
+
+      for (const campo of CAMPOS_DO_CORPO_DO_QUIZ) {
+        if (campo === 'StartDate' || campo === 'EndDate') continue;
+        expect(comJanela[campo]).toEqual(semJanela[campo]);
+      }
+    });
+  });
+
+  /**
+   * ==========================================================================
+   * A TRAVA CONTRA O APAGAMENTO SILENCIOSO DA SENHA
+   * ==========================================================================
+   * O `QuizReadData` so expoe `Password` se ele for "nao nulo E visivel ao
+   * contexto do chamador" — ou seja, o GET pode devolver `Password: null` num
+   * questionario QUE TEM SENHA.
+   *
+   * O caminho obvio para o lote de datas seria preservar a leitura
+   * (`Password: quiz.Password`), que e o que o CLI de origem
+   * `brightspace-change-dates` faz. Com um GET nulo, isso APAGARIA a senha de
+   * toda prova do CSV de uma vez, sem erro nenhum, descoberto no dia.
+   *
+   * Por isso `novaSenha` e obrigatoria nos DOIS lotes: o de datas le a senha da
+   * GRADE (`SenhaDeProva`) e a define, em vez de confiar na leitura. Estes
+   * testes existem para que reintroduzir a preservacao quebre o build.
+   */
+  describe('a senha NUNCA e preservada da leitura', () => {
+    it('GET com Password nulo + janela: a senha da grade e gravada mesmo assim', () => {
+      const corpo = montarCorpoDoQuiz(quizLido({ Password: null }), 'tarde42', {
+        inicio: '2026-08-26T18:00:00.000Z',
+        fim: '2026-08-26T21:00:00.000Z',
+      });
+
+      expect(corpo.Password).toBe('tarde42');
+    });
+
+    it('GET com Password ausente tambem grava a senha da grade', () => {
+      const lido = quizLido();
+      delete lido.Password;
+
+      expect(montarCorpoDoQuiz(lido, 'tarde42').Password).toBe('tarde42');
+    });
+
+    it('o corpo NUNCA sai com Password nulo ou indefinido', () => {
+      for (const lido of [
+        quizLido(),
+        quizLido({ Password: null }),
+        quizLido({ Password: '' }),
+      ]) {
+        const corpo = montarCorpoDoQuiz(lido, 'senha-nova');
+        expect(corpo.Password).toBe('senha-nova');
+      }
+    });
+  });
+
   describe('AttemptsAllowed: aninhado na leitura, achatado na escrita', () => {
     it('achata o valor aninhado', () => {
       const corpo = montarCorpoDoQuiz(

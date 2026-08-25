@@ -18,5 +18,7 @@ console.log('--- adicione ao .env -------------------------------------------');
 console.log(
   `LTI_TOOL_PRIVATE_KEY=${Buffer.from(privateKey).toString('base64')}`,
 );
-console.log('\n--- chave publica (referencia; servida em /api/lti/jwks) ------');
+console.log(
+  '\n--- chave publica (referencia; servida em /api/lti/jwks) ------',
+);
 console.log(publicKey);

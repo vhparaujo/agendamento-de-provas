@@ -8,12 +8,14 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../database/prisma.service';
 import {
   StatusExecucao,
+  TipoExecucaoQuiz,
   TipoMatchQuiz,
   Turno,
 } from '../../generated/prisma/client';
 import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 import { carregarConfigDoCron } from '../config/senha-quiz.config';
 import { dataUtcDeIso, isoDeDataUtc } from './relogio';
+import { ehDoDiaSeguinte } from './janela';
 import { HorariosDoCron, minutosDaHora, rotuloDoTurno } from './turno';
 import { validarSenha } from './senha';
 
@@ -116,6 +118,66 @@ export interface HorariosDoCronConfig {
   toleranciaMin: number;
 }
 
+/** Uma janela do questionario, como a tela a le e a escreve. */
+export interface JanelaDeProvaConfig {
+  /** Ausente ao criar; presente ao editar. */
+  id?: number;
+  modalidadeId: number;
+  modalidadeCodigo?: string;
+  modalidadeNome?: string;
+  ordem: number;
+  /** "HH:MM" — quando o cron aplica esta janela. */
+  horaDisparo: string;
+  /** "HH:MM" — vira o StartDate do questionario. */
+  horaInicio: string;
+  /** "HH:MM" — vira o EndDate. */
+  horaFim: string;
+  /** De qual celula da grade sai a senha desta janela. */
+  turno: Turno;
+  /**
+   * O disparo arma a prova de AMANHA — a janela da noite, que abre o ciclo do
+   * dia seguinte.
+   *
+   * **DERIVADO, so leitura.** Vale `horaDisparo > horaInicio`; ver
+   * `ehDoDiaSeguinte`. Vai na resposta para a tela poder exibi-lo, e e ignorado
+   * se vier no corpo de um PUT.
+   */
+  diaSeguinte: boolean;
+  ativo: boolean;
+  /**
+   * Sobe a cada mudanca de HORARIO. E o que libera um novo disparo no mesmo dia
+   * depois de uma correcao — ver a coluna no schema, e `SenhaDeProva.versao`,
+   * de onde a ideia veio.
+   */
+  versao?: number;
+}
+
+/**
+ * A janela como a TELA a manda: sem id (a chave e `modalidadeId + ordem`), sem
+ * `diaSeguinte` (DERIVADO das duas horas — ver `ehDoDiaSeguinte`) e com `ativo`
+ * opcional, que tem default no servico.
+ */
+export type JanelaDeProvaEntrada = Omit<
+  JanelaDeProvaConfig,
+  | 'id'
+  | 'modalidadeId'
+  | 'modalidadeCodigo'
+  | 'modalidadeNome'
+  | 'diaSeguinte'
+  | 'ativo'
+> & {
+  ativo?: boolean;
+};
+
+export interface JanelasDeProva {
+  janelas: JanelaDeProvaConfig[];
+  atualizadoPor: string | null;
+  atualizadoEm: Date | null;
+  /** Do .env, so leitura — o mesmo aviso que os horarios do cron carregam. */
+  cronHabilitado: boolean;
+  toleranciaMin: number;
+}
+
 /** Silencio maior que isto significa lote MORTO — mesmo criterio do compulsorio. */
 const SILENCIO_ATE_MORRER_MS = 5 * 60_000;
 
@@ -137,7 +199,15 @@ export class GradeSenhasService {
       include: {
         // A ultima execucao de cada celula. Sao poucas dezenas de celulas, e o
         // `take: 1` por celula sai de graca no MySQL com o indice de execucao.
+        //
+        // `tipo: SENHA` porque desde 25/08/2026 o lote de DATAS tambem grava a
+        // senha da celula (ele PRECISA reenviar `Password` no PUT, e nao pode
+        // confiar na leitura — ver `quiz-body.ts`). Ele aponta para a mesma
+        // `senhaDeProvaId`, e sem este filtro a coluna "situacao" da grade
+        // passaria a contar a troca de DATAS como se fosse a troca de SENHA:
+        // a celula ficaria "aplicada" antes de o turno dela ter rodado.
         execucoes: {
+          where: { tipo: TipoExecucaoQuiz.SENHA },
           orderBy: { iniciadoEm: 'desc' },
           take: 1,
         },
@@ -162,7 +232,9 @@ export class GradeSenhasService {
               status: ultima.status,
               simulacao: ultima.simulacao,
               origem: ultima.origem,
-              versaoAplicada: ultima.versaoAplicada,
+              // Nunca nulo aqui: o `where` acima ja restringe a execucoes SENHA,
+              // e so as de DATA tem `versaoAplicada` nula.
+              versaoAplicada: ultima.versaoAplicada ?? 0,
               concluidoEm: ultima.concluidoEm,
               turmasResolvidas: ultima.turmasResolvidas,
               definidas: ultima.definidas,
@@ -411,6 +483,262 @@ export class GradeSenhasService {
   }
 
   /**
+   * As janelas do questionario, agrupadas por modalidade.
+   *
+   * Devolve TODAS, inclusive as inativas: a tela precisa mostrar o horario
+   * guardado de uma sessao desligada, senao reativa-la significaria digitar tudo
+   * de novo.
+   */
+  async lerJanelas(): Promise<JanelasDeProva> {
+    const janelas = await this.prisma.janelaDeProva.findMany({
+      orderBy: [{ modalidadeId: 'asc' }, { ordem: 'asc' }],
+      include: { modalidade: { select: { codigo: true, nome: true } } },
+    });
+
+    const cfg = carregarConfigDoCron(this.config);
+
+    // O mais recente entre todas: a tela mostra uma linha so de "alterado por".
+    const ultimaEdicao = janelas
+      .map((j) => j.atualizadoEm)
+      .sort((a, b) => b.getTime() - a.getTime())[0];
+
+    return {
+      janelas: janelas.map((j) => ({
+        id: j.id,
+        modalidadeId: j.modalidadeId,
+        modalidadeCodigo: j.modalidade.codigo,
+        modalidadeNome: j.modalidade.nome,
+        ordem: j.ordem,
+        horaDisparo: j.horaDisparo,
+        horaInicio: j.horaInicio,
+        horaFim: j.horaFim,
+        turno: j.turno,
+        diaSeguinte: j.diaSeguinte,
+        ativo: j.ativo,
+        versao: j.versao,
+      })),
+      atualizadoPor:
+        janelas.find((j) => j.atualizadoEm === ultimaEdicao)?.atualizadoPor ??
+        null,
+      atualizadoEm: ultimaEdicao ?? null,
+      cronHabilitado: cfg.habilitado,
+      toleranciaMin: cfg.toleranciaMin,
+    };
+  }
+
+  /**
+   * Substitui as janelas de UMA modalidade pelas recebidas.
+   *
+   * ⚠️ **O recorte e a MODALIDADE, nunca a tabela inteira.** A tela edita um
+   * calendario por vez, e um PUT que apagasse o que nao veio no corpo deixaria
+   * EaD sem janela nenhuma no momento em que alguem salvasse Semi. Como a
+   * `ordem` e a chave dentro da modalidade, o que nao veio naquela modalidade
+   * SAI — e o unico jeito de remover uma sessao pela tela.
+   *
+   * Tudo numa transacao: um calendario meio salvo faria o cron disparar uma
+   * sessao e nao a seguinte, e o sintoma apareceria so no dia.
+   */
+  async salvarJanelas(
+    modalidadeId: number,
+    janelas: JanelaDeProvaEntrada[],
+    adminEmail: string,
+  ): Promise<JanelasDeProva> {
+    const modalidade = await this.prisma.modalidade.findUnique({
+      where: { id: modalidadeId },
+      select: { id: true, codigo: true },
+    });
+
+    if (!modalidade) {
+      throw new BadRequestException(
+        `Modalidade ${modalidadeId} nao encontrada.`,
+      );
+    }
+
+    const validadas = janelas.map((janela, indice) =>
+      this.janelaValidada(janela, indice),
+    );
+
+    this.exigirOrdensUnicas(validadas);
+    this.exigirDisparosSeparados(validadas, modalidade.codigo);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.janelaDeProva.deleteMany({
+        where: {
+          modalidadeId,
+          ordem: { notIn: validadas.map((j) => j.ordem) },
+        },
+      });
+
+      for (const janela of validadas) {
+        const existente = await tx.janelaDeProva.findUnique({
+          where: { modalidadeId_ordem: { modalidadeId, ordem: janela.ordem } },
+          select: {
+            horaDisparo: true,
+            horaInicio: true,
+            horaFim: true,
+            turno: true,
+          },
+        });
+
+        // ⚠️ A VERSAO SOBE SO QUANDO O HORARIO MUDA — e e ela que libera um novo
+        // disparo HOJE. Sem isto, corrigir a janela que ja rodou de manha nao
+        // adianta nada ate o dia seguinte: o `upsert` preserva o id da linha, e
+        // a idempotencia do cron encontra a execucao concluida daquele id e pula
+        // em silencio. Bug real de 25/08/2026; e o mesmo remedio que
+        // `SenhaDeProva.versao` ja aplicava do lado das senhas.
+        //
+        // `ativo` NAO conta: religar uma sessao desligada nao muda o que ela
+        // grava, e subir a versao ali faria um simples "salvar" reprocessar a
+        // instituicao inteira.
+        const mudouOHorario =
+          existente !== null &&
+          (existente.horaDisparo !== janela.horaDisparo ||
+            existente.horaInicio !== janela.horaInicio ||
+            existente.horaFim !== janela.horaFim ||
+            existente.turno !== janela.turno);
+
+        await tx.janelaDeProva.upsert({
+          where: { modalidadeId_ordem: { modalidadeId, ordem: janela.ordem } },
+          update: {
+            ...janela,
+            atualizadoPor: adminEmail,
+            ...(mudouOHorario ? { versao: { increment: 1 } } : {}),
+          },
+          create: { ...janela, modalidadeId, atualizadoPor: adminEmail },
+        });
+      }
+    });
+
+    this.auditoria.registrar('DATA_QUIZ_JANELAS_ALTERADAS', {
+      ator: adminEmail,
+      detalhe:
+        `modalidade ${modalidade.codigo}: ${validadas.length} janela(s) — ` +
+        validadas
+          .map(
+            (j) =>
+              // O turno vai junto: e ele que decide de qual celula da grade sai
+              // a senha, e uma janela apontando para um turno sem senha
+              // cadastrada NAO dispara. Sem isto na auditoria, "por que a janela
+              // das 15h nao rodou?" nao tem resposta no log.
+              `${j.horaDisparo} -> ${j.horaInicio}-${j.horaFim} ` +
+              `[senha da ${rotuloDoTurno(j.turno)}]` +
+              `${j.diaSeguinte ? ' (D+1)' : ''}${j.ativo ? '' : ' [inativa]'}`,
+          )
+          .join('; '),
+    });
+
+    this.logger.log(
+      `Janelas de ${modalidade.codigo} atualizadas por ${adminEmail}: ${validadas.length} sessao(oes).`,
+    );
+
+    return this.lerJanelas();
+  }
+
+  /** As tres horas em HH:MM, e a janela do questionario com fim depois do inicio. */
+  private janelaValidada(janela: JanelaDeProvaEntrada, indice: number) {
+    const onde = `Janela ${indice + 1}`;
+
+    const horaDisparo = this.horaObrigatoria(
+      janela.horaDisparo,
+      `${onde}: hora do disparo`,
+    );
+    const horaInicio = this.horaObrigatoria(
+      janela.horaInicio,
+      `${onde}: hora de abertura`,
+    );
+    const horaFim = this.horaObrigatoria(
+      janela.horaFim,
+      `${onde}: hora de fechamento`,
+    );
+
+    // Uma janela invertida produz um questionario que fecha antes de abrir — a
+    // API aceita, e ninguem faz a prova. O caso legitimo de atravessar a
+    // meia-noite nao existe aqui: a janela mais tarde do calendario real fecha
+    // as 22:00.
+    if (minutosDaHora(horaFim)! <= minutosDaHora(horaInicio)!) {
+      throw new BadRequestException(
+        `${onde}: o fechamento (${horaFim}) precisa ser depois da abertura ` +
+          `(${horaInicio}). Uma prova que fecha antes de abrir nao e aplicavel.`,
+      );
+    }
+
+    if (!Number.isInteger(janela.ordem) || janela.ordem < 1) {
+      throw new BadRequestException(`${onde}: a ordem deve ser 1 ou maior.`);
+    }
+
+    return {
+      ordem: janela.ordem,
+      horaDisparo,
+      horaInicio,
+      horaFim,
+      turno: janela.turno,
+      // Calculado, nunca recebido. O admin nao tinha como responder isto melhor
+      // que a aritmetica, e tinha como responder errado.
+      diaSeguinte: ehDoDiaSeguinte(horaDisparo, horaInicio),
+      ativo: janela.ativo ?? true,
+    };
+  }
+
+  private horaObrigatoria(valor: string | null | undefined, campo: string) {
+    const texto = (valor ?? '').trim();
+
+    // Diferente de `horaValidada`: aqui vazio NAO e "desligado". Para desligar
+    // uma sessao existe `ativo: false`, que preserva o horario cadastrado.
+    if (!texto || minutosDaHora(texto) == null) {
+      throw new BadRequestException(
+        `${campo} deve estar em HH:MM (24h, com zero a esquerda), ex.: 15:00.`,
+      );
+    }
+
+    return texto;
+  }
+
+  private exigirOrdensUnicas(janelas: { ordem: number }[]): void {
+    const vistas = new Set<number>();
+
+    for (const { ordem } of janelas) {
+      if (vistas.has(ordem)) {
+        // O banco recusaria pelo unique, mas com uma mensagem de driver. A
+        // ordem e a chave da sessao dentro da modalidade — duas iguais fariam
+        // uma sobrescrever a outra no upsert, em silencio.
+        throw new BadRequestException(
+          `Ha duas janelas com a ordem ${ordem}. A ordem identifica a sessao ` +
+            'dentro da modalidade e nao pode repetir.',
+        );
+      }
+      vistas.add(ordem);
+    }
+  }
+
+  /**
+   * Dois disparos ATIVOS no mesmo minuto, na mesma modalidade.
+   *
+   * `janelasParaDisparar` desempata escolhendo o que comecou mais tarde, entao
+   * isto nao quebra nada — mas significa que uma das duas sessoes NUNCA seria
+   * aplicada, e o admin nao teria como saber. Recusar na escrita e o momento em
+   * que ele ainda esta olhando para a tela.
+   */
+  private exigirDisparosSeparados(
+    janelas: { horaDisparo: string; ativo: boolean }[],
+    codigoDaModalidade: string,
+  ): void {
+    const vistos = new Set<string>();
+
+    for (const { horaDisparo, ativo } of janelas) {
+      if (!ativo) continue;
+
+      if (vistos.has(horaDisparo)) {
+        throw new BadRequestException(
+          `${codigoDaModalidade} tem duas janelas ativas disparando as ` +
+            `${horaDisparo}. Apenas uma delas seria aplicada, e a outra ficaria ` +
+            'sem efeito sem aviso nenhum.',
+        );
+      }
+      vistos.add(horaDisparo);
+    }
+  }
+
+  /**
    * Vazio/ausente = turno DESLIGADO, e isso e um estado legitimo (sabado a
    * noite nao tem prova). O que nao pode passar e "07:3" ou "7:30": o cron
    * ignoraria em silencio e o turno nunca dispararia — a classe de falha que
@@ -442,7 +770,13 @@ export class GradeSenhasService {
     ultima: {
       status: StatusExecucao;
       simulacao: boolean;
-      versaoAplicada: number;
+      /**
+       * NULO so em execucoes de DATA, que o chamador ja filtra fora. Aceitar o
+       * nulo aqui e o que impede um `!` no `where`: se algum dia uma execucao
+       * sem versao chegar, ela cai em DESATUALIZADA (a leitura pessimista),
+       * nunca em APLICADA.
+       */
+      versaoAplicada: number | null;
       atualizadoEm: Date;
     } | null,
   ): SituacaoDaCelula {
