@@ -5,6 +5,7 @@ import { GradeSenhasController } from '../controller/grade-senhas.controller';
 import { SenhaQuizController } from '../controller/senha-quiz.controller';
 import { GradeSenhasService } from '../service/grade-senhas.service';
 import { ModalidadeDaTurmaService } from '../service/modalidade-da-turma.service';
+import { ResolucaoGrupoService } from '../service/resolucao-grupo.service';
 import { ResolucaoOrgUnitService } from '../service/resolucao-orgunit.service';
 import { SenhaQuizCron } from '../service/senha-quiz.cron';
 import { SenhaQuizService } from '../service/senha-quiz.service';
@@ -19,6 +20,20 @@ import { SenhaQuizService } from '../service/senha-quiz.service';
  * `tipo: DATA` — uma janela (`StartDate`/`EndDate`), aplicada nas turmas de UMA
  * modalidade. A modalidade da turma nao existe no cadastro: e derivada dos
  * agendamentos confirmados (`ModalidadeDaTurmaService`).
+ *
+ * Desde 26/08/2026 o lote `DATA` faz uma terceira coisa no MESMO disparo: troca
+ * o GRUPO que libera a prova, quando a janela tem `nomeGrupo`. Isso NAO virou um
+ * `tipo` novo — e parte do lote de datas, pelo mesmo motivo pelo qual os dois
+ * tipos ja moram juntos (ver o aviso abaixo) e porque o cliente pediu a troca
+ * "nos mesmos horarios em que trocamos as datas". Um terceiro tipo obrigaria o
+ * cron a gastar mais um tick e deixaria data e grupo em execucoes diferentes,
+ * com relatorios separados para uma decisao so.
+ *
+ * ⚠️ A troca de grupo NAO passa pelo objeto do quiz: condicoes de liberacao sao
+ * um recurso do LP (`D2lCondicoesService`), nao um campo do `QuizData`. Por isso
+ * ela nao pode apagar `EndDate` nem `Password`, e por isso as duas escritas
+ * falham independentemente — que e o que sustenta a decisao "falha de grupo nao
+ * bloqueia a data".
  *
  * ⚠️ Os dois vivem no MESMO servico e na MESMA tabela de execucao de proposito.
  * Ambos fazem GET -> altera -> PUT no mesmo questionario, e o PUT substitui o
@@ -38,6 +53,7 @@ import { SenhaQuizService } from '../service/senha-quiz.service';
   providers: [
     GradeSenhasService,
     ResolucaoOrgUnitService,
+    ResolucaoGrupoService,
     ModalidadeDaTurmaService,
     SenhaQuizService,
     SenhaQuizCron,

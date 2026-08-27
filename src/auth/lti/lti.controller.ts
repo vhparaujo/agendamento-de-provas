@@ -23,7 +23,7 @@ import {
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import type { Response } from 'express';
-import { LIMITE_AUTENTICACAO } from '../../config/throttler.config';
+import { LIMITE_LAUNCH } from '../../config/throttler.config';
 import { TAGS } from '../../config/swagger';
 import { Publico } from '../roles.decorator';
 import {
@@ -150,7 +150,10 @@ export class LtiController {
 
   @Post('launch')
   @HttpCode(HttpStatus.OK)
-  @Throttle(LIMITE_AUTENTICACAO)
+  // 60/min, e nao os 5/min das rotas de credencial: esta rota exige um id_token
+  // assinado pelo Brightspace, entao nao ha o que adivinhar — e alunos legitimos
+  // compartilham IP (laboratorio do polo, NAT da rede da UCB). Ver LIMITE_LAUNCH.
+  @Throttle(LIMITE_LAUNCH)
   @ApiOperation({
     summary: 'Launch LTI — entrada do aluno',
     description:

@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { Prisma, StatusAgendamento } from '../../generated/prisma/client';
 
@@ -49,12 +53,14 @@ const PADRAO_POR_PAGINA = 50;
 const MAXIMO_POR_PAGINA = 200;
 
 /**
- * A consulta do admin sobre o CSV de turmas — o catalogo do que TEM prova.
+ * A consulta do admin sobre o CSV de turmas — o catalogo do que TEM prova. O que
+ * esta tela responde e "esta disciplina esta liberada para agendamento?", que
+ * antes so se descobria abrindo o banco.
  *
- * Somente leitura pelo mesmo motivo dos alunos: a planilha e a fonte de verdade,
- * e editar aqui seria desfeito no proximo upload. O que esta tela responde e
- * "esta disciplina esta liberada para agendamento?", que hoje so se descobre
- * abrindo o banco.
+ * Leitura, mais UM delete. Nada aqui EDITA turma pelo mesmo motivo dos alunos —
+ * a planilha e a fonte de verdade e o proximo upload desfaria a correcao —, mas
+ * apagar e outro caso: a importacao e upsert e nunca remove o que saiu do CSV,
+ * entao sem este delete uma linha errada ficaria agendavel para sempre.
  */
 @Injectable()
 export class TurmaAdminService {
@@ -115,6 +121,47 @@ export class TurmaAdminService {
       : null;
 
     return { ...turma, totalAgendamentos };
+  }
+
+  /**
+   * Tira uma turma do catalogo. Serve para desfazer carga errada — linha
+   * duplicada, turma que entrou na planilha sem ter prova — e o efeito e
+   * imediato: a disciplina deixa de ser agendavel para todo mundo (com
+   * `TURMAS_FILTER_ENABLED=true`, o default).
+   *
+   * ⚠️ **Nao e definitivo sozinho.** A fonte de verdade continua sendo a
+   * planilha, e a importacao e upsert: se a linha seguir la, o proximo upload
+   * traz a turma de volta — com id novo e sem o `orgUnitId` que os launches ja
+   * tinham aprendido. Apagar aqui conserta agora; tirar da planilha conserta.
+   *
+   * Turma com prova marcada nao se apaga. O agendamento aponta para a disciplina
+   * pelo `orgUnitId`, sem chave estrangeira, entao o delete passaria limpo e
+   * quebraria calado o que le o catalogo depois: o relatorio nomeia o arquivo de
+   * cada turma por esta tabela (`turmasPorOrgUnit`) e cairia no numero cru do
+   * D2L, e a resolucao de senhas perderia a linha que casa com a oferta.
+   */
+  async remover(id: number): Promise<{ mensagem: string }> {
+    const turma = await this.buscar(id);
+
+    if (turma.totalAgendamentos !== null && turma.totalAgendamentos > 0) {
+      throw new ConflictException(
+        `A turma "${turma.codigoTurma} — ${turma.nomeDisciplina}" ja tem ` +
+          `${turma.totalAgendamentos} agendamento(s) confirmado(s) e nao pode ser ` +
+          'apagada. Apagar aqui nao desmarcaria prova nenhuma — o agendamento ' +
+          'guarda o orgUnitId como fotografia —, so tiraria o nome da turma do ' +
+          'relatorio. Se as provas nao deviam existir, cancele os agendamentos ' +
+          '(DELETE /agendamentos/:id) antes.',
+      );
+    }
+
+    await this.prisma.turmaImportada.delete({ where: { id } });
+
+    return {
+      mensagem:
+        `Turma "${turma.codigoTurma} — ${turma.nomeDisciplina}" removida do ` +
+        'catalogo. Tire a linha da planilha tambem: o proximo upload do CSV a ' +
+        'traria de volta.',
+    };
   }
 }
 

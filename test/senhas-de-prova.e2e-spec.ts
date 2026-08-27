@@ -39,6 +39,8 @@ describe('Senhas de prova: a grade dia x turno (e2e)', () => {
   const DIA = '2099-09-16';
   const OUTRO_DIA = '2099-09-17';
   const SENHA_DA_PROVA = '897325';
+  /** Codigo improvavel: `Modalidade.codigo` e unico e o seed usa os reais. */
+  const MODALIDADE_CODIGO = 'E2E_JANELA_GRUPO';
   const SENHA_NOVA = '441028';
 
   const api = () => request(app.getHttpServer());
@@ -127,6 +129,18 @@ describe('Senhas de prova: a grade dia x turno (e2e)', () => {
   });
 
   async function limpar() {
+    // As janelas primeiro: `JanelaDeProva.modalidadeId` e FK.
+    const modalidades = await prisma.modalidade.findMany({
+      where: { codigo: MODALIDADE_CODIGO },
+    });
+
+    for (const modalidade of modalidades) {
+      await prisma.janelaDeProva.deleteMany({
+        where: { modalidadeId: modalidade.id },
+      });
+      await prisma.modalidade.delete({ where: { id: modalidade.id } });
+    }
+
     await prisma.senhaDeProva.deleteMany({
       where: { data: { in: [new Date(DIA), new Date(OUTRO_DIA)] } },
     });
@@ -138,6 +152,136 @@ describe('Senhas de prova: a grade dia x turno (e2e)', () => {
       await prisma.polo.delete({ where: { id: polo.id } });
     }
   }
+
+  /**
+   * O calendario de janelas, e em especial a regra da VERSAO.
+   *
+   * A versao nao e enfeite: e ela que libera uma janela ja disparada para rodar
+   * de novo HOJE. Sem ela, corrigir um nome de grupo errado as 12:43, depois do
+   * disparo das 12:01, nao adianta nada ate o dia seguinte — o upsert preserva o
+   * id da linha e a idempotencia do cron encontra a execucao concluida e pula EM
+   * SILENCIO. Bug real de 25/08/2026 do lado do horario; o grupo entrou na mesma
+   * regra em 26/08/2026.
+   */
+  describe('PUT /senhas-de-prova/janelas — o grupo que libera a prova', () => {
+    /** Uma modalidade so para este teste, para nao mexer no calendario real. */
+    let modalidadeId: number;
+
+    const janela = (extra: Record<string, unknown> = {}) => ({
+      ordem: 1,
+      horaDisparo: '12:01',
+      horaInicio: '15:00',
+      horaFim: '18:00',
+      turno: Turno.TARDE,
+      ...extra,
+    });
+
+    const salvar = (janelas: Record<string, unknown>[]) =>
+      comoAdmin(
+        api()
+          .put('/api/senhas-de-prova/janelas')
+          .send({ modalidadeId, janelas }),
+      );
+
+    /**
+     * So as janelas DESTA modalidade: o GET devolve o calendario inteiro, e o
+     * seed real tem EaD, Semi, Modular e Presencial junto.
+     *
+     * Recebe `unknown` porque `res.body` do supertest e `any` — anotar aqui e o
+     * que devolve o corpo ao radar do compilador em vez de espalhar o `any`.
+     */
+    const daModalidade = (corpo: unknown) =>
+      (corpo as { janelas: Record<string, unknown>[] }).janelas.filter(
+        (j) => j.modalidadeId === modalidadeId,
+      );
+
+    beforeAll(async () => {
+      const modalidade = await prisma.modalidade.create({
+        data: {
+          codigo: MODALIDADE_CODIGO,
+          nome: 'E2E Janelas',
+          duracaoMinutos: 180,
+        },
+      });
+
+      modalidadeId = modalidade.id;
+    });
+
+    it('guarda o nome e a categoria do grupo', async () => {
+      const res = await salvar([
+        janela({ nomeGrupo: 'Prova 2', categoriaGrupo: 'Separacao' }),
+      ]).expect(200);
+
+      expect(daModalidade(res.body)[0]).toMatchObject({
+        nomeGrupo: 'Prova 2',
+        categoriaGrupo: 'Separacao',
+        versao: 1,
+      });
+    });
+
+    it('salvar o MESMO calendario nao sobe a versao', async () => {
+      const res = await salvar([
+        janela({ nomeGrupo: 'Prova 2', categoriaGrupo: 'Separacao' }),
+      ]).expect(200);
+
+      expect(daModalidade(res.body)[0].versao).toBe(1);
+    });
+
+    /** O assert central deste bloco — ver o comentario do `describe`. */
+    it('trocar o NOME DO GRUPO sobe a versao', async () => {
+      const res = await salvar([
+        janela({ nomeGrupo: 'Prova 3', categoriaGrupo: 'Separacao' }),
+      ]).expect(200);
+
+      expect(daModalidade(res.body)[0]).toMatchObject({
+        nomeGrupo: 'Prova 3',
+        versao: 2,
+      });
+    });
+
+    it('trocar a CATEGORIA tambem sobe a versao', async () => {
+      const res = await salvar([
+        janela({ nomeGrupo: 'Prova 3', categoriaGrupo: 'Outra' }),
+      ]).expect(200);
+
+      expect(daModalidade(res.body)[0].versao).toBe(3);
+    });
+
+    /**
+     * Vazio vira NULO, e nao string vazia. Um `""` gravado passaria pela
+     * checagem de "tem grupo?" e faria o lote procurar um grupo sem nome em cada
+     * turma, produzindo uma pendencia por turma sem que nada estivesse
+     * configurado.
+     */
+    it('nome so com espacos vira NULO, e leva a categoria junto', async () => {
+      const res = await salvar([
+        janela({ nomeGrupo: '   ', categoriaGrupo: 'Sobrou' }),
+      ]).expect(200);
+
+      expect(daModalidade(res.body)[0]).toMatchObject({
+        nomeGrupo: null,
+        categoriaGrupo: null,
+      });
+    });
+
+    it('o campo e opcional — salvar sem ele nao quebra', async () => {
+      const res = await salvar([janela()]).expect(200);
+
+      expect(daModalidade(res.body)[0].nomeGrupo).toBeNull();
+    });
+
+    /** `forbidNonWhitelisted`: campo nao declarado no DTO derruba a request. */
+    it('recusa um campo de grupo que nao existe', async () => {
+      await comoAdmin(
+        api()
+          .put('/api/senhas-de-prova/janelas')
+          .send({
+            modalidadeId,
+            janelas: [janela({ grupoDoAva: 'Prova 2' })],
+          }),
+      ).expect(400);
+    });
+  });
 
   describe('PUT /senhas-de-prova — cadastro da celula', () => {
     it('cria a celula e NAO devolve a senha na resposta', async () => {

@@ -181,6 +181,14 @@ describe('Catalogo administrativo: alunos e turmas importados (e2e)', () => {
     const polos = await prisma.polo.findMany({ where: { nome: POLO_NOME } });
 
     for (const polo of polos) {
+      // O agendamento do teste de 409 segura sala, faixa e aluno: derrube na
+      // ordem inversa da criacao, senao o delete do polo bate na FK.
+      await prisma.agendamento.deleteMany({ where: { poloId: polo.id } });
+      await prisma.salaFaixa.deleteMany({
+        where: { faixa: { poloId: polo.id } },
+      });
+      await prisma.faixa.deleteMany({ where: { poloId: polo.id } });
+      await prisma.sala.deleteMany({ where: { poloId: polo.id } });
       await prisma.alunoImportado.deleteMany({ where: { poloId: polo.id } });
       await prisma.polo.delete({ where: { id: polo.id } });
     }
@@ -350,6 +358,115 @@ describe('Catalogo administrativo: alunos e turmas importados (e2e)', () => {
     });
   });
 
+  /**
+   * O delete existe porque a importacao e upsert: turma que saiu da planilha
+   * (ou que nunca deveria ter entrado) nao some sozinha no proximo upload.
+   */
+  describe('DELETE /turmas/:id — tirar do catalogo o que nao tem prova', () => {
+    const TURMA_ERRADA = 'E2ECAT-T3';
+
+    async function criarTurmaErrada() {
+      return (
+        await prisma.turmaImportada.create({
+          data: {
+            codigoTurma: TURMA_ERRADA,
+            nomeDisciplina: 'DUPLICADA E2E',
+            codigoEad: 'E2ECATEAD003',
+          },
+        })
+      ).id;
+    }
+
+    afterEach(async () => {
+      await prisma.turmaImportada.deleteMany({
+        where: { codigoTurma: TURMA_ERRADA },
+      });
+    });
+
+    it('apaga a turma e ela some da listagem', async () => {
+      const id = await criarTurmaErrada();
+
+      const res = await comoAdmin(api().delete(`/api/turmas/${id}`)).expect(
+        200,
+      );
+
+      // A resposta avisa da planilha de proposito: sem isso a remocao volta.
+      expect(res.body.mensagem).toContain('proximo upload');
+
+      await comoAdmin(api().get(`/api/turmas/${id}`)).expect(404);
+
+      const lista = await comoAdmin(
+        api().get(`/api/turmas?busca=${TURMA_ERRADA}`),
+      ).expect(200);
+
+      expect(lista.body.total).toBe(0);
+    });
+
+    it('recusa (409) turma com agendamento confirmado', async () => {
+      const ead = await prisma.modalidade.findUniqueOrThrow({
+        where: { codigo: 'EAD' },
+      });
+
+      const sala = await prisma.sala.create({
+        data: { poloId, nome: 'SALA E2E CATALOGO', capacidade: 10 },
+      });
+      const faixa = await prisma.faixa.create({
+        data: {
+          poloId,
+          data: new Date('2026-11-10'),
+          horaInicio: '08:30',
+          horaFim: '11:30',
+        },
+      });
+      const salaFaixa = await prisma.salaFaixa.create({
+        data: {
+          salaId: sala.id,
+          faixaId: faixa.id,
+          modalidadeId: ead.id,
+          vagas: 10,
+          ordem: 1,
+        },
+      });
+
+      // O agendamento aponta para a disciplina pelo orgUnitId, sem FK — e por
+      // isso que o delete precisa conferir a mao.
+      const agendamento = await prisma.agendamento.create({
+        data: {
+          alunoId: vinculoEadId,
+          salaFaixaId: salaFaixa.id,
+          matricula: RA_DUPLO,
+          userIdD2L: '99999',
+          periodoLetivoId: 'e2e-catalogo-periodo',
+          rodada: 'N2',
+          modalidadeId: ead.id,
+          poloId,
+        },
+      });
+
+      await prisma.agendamentoDisciplina.create({
+        data: {
+          agendamentoId: agendamento.id,
+          orgUnitId: ORG_UNIT,
+          nomeDisciplina: 'SAUDE COLETIVA E2E',
+        },
+      });
+
+      await comoAdmin(api().delete(`/api/turmas/${turmaComIdId}`)).expect(409);
+
+      // A turma continua de pe: o 409 recusou, nao apagou pela metade.
+      await comoAdmin(api().get(`/api/turmas/${turmaComIdId}`)).expect(200);
+
+      await prisma.agendamento.delete({ where: { id: agendamento.id } });
+      await prisma.salaFaixa.delete({ where: { id: salaFaixa.id } });
+      await prisma.faixa.delete({ where: { id: faixa.id } });
+      await prisma.sala.delete({ where: { id: sala.id } });
+    });
+
+    it('404 para turma inexistente', async () => {
+      await comoAdmin(api().delete('/api/turmas/99999999')).expect(404);
+    });
+  });
+
   describe('protecao das rotas', () => {
     it.each([
       ['/api/alunos'],
@@ -359,6 +476,10 @@ describe('Catalogo administrativo: alunos e turmas importados (e2e)', () => {
       [`/api/turmas/${1}`],
     ])('GET %s exige token de admin', async (rota) => {
       await api().get(rota).expect(401);
+    });
+
+    it('DELETE /turmas/:id exige token de admin', async () => {
+      await api().delete('/api/turmas/1').expect(401);
     });
 
     it('o token do aluno nao abre a base de alunos', async () => {

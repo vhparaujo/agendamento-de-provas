@@ -9,7 +9,8 @@ import { ThrottlerModuleOptions } from '@nestjs/throttler';
  * - teto geral de 120/min por IP, so para conter abuso grosseiro. Nao deve
  *   incomodar uso normal do portal, nem o admin navegando entre telas.
  * - `LIMITE_AUTENTICACAO` (5/min) no que um atacante repetiria — login,
- *   refresh, troca de senha, launch LTI e callback OAuth do D2L.
+ *   refresh, troca de senha e callback OAuth do D2L.
+ * - `LIMITE_LAUNCH` (60/min) no launch LTI — ver o porque la embaixo.
  * - `LIMITE_UPLOAD` (10 a cada 5min) na importacao de CSV.
  *
  * O contador do @nestjs/throttler e por **rota + limitador + IP**
@@ -64,6 +65,38 @@ export const throttlerConfig: ThrottlerModuleOptions = {
  */
 export const LIMITE_AUTENTICACAO = {
   [LIMITE_PADRAO]: { ttl: 60_000, limit: 5 },
+};
+
+/**
+ * ============================================================================
+ * LAUNCH LTI — 60/min, e NAO os 5/min das rotas de credencial
+ * ============================================================================
+ * O launch ja esteve em `LIMITE_AUTENTICACAO`, por parecer "porta de entrada".
+ * Custou uma janela de agendamento inteira em 26/08/2026: com o `TRUST_PROXY`
+ * ausente, todo aluno chegava com o IP do proxy e os 5/min viraram um orcamento
+ * COMPARTILHADO pela instituicao — do sexto aluno do minuto em diante, todos
+ * tomavam 429 ao clicar o link no Brightspace.
+ *
+ * O `TRUST_PROXY` conserta o IP, mas nao conserta o numero, por dois motivos:
+ *
+ * 1. **O launch nao e rota de adivinhacao de credencial.** Ela exige um
+ *    `id_token` ASSINADO pelo Brightspace, com `state` de uso unico e `nonce`
+ *    conferido (`lti.service.ts`). Nao ha o que repetir por tentativa e erro:
+ *    sem a chave privada do tenant, um milhao de tentativas valem tanto quanto
+ *    zero. Os 5/min do login existem contra lista de senhas; aqui nao ha senha.
+ *
+ * 2. **Alunos legitimos COMPARTILHAM IP.** Um laboratorio do polo, ou o NAT de
+ *    saida da rede da UCB, poe dezenas de pessoas atras de um endereco publico
+ *    so. Com 5/min, o dia de pico da janela repete o incidente de 26/08 com o
+ *    IP correto — e o log fica identico, o que torna a causa muito mais dificil
+ *    de achar da segunda vez.
+ *
+ * 60/min e folgado para qualquer NAT plausivel (o aluno faz launch uma ou duas
+ * vezes, nao sessenta) e ainda fica abaixo do teto geral, entao continua sendo
+ * um limite de verdade contra automacao grosseira.
+ */
+export const LIMITE_LAUNCH = {
+  [LIMITE_PADRAO]: { ttl: 60_000, limit: 60 },
 };
 
 /**

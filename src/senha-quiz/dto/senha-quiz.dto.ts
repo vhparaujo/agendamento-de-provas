@@ -9,6 +9,7 @@ import {
   ValidateIf,
 } from 'class-validator';
 import {
+  ResultadoGrupoQuiz,
   ResultadoSenhaQuiz,
   StatusExecucao,
   TipoExecucaoQuiz,
@@ -272,6 +273,48 @@ export class AndamentoDaSenhaQuizDto {
     additionalProperties: { type: 'number' },
   })
   itens!: Partial<Record<ResultadoSenhaQuiz, number>>;
+
+  @ApiProperty({
+    example: 198,
+    description:
+      'Questionarios cuja condicao de liberacao passou a apontar para o grupo ' +
+      'desta janela (inclui os que ja estavam nele e, na simulacao, os que ' +
+      'teriam sido trocados).',
+  })
+  gruposTrocados!: number;
+
+  @ApiProperty({
+    example: 0,
+    description:
+      '**Tem o MESMO peso de `naoEncontradas` e `semModalidade`.** Cada unidade ' +
+      'aqui e uma prova que vai abrir no horario certo para o grupo da sessao ' +
+      'ANTERIOR — ou seja, o aluno que ja fez a prova consegue abri-la de novo, ' +
+      'que e exatamente o que a troca de grupo existe para impedir. Uma execucao ' +
+      'com 0 falhas e 30 aqui NAO e verde.\n\n' +
+      'Como toda turma ja tem os grupos de prova criados, zero e o estado ' +
+      'normal: qualquer valor acima disso e anomalia de cadastro (nome digitado ' +
+      'errado na janela, ou grupo que faltou ser criado numa turma).',
+  })
+  gruposPendentes!: number;
+
+  @ApiProperty({
+    example: 'Prova 2',
+    nullable: true,
+    description:
+      'O nome do grupo que esta execucao aplicou, vindo da janela. **Nulo = a ' +
+      'janela nao troca grupo**, e a tela nao deve mostrar a secao de grupos.',
+  })
+  nomeGrupoAplicado!: string | null;
+
+  @ApiProperty({
+    example: { TROCADO: 196, SEM_CONDICAO_DE_GRUPO: 2 },
+    description:
+      'Contagem por desfecho da troca de grupo. Vazio quando a janela nao troca ' +
+      'grupo. **E independente de `itens`**: a mesma linha pode estar em ' +
+      'DEFINIDA aqui e em GRUPO_NAO_ENCONTRADO ali — a data entrou, o grupo nao.',
+    additionalProperties: { type: 'number' },
+  })
+  grupos!: Partial<Record<ResultadoGrupoQuiz, number>>;
 
   @ApiProperty({ example: null, nullable: true })
   erro!: string | null;

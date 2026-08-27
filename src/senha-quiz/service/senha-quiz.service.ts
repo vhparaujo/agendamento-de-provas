@@ -8,12 +8,14 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { montarCsv } from '../../agendamento/service/csv-relatorio';
 import { PrismaService } from '../../database/prisma.service';
+import { D2lCondicoesService } from '../../d2l/service/d2l-condicoes.service';
 import {
   D2lQuizzesService,
   QuizDaLista,
 } from '../../d2l/service/d2l-quizzes.service';
 import {
   OrigemExecucao,
+  ResultadoGrupoQuiz,
   ResultadoSenhaQuiz,
   StatusExecucao,
   TipoExecucaoQuiz,
@@ -23,7 +25,17 @@ import {
 import { PeriodoService } from '../../periodo/service/periodo.service';
 import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 import { carregarRitmo, RitmoDoLote } from '../config/senha-quiz.config';
+import {
+  CondicoesLidas,
+  gruposDasCondicoes,
+  trocarGrupoNasCondicoes,
+} from './condicoes';
 import { GradeSenhasService } from './grade-senhas.service';
+import { rotularGrupo } from './grupo';
+import {
+  ResolucaoGrupoService,
+  SessaoDeResolucao,
+} from './resolucao-grupo.service';
 import {
   casarPorNome,
   JanelaDoQuiz,
@@ -83,6 +95,35 @@ interface ItemParaGravar {
   modalidadeCodigo?: string | null;
   startDateAplicado?: Date | null;
   endDateAplicado?: Date | null;
+
+  /**
+   * So no lote de DATAS cuja janela tem `nomeGrupo`. NULO = a troca de grupo nem
+   * foi tentada nesta linha — nao e um desfecho ruim, e ausencia de tentativa.
+   */
+  resultadoGrupo?: ResultadoGrupoQuiz | null;
+  grupoAnterior?: string | null;
+  grupoAplicado?: string | null;
+  condicoesAnteriores?: string | null;
+}
+
+/**
+ * O que o lote precisa saber para trocar o grupo: o nome-alvo, a sessao de
+ * resolucao (que cacheia os grupos por turma) e nada mais.
+ *
+ * `null` em toda a cadeia significa "esta janela nao troca grupo", e o lote se
+ * comporta exatamente como antes de 26/08/2026.
+ */
+interface GrupoDoLote {
+  nome: string;
+  categoria: string | null;
+  sessao: SessaoDeResolucao;
+}
+
+/** O alvo ja resolvido DENTRO de uma turma, mais o mapa para nomear o anterior. */
+interface AlvoNaTurma {
+  groupId: number;
+  rotulo: string;
+  nomePorId: ReadonlyMap<number, string>;
 }
 
 /** O lote de senhas: uma celula da grade, em TODAS as turmas do CSV. */
@@ -139,7 +180,9 @@ export class SenhaQuizService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly quizzes: D2lQuizzesService,
+    private readonly condicoes: D2lCondicoesService,
     private readonly resolucao: ResolucaoOrgUnitService,
+    private readonly grupos: ResolucaoGrupoService,
     private readonly modalidades: ModalidadeDaTurmaService,
     private readonly grade: GradeSenhasService,
     private readonly periodo: PeriodoService,
@@ -333,6 +376,21 @@ export class SenhaQuizService {
             codigo: recorte.codigoDaModalidade,
           }
         : null,
+      // O grupo e campo SEPARADO da janela, e nao mais um campo dentro dela, de
+      // proposito: `JanelaDoQuiz` alimenta `montarCorpoDoQuiz`, que remonta os
+      // ~35 campos do questionario. Grupo nao e campo do quiz — e um recurso LP
+      // a parte — e deixa-lo entrar naquele objeto convidaria alguem a tentar
+      // envia-lo no PUT do quiz, onde ele seria ignorado em silencio.
+      //
+      // Nome em branco conta como ausente: um `"  "` salvo por engano na tela
+      // faria a resolucao procurar um grupo sem nome em toda turma e reportar
+      // 157 pendencias.
+      grupo: janela?.nomeGrupo?.trim()
+        ? {
+            nome: janela.nomeGrupo.trim(),
+            categoria: janela.categoriaGrupo?.trim() || null,
+          }
+        : null,
       simulacao: opcoes.simulacao,
       iniciadoPor,
     });
@@ -452,6 +510,16 @@ export class SenhaQuizService {
 
     const totalItens = porResultado.reduce((s, l) => s + l._count._all, 0);
 
+    // Agrupado a parte do `resultado`, porque os dois desfechos sao
+    // independentes: a mesma linha pode aparecer em DEFINIDA e em
+    // GRUPO_NAO_ENCONTRADO, e somar tudo numa contagem so esconderia justamente
+    // esse caso. O `null` fica de fora — e ausencia de tentativa, nao desfecho.
+    const porGrupo = await this.prisma.itemSenhaQuiz.groupBy({
+      by: ['resultadoGrupo'],
+      where: { execucaoId: id, resultadoGrupo: { not: null } },
+      _count: { _all: true },
+    });
+
     const { janelaDeProva, ...campos } = execucao;
 
     return {
@@ -469,6 +537,25 @@ export class SenhaQuizService {
       avisoSenhaInvisivel: totalItens > 0 && execucao.comSenhaLida === 0,
       itens: Object.fromEntries(
         porResultado.map((linha) => [linha.resultado, linha._count._all]),
+      ),
+      /**
+       * O nome do grupo que ESTA execucao aplicou. Nulo quando a janela nao
+       * troca grupo — e o que a tela usa para nao mostrar a secao inteira.
+       *
+       * Vem da janela, e nao de um item: os itens guardam o rotulo COM o id, que
+       * muda de turma para turma. O que a secretaria quer ler no topo e "esta
+       * execucao apontou a prova para Prova 2".
+       */
+      nomeGrupoAplicado: janelaDeProva?.nomeGrupo ?? null,
+      grupos: Object.fromEntries(
+        porGrupo.flatMap((linha): [ResultadoGrupoQuiz, number][] =>
+          // O `null` fica de fora: ele e ausencia de tentativa (janela sem
+          // grupo), nao um desfecho. O `flatMap` faz o filtro e o estreitamento
+          // de tipo de uma vez — com `filter`, o `null` continuaria no tipo.
+          linha.resultadoGrupo === null
+            ? []
+            : [[linha.resultadoGrupo, linha._count._all]],
+        ),
       ),
     };
   }
@@ -498,6 +585,12 @@ export class SenhaQuizService {
     // no Excel e convite a procurar o que nao existe.
     const comDatas = execucao.tipo === TipoExecucaoQuiz.DATA;
 
+    // As colunas de grupo seguem a mesma regra das de janela, um nivel abaixo:
+    // so entram se ALGUMA linha tem desfecho de grupo. Numa janela sem
+    // `nomeGrupo` elas sairiam vazias em todas as linhas de um relatorio de
+    // DATAS, que e o convite a procurar o que nao existe.
+    const comGrupos = itens.some((i) => i.resultadoGrupo !== null);
+
     const cabecalho = [
       'Resultado',
       'Codigo da turma',
@@ -507,6 +600,9 @@ export class SenhaQuizService {
       'QuizId',
       'Tinha senha antes',
       ...(comDatas ? ['Modalidade', 'Abre em', 'Fecha em'] : []),
+      ...(comGrupos
+        ? ['Resultado do grupo', 'Grupo antes', 'Grupo depois']
+        : []),
       'Observacao',
     ];
 
@@ -528,6 +624,9 @@ export class SenhaQuizService {
               this.horarioLegivel(i.startDateAplicado),
               this.horarioLegivel(i.endDateAplicado),
             ]
+          : []),
+        ...(comGrupos
+          ? [i.resultadoGrupo, i.grupoAnterior, i.grupoAplicado]
           : []),
         i.detalhe,
       ]),
@@ -673,6 +772,8 @@ export class SenhaQuizService {
         horaInicio: true,
         horaFim: true,
         turno: true,
+        nomeGrupo: true,
+        categoriaGrupo: true,
         ativo: true,
         versao: true,
       },
@@ -840,6 +941,8 @@ export class SenhaQuizService {
     alvo: { nomeQuiz: string; matchQuiz: TipoMatchQuiz };
     /** `null` = lote de senhas: o calendario do questionario nao e tocado. */
     janela: { inicio: Date; fim: Date; codigo: string | null } | null;
+    /** `null` = a janela nao tem grupo cadastrado; as condicoes nao sao tocadas. */
+    grupo: { nome: string; categoria: string | null } | null;
     simulacao: boolean;
     iniciadoPor: string;
   }): Promise<void> {
@@ -851,11 +954,23 @@ export class SenhaQuizService {
       senha,
       alvo,
       janela,
+      grupo,
       simulacao,
       iniciadoPor,
     } = entrada;
 
     const ritmo = carregarRitmo(this.config);
+
+    // A sessao (e o cache de grupos por turma) nasce e morre com ESTE lote — ver
+    // o cabecalho de `resolucao-grupo.service.ts`. Um grupo criado no
+    // Brightspace as 11h precisa estar visivel no disparo das 12:01.
+    const grupoDoLote: GrupoDoLote | null = grupo
+      ? {
+          nome: grupo.nome,
+          categoria: grupo.categoria,
+          sessao: this.grupos.paraOLote(grupo.nome, grupo.categoria, ritmo),
+        }
+      : null;
 
     // Ja em UTC-Z, como a Valence exige. A conversao aconteceu uma vez, em
     // `instanteUtcDe`; daqui para a frente a string trafega verbatim.
@@ -891,6 +1006,8 @@ export class SenhaQuizService {
         naoEncontradas: 0,
         falhas: 0,
         comSenhaLida: 0,
+        gruposTrocados: 0,
+        gruposPendentes: 0,
       };
 
       // Fatias de `concorrencia` turmas. Dentro da turma e sequencial: sao ~3
@@ -906,6 +1023,7 @@ export class SenhaQuizService {
               senha,
               alvo,
               janela: janelaDoQuiz,
+              grupo: grupoDoLote,
               modalidadeCodigo: janela?.codigo ?? null,
               simulacao,
               ritmo,
@@ -918,6 +1036,27 @@ export class SenhaQuizService {
 
         for (const item of itens) {
           if (item.senhaAnteriorLida) contagem.comSenhaLida += 1;
+
+          // ⚠️ Contado a PARTE do `resultado`, porque os dois desfechos sao
+          // independentes: a mesma linha pode ter a data DEFINIDA e o grupo
+          // pendente, que e o caso que este contador existe para nao esconder.
+          switch (item.resultadoGrupo) {
+            case undefined:
+            case null:
+              break;
+            case ResultadoGrupoQuiz.TROCADO:
+            case ResultadoGrupoQuiz.SIMULADO:
+            case ResultadoGrupoQuiz.JA_ERA_O_GRUPO:
+              contagem.gruposTrocados += 1;
+              break;
+            default:
+              // Todo o resto e pendencia, inclusive os casos "esperados" como
+              // SEM_CONDICAO_DE_GRUPO. Nao ha desfecho neutro aqui: se a
+              // condicao nao aponta para o grupo desta sessao, a prova abre para
+              // a sessao anterior. Ver o comentario de `gruposPendentes` no
+              // schema.
+              contagem.gruposPendentes += 1;
+          }
 
           switch (item.resultado) {
             case ResultadoSenhaQuiz.DEFINIDA:
@@ -958,6 +1097,13 @@ export class SenhaQuizService {
             `${naoResolvidas.length} turma(s) nao resolvida(s)` +
             (janela
               ? `, ${foraDaModalidade.length} sem modalidade derivavel`
+              : '') +
+            // O grupo entra no log so quando havia grupo a trocar: numa janela
+            // sem `nomeGrupo` os dois numeros seriam zero em toda execucao, e
+            // zero permanente e o ruido que ensina o time a ignorar a linha.
+            (grupoDoLote
+              ? `; grupo "${grupoDoLote.nome}": ${contagem.gruposTrocados} ` +
+                `trocado(s), ${contagem.gruposPendentes} pendente(s)`
               : ''),
         },
       );
@@ -996,12 +1142,21 @@ export class SenhaQuizService {
     senha: string;
     alvo: { nomeQuiz: string; matchQuiz: TipoMatchQuiz };
     janela?: JanelaDoQuiz;
+    grupo: GrupoDoLote | null;
     modalidadeCodigo: string | null;
     simulacao: boolean;
     ritmo: RitmoDoLote;
   }): Promise<ItemParaGravar[]> {
-    const { turma, senha, alvo, janela, modalidadeCodigo, simulacao, ritmo } =
-      entrada;
+    const {
+      turma,
+      senha,
+      alvo,
+      janela,
+      grupo,
+      modalidadeCodigo,
+      simulacao,
+      ritmo,
+    } = entrada;
 
     const base = {
       orgUnitId: turma.orgUnitId,
@@ -1052,6 +1207,39 @@ export class SenhaQuizService {
       ];
     }
 
+    // O grupo e por TURMA, nao por quiz: "Prova 2" tem um id so dentro da turma,
+    // e as provas dela compartilham esse id. Resolver aqui, uma vez, poupa duas
+    // chamadas por quiz casado — e o cache da sessao poupa as desta turma se ela
+    // reaparecer.
+    let alvoDoGrupo: AlvoNaTurma | null = null;
+    let falhaDoGrupo: {
+      resultadoGrupo: ResultadoGrupoQuiz;
+      detalhe: string | null;
+    } | null = null;
+
+    if (grupo) {
+      const resolvido = await grupo.sessao.resolver(turma.orgUnitId);
+
+      if (resolvido.alvo) {
+        alvoDoGrupo = {
+          groupId: resolvido.alvo.GroupId,
+          rotulo: `${resolvido.alvo.Name} (#${resolvido.alvo.GroupId})`,
+          nomePorId: resolvido.nomePorId,
+        };
+      } else {
+        // ⚠️ A turma NAO e interrompida. A data e a senha seguem normalmente e
+        // cada quiz vira uma linha com a pendencia de grupo — decisao do cliente
+        // (26/08/2026): sem a data a prova nao abre para NINGUEM; sem a troca de
+        // grupo ela abre para o grupo anterior. Trocar o problema menor pelo
+        // maior seria o oposto do que se pediu.
+        falhaDoGrupo = {
+          resultadoGrupo:
+            resolvido.falha ?? ResultadoGrupoQuiz.GRUPO_NAO_ENCONTRADO,
+          detalhe: resolvido.motivo,
+        };
+      }
+    }
+
     const itens: ItemParaGravar[] = [];
 
     for (const casado of casados) {
@@ -1064,6 +1252,8 @@ export class SenhaQuizService {
           nomeQuiz: casado.Name ?? null,
           senha,
           janela,
+          alvoDoGrupo,
+          falhaDoGrupo,
           simulacao,
           ritmo,
         }),
@@ -1088,11 +1278,50 @@ export class SenhaQuizService {
     nomeQuiz: string | null;
     senha: string;
     janela?: JanelaDoQuiz;
+    /** `null` = a janela nao troca grupo, ou a resolucao falhou (ver abaixo). */
+    alvoDoGrupo: AlvoNaTurma | null;
+    /** Preenchido quando a resolucao do grupo falhou NESTA turma. */
+    falhaDoGrupo: {
+      resultadoGrupo: ResultadoGrupoQuiz;
+      detalhe: string | null;
+    } | null;
     simulacao: boolean;
     ritmo: RitmoDoLote;
   }): Promise<ItemParaGravar> {
-    const { base, turma, quizId, nomeQuiz, senha, janela, simulacao, ritmo } =
-      entrada;
+    const {
+      base,
+      turma,
+      quizId,
+      nomeQuiz,
+      senha,
+      janela,
+      alvoDoGrupo,
+      falhaDoGrupo,
+      simulacao,
+      ritmo,
+    } = entrada;
+
+    // ========================================================================
+    // ⚠️ O GRUPO VEM ANTES DO QUIZ, E A ORDEM NAO E INDIFERENTE.
+    // ========================================================================
+    // O PUT do quiz e o que ABRE a prova no horario novo. Trocando o grupo
+    // primeiro, o estado intermediario entre as duas escritas e "janela antiga +
+    // grupo novo": a prova esta fechada, e ninguem e prejudicado se a segunda
+    // chamada falhar. Na ordem inversa o intermediario seria "janela nova +
+    // grupo antigo" — a prova ABERTA para a sessao anterior, que e exatamente o
+    // que este recurso existe para impedir.
+    //
+    // Sao dois recursos independentes da API (LP para condicoes, LE para o
+    // quiz): nao ha transacao possivel entre eles, entao o que se escolhe aqui e
+    // qual dos dois estados intermediarios se prefere.
+    const { detalheGrupo, ...camposDeGrupo } = await this.trocarGrupoDoQuiz({
+      turma,
+      quizId,
+      alvoDoGrupo,
+      falhaDoGrupo,
+      simulacao,
+      ritmo,
+    });
 
     let quiz: QuizLido;
 
@@ -1107,10 +1336,11 @@ export class SenhaQuizService {
     } catch (erro) {
       return {
         ...base,
+        ...camposDeGrupo,
         quizId,
         nomeQuiz,
         resultado: ResultadoSenhaQuiz.FALHA_AO_LER,
-        detalhe: this.motivo(erro),
+        detalhe: this.juntarDetalhe(this.motivo(erro), detalheGrupo),
       };
     }
 
@@ -1119,11 +1349,12 @@ export class SenhaQuizService {
     if (simulacao) {
       return {
         ...base,
+        ...camposDeGrupo,
         quizId,
         nomeQuiz: quiz.Name ?? nomeQuiz,
         resultado: ResultadoSenhaQuiz.SIMULADA,
         senhaAnteriorLida,
-        detalhe: null,
+        detalhe: this.juntarDetalhe(null, detalheGrupo),
       };
     }
 
@@ -1139,22 +1370,197 @@ export class SenhaQuizService {
     } catch (erro) {
       return {
         ...base,
+        ...camposDeGrupo,
         quizId,
         nomeQuiz: quiz.Name ?? nomeQuiz,
         resultado: ResultadoSenhaQuiz.FALHA_AO_GRAVAR,
         senhaAnteriorLida,
-        detalhe: this.motivo(erro),
+        detalhe: this.juntarDetalhe(this.motivo(erro), detalheGrupo),
       };
     }
 
     return {
       ...base,
+      ...camposDeGrupo,
       quizId,
       nomeQuiz: quiz.Name ?? nomeQuiz,
       resultado: ResultadoSenhaQuiz.DEFINIDA,
       senhaAnteriorLida,
-      detalhe: null,
+      detalhe: this.juntarDetalhe(null, detalheGrupo),
     };
+  }
+
+  /**
+   * A troca da condicao de liberacao de UM questionario.
+   *
+   * **NUNCA lanca**, pela mesma razao de `aplicarNaTurma`: o desfecho do grupo e
+   * independente do da data, e uma excecao aqui derrubaria a aplicacao da janela
+   * — trocando o problema menor (prova aberta para o grupo anterior) pelo maior
+   * (prova que nao abre para ninguem).
+   *
+   * Devolve so os campos de grupo do item; quem os junta ao resto e o `...grupo`
+   * dos returns de `aplicarNoQuiz`.
+   */
+  private async trocarGrupoDoQuiz(entrada: {
+    turma: TurmaResolvida;
+    quizId: string;
+    alvoDoGrupo: AlvoNaTurma | null;
+    falhaDoGrupo: {
+      resultadoGrupo: ResultadoGrupoQuiz;
+      detalhe: string | null;
+    } | null;
+    simulacao: boolean;
+    ritmo: RitmoDoLote;
+  }): Promise<{
+    resultadoGrupo: ResultadoGrupoQuiz | null;
+    grupoAnterior: string | null;
+    grupoAplicado: string | null;
+    condicoesAnteriores: string | null;
+    /** Anexado ao `detalhe` do item quando ha o que explicar. */
+    detalheGrupo: string | null;
+  }> {
+    const { turma, quizId, alvoDoGrupo, falhaDoGrupo, simulacao, ritmo } =
+      entrada;
+
+    const vazio = {
+      resultadoGrupo: null,
+      grupoAnterior: null,
+      grupoAplicado: null,
+      condicoesAnteriores: null,
+      detalheGrupo: null,
+    };
+
+    // A resolucao ja falhou nesta turma. Uma linha por quiz, com o motivo — e
+    // nenhuma chamada a mais, porque o problema nao esta no questionario.
+    if (falhaDoGrupo) {
+      return {
+        ...vazio,
+        resultadoGrupo: falhaDoGrupo.resultadoGrupo,
+        detalheGrupo: falhaDoGrupo.detalhe,
+      };
+    }
+
+    // A janela nao troca grupo. `resultadoGrupo` fica NULO: ausencia de
+    // tentativa, nao desfecho ruim.
+    if (!alvoDoGrupo) return vazio;
+
+    let condicoes: CondicoesLidas | null;
+
+    try {
+      condicoes = await this.condicoes.lerCondicoes<CondicoesLidas>(
+        turma.orgUnitId,
+        quizId,
+        ritmo,
+      );
+    } catch (erro) {
+      return {
+        ...vazio,
+        resultadoGrupo: ResultadoGrupoQuiz.FALHA_AO_LER_CONDICOES,
+        grupoAplicado: alvoDoGrupo.rotulo,
+        detalheGrupo: this.motivo(erro),
+      };
+    }
+
+    // ⚠️ O BACKUP E GRAVADO ANTES DE QUALQUER ESCRITA, e tambem na SIMULACAO.
+    // O PUT substitui a lista inteira de condicoes e a API nao guarda historico:
+    // sem esta fotografia, uma troca errada nao tem desfazer. O CLI de origem
+    // grava o mesmo JSON em `logs/backup/` pelo mesmo motivo, dry-run incluido —
+    // e no dry-run que se descobre o que a prova tem hoje.
+    const condicoesAnteriores = this.serializarCondicoes(condicoes);
+
+    const anteriores = gruposDasCondicoes(condicoes);
+    const grupoAnterior =
+      anteriores.length > 0
+        ? anteriores
+            .map((id) => rotularGrupo(id, alvoDoGrupo.nomePorId))
+            .join(' + ')
+        : null;
+
+    const troca = trocarGrupoNasCondicoes(condicoes, alvoDoGrupo.groupId);
+
+    if (!troca.corpo) {
+      // Nenhuma condicao `EnrolledInGroup` com GroupId. NADA e criado — ver o
+      // comentario de SEM_CONDICAO_DE_GRUPO no schema.
+      return {
+        ...vazio,
+        condicoesAnteriores,
+        grupoAnterior,
+        grupoAplicado: alvoDoGrupo.rotulo,
+        resultadoGrupo: troca.porCategoria
+          ? ResultadoGrupoQuiz.CONDICAO_POR_CATEGORIA
+          : ResultadoGrupoQuiz.SEM_CONDICAO_DE_GRUPO,
+        detalheGrupo:
+          troca.avisos.join(' ') ||
+          'A prova nao tem condicao de liberacao por grupo para trocar. Este ' +
+            'lote so TROCA condicao existente, nunca cria — criar mudaria o ' +
+            'comportamento de uma prova que talvez seja aberta a todos de ' +
+            'proposito.',
+      };
+    }
+
+    const jaEra =
+      troca.antes.length === 1 && troca.antes[0] === alvoDoGrupo.groupId;
+
+    const comum = {
+      condicoesAnteriores,
+      grupoAnterior,
+      grupoAplicado: alvoDoGrupo.rotulo,
+      detalheGrupo: troca.avisos.join(' ') || null,
+    };
+
+    if (simulacao) {
+      // ⚠️ ZERO PUT no dry-run, aqui como no do quiz. E a unica conferencia
+      // possivel antes de mexer na condicao de liberacao de toda a instituicao,
+      // e ha teste so para provar que nenhuma escrita sai daqui.
+      return { ...comum, resultadoGrupo: ResultadoGrupoQuiz.SIMULADO };
+    }
+
+    // Ja estava no grupo certo: o PUT seria uma escrita sem efeito num endpoint
+    // que substitui tudo. Reprocessar a mesma janela cai aqui, e e o caso comum
+    // depois de um `forcar`.
+    if (jaEra) {
+      return { ...comum, resultadoGrupo: ResultadoGrupoQuiz.JA_ERA_O_GRUPO };
+    }
+
+    try {
+      await this.condicoes.gravarCondicoes(
+        turma.orgUnitId,
+        quizId,
+        troca.corpo,
+        ritmo,
+      );
+    } catch (erro) {
+      return {
+        ...comum,
+        resultadoGrupo: ResultadoGrupoQuiz.FALHA_AO_GRAVAR_CONDICOES,
+        detalheGrupo: [comum.detalheGrupo, this.motivo(erro)]
+          .filter(Boolean)
+          .join(' '),
+      };
+    }
+
+    return { ...comum, resultadoGrupo: ResultadoGrupoQuiz.TROCADO };
+  }
+
+  /**
+   * O JSON do GET das condicoes, para a coluna de backup.
+   *
+   * O teto existe para proteger o LOTE, nao o banco: `condicoesAnteriores` e
+   * `TEXT` (64 KB) e os itens sao gravados com `createMany`, entao uma unica
+   * expressao gigante derrubaria a gravacao da FATIA INTEIRA de turmas. Uma
+   * condicao real tem poucos KB; se algum dia passar disso, e melhor perder o
+   * desfazer de uma linha — dizendo isso em voz alta no lugar do JSON — do que
+   * perder o relatorio de quatro turmas.
+   */
+  private serializarCondicoes(condicoes: CondicoesLidas | null): string | null {
+    if (!condicoes) return null;
+
+    const texto = JSON.stringify(condicoes);
+
+    return texto.length > 60_000
+      ? `[condicoes com ${texto.length} caracteres — nao guardadas; ` +
+          'use o GET de conditionalRelease para recupera-las]'
+      : texto;
   }
 
   private async gravarItens(
@@ -1187,5 +1593,25 @@ export class SenhaQuizService {
   /** A mensagem do erro, truncada: `detalhe` e para ler, nao para despejar stack. */
   private motivo(erro: unknown): string {
     return (erro instanceof Error ? erro.message : String(erro)).slice(0, 500);
+  }
+
+  /**
+   * Junta a explicacao da DATA com a do GRUPO numa coluna so.
+   *
+   * Os dois desfechos moram em colunas separadas (`resultado` e
+   * `resultadoGrupo`), mas o `detalhe` e um campo unico — e ele e o que a
+   * secretaria le no CSV. Prefixar a parte do grupo evita a leitura mais cara
+   * possivel: "a prova falhou ao gravar" quando o que falhou foi o grupo, e a
+   * data entrou.
+   */
+  private juntarDetalhe(
+    daData: string | null,
+    doGrupo: string | null,
+  ): string | null {
+    const partes = [daData, doGrupo ? `Grupo: ${doGrupo}` : null].filter(
+      (p): p is string => Boolean(p),
+    );
+
+    return partes.length ? partes.join(' | ').slice(0, 900) : null;
   }
 }

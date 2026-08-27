@@ -11,6 +11,7 @@ import {
   IsOptional,
   IsString,
   Matches,
+  MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -446,6 +447,46 @@ export class JanelaDeProvaDto {
   })
   @IsEnum(Turno)
   turno!: Turno;
+
+  @ApiPropertyOptional({
+    example: 'Prova 2',
+    nullable: true,
+    description:
+      'O NOME do grupo, no Brightspace, que passa a liberar a prova quando ' +
+      'esta janela dispara. **Vazio ou ausente = a troca de grupo nao acontece ' +
+      'nesta janela**, e o disparo se comporta como antes (so data e senha).\n\n' +
+      'E o NOME, nunca o GroupId: cada turma tem os seus proprios grupos, com ' +
+      'ids proprios, mesmo com nomes identicos — "Prova 2" existe em todas as ' +
+      'turmas com um id diferente em cada. O id e resolvido turma a turma no ' +
+      'momento do disparo.\n\n' +
+      'Nao e um grupo unico com os alunos trocados a cada sessao: cada turma ' +
+      'tem UM GRUPO POR SESSAO, na quantidade que a modalidade define (3 no ' +
+      'EaD, 6 em Semi/Modular, 5 no Presencial), e o disparo troca o grupo ' +
+      'APONTADO pela condicao. O nome e fixo por janela e vale para todas as ' +
+      'turmas e para todos os dias de prova.\n\n' +
+      '⚠️ Alterar este campo SOBE a versao da janela, liberando-a para disparar ' +
+      'de novo hoje — e o que faz a correcao de um nome errado valer no mesmo ' +
+      'dia, em vez de so no seguinte.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  nomeGrupo?: string | null;
+
+  @ApiPropertyOptional({
+    example: 'Separacao de provas por grupos',
+    nullable: true,
+    description:
+      'A categoria de grupo onde procurar, para desempatar homonimos. ' +
+      'Opcional; quando informada tambem barateia a resolucao (uma categoria ' +
+      'em vez de todas). Sem ela, o mesmo nome em duas categorias e recusado ' +
+      'como GRUPO_AMBIGUO — escolher no chute liberaria a prova para o turno ' +
+      'errado sem ninguem perceber. Ignorada quando `nomeGrupo` esta vazio.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  categoriaGrupo?: string | null;
 
   @ApiPropertyOptional({
     example: true,

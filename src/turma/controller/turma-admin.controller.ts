@@ -1,5 +1,13 @@
-import { Controller, Get, Param, ParseIntPipe, Query } from '@nestjs/common';
 import {
+  Controller,
+  Delete,
+  Get,
+  Param,
+  ParseIntPipe,
+  Query,
+} from '@nestjs/common';
+import {
+  ApiConflictResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
@@ -11,6 +19,7 @@ import { SomenteAdmin } from '../../auth/roles.decorator';
 import { TAGS } from '../../config/swagger';
 import {
   PaginaDeTurmasDto,
+  RemocaoTurmaDto,
   TurmaImportadaDetalheDto,
 } from '../dto/turma-admin.response.dto';
 import { TurmaAdminService } from '../service/turma-admin.service';
@@ -19,8 +28,10 @@ import { TurmaAdminService } from '../service/turma-admin.service';
  * O catalogo do que TEM prova, do jeito que o admin precisa ler: por nome de
  * disciplina, por codigo, ou pelo que ainda nao apareceu em nenhum launch.
  *
- * Somente leitura — a planilha e a fonte de verdade, e editar aqui seria
- * desfeito no proximo upload.
+ * Leitura, mais UM delete. Editar turma aqui continua fora — a planilha e a
+ * fonte de verdade e o proximo upload desfaria a correcao —, mas APAGAR nao
+ * tinha substituto: a importacao e upsert e nunca remove o que saiu do CSV,
+ * entao a linha errada ficava agendavel para sempre.
  */
 @ApiTags(TAGS.TURMAS)
 @Controller('turmas')
@@ -92,6 +103,32 @@ export class TurmaAdminController {
   @ApiNotFoundResponse({ description: 'Turma nao encontrada' })
   buscar(@Param('id', ParseIntPipe) id: number) {
     return this.service.buscar(id);
+  }
+
+  @Delete(':id')
+  @ApiOperation({
+    summary: 'Tira uma turma do catalogo (ela deixa de ser agendavel)',
+    description:
+      'Para desfazer carga errada — linha duplicada, turma que entrou na ' +
+      'planilha sem ter prova. O efeito e imediato: a disciplina some do filtro ' +
+      'final e nenhum aluno consegue mais agenda-la.\n\n' +
+      '⚠️ **Nao substitui corrigir a planilha.** A importacao de turmas e ' +
+      '`upsert` — ela nunca apaga o que saiu do CSV —, entao se a linha ' +
+      'continuar la o proximo upload traz a turma de volta, com id novo e sem o ' +
+      '`orgUnitId` ja aprendido nos launches.\n\n' +
+      'Turma com prova marcada e recusada (409). Apagar nao desmarcaria nada — ' +
+      'o agendamento guarda o `orgUnitId` como fotografia, sem chave ' +
+      'estrangeira —, so tiraria o nome da turma do relatorio.',
+  })
+  @ApiParam({ name: 'id', type: Number, example: 214 })
+  @ApiOkResponse({ type: RemocaoTurmaDto })
+  @ApiNotFoundResponse({ description: 'Turma nao encontrada' })
+  @ApiConflictResponse({
+    description:
+      'Turma com agendamentos confirmados — cancele as provas antes de apagar',
+  })
+  remover(@Param('id', ParseIntPipe) id: number) {
+    return this.service.remover(id);
   }
 }
 

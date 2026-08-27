@@ -135,6 +135,13 @@ export interface JanelaDeProvaConfig {
   /** De qual celula da grade sai a senha desta janela. */
   turno: Turno;
   /**
+   * O NOME do grupo, no Brightspace, que passa a liberar a prova quando esta
+   * janela dispara. `null` = esta janela nao troca grupo.
+   */
+  nomeGrupo: string | null;
+  /** A categoria onde procurar o grupo, para desempatar homonimos. */
+  categoriaGrupo: string | null;
+  /**
    * O disparo arma a prova de AMANHA — a janela da noite, que abre o ciclo do
    * dia seguinte.
    *
@@ -165,8 +172,18 @@ export type JanelaDeProvaEntrada = Omit<
   | 'modalidadeNome'
   | 'diaSeguinte'
   | 'ativo'
+  | 'nomeGrupo'
+  | 'categoriaGrupo'
 > & {
   ativo?: boolean;
+  /**
+   * Opcionais na ENTRADA e nulaveis na SAIDA: a tela pode simplesmente nao
+   * mandar o campo, e o servico normaliza vazio -> `null`. Deixa-los
+   * obrigatorios aqui quebraria todo cliente que salva o calendario sem mexer em
+   * grupo, e forcaria a tela a reenviar um valor que ela nao editou.
+   */
+  nomeGrupo?: string | null;
+  categoriaGrupo?: string | null;
 };
 
 export interface JanelasDeProva {
@@ -513,6 +530,8 @@ export class GradeSenhasService {
         horaInicio: j.horaInicio,
         horaFim: j.horaFim,
         turno: j.turno,
+        nomeGrupo: j.nomeGrupo,
+        categoriaGrupo: j.categoriaGrupo,
         diaSeguinte: j.diaSeguinte,
         ativo: j.ativo,
         versao: j.versao,
@@ -577,6 +596,8 @@ export class GradeSenhasService {
             horaInicio: true,
             horaFim: true,
             turno: true,
+            nomeGrupo: true,
+            categoriaGrupo: true,
           },
         });
 
@@ -590,19 +611,29 @@ export class GradeSenhasService {
         // `ativo` NAO conta: religar uma sessao desligada nao muda o que ela
         // grava, e subir a versao ali faria um simples "salvar" reprocessar a
         // instituicao inteira.
-        const mudouOHorario =
+        //
+        // ⚠️ **`nomeGrupo` e `categoriaGrupo` CONTAM** (26/08/2026). Sao campos
+        // que o disparo APLICA, exatamente como as horas, e um nome de grupo
+        // digitado errado tem a mesma cara do bug original: o admin corrige as
+        // 12:43 depois do disparo das 12:01, o upsert preserva o id, a
+        // idempotencia encontra a execucao concluida e pula em silencio. Sem
+        // isto, a correcao de um grupo so valeria no dia seguinte — e o sintoma
+        // seria a prova abrindo para a sessao anterior o dia inteiro.
+        const mudouOQueEAplicado =
           existente !== null &&
           (existente.horaDisparo !== janela.horaDisparo ||
             existente.horaInicio !== janela.horaInicio ||
             existente.horaFim !== janela.horaFim ||
-            existente.turno !== janela.turno);
+            existente.turno !== janela.turno ||
+            existente.nomeGrupo !== janela.nomeGrupo ||
+            existente.categoriaGrupo !== janela.categoriaGrupo);
 
         await tx.janelaDeProva.upsert({
           where: { modalidadeId_ordem: { modalidadeId, ordem: janela.ordem } },
           update: {
             ...janela,
             atualizadoPor: adminEmail,
-            ...(mudouOHorario ? { versao: { increment: 1 } } : {}),
+            ...(mudouOQueEAplicado ? { versao: { increment: 1 } } : {}),
           },
           create: { ...janela, modalidadeId, atualizadoPor: adminEmail },
         });
@@ -622,6 +653,12 @@ export class GradeSenhasService {
               // das 15h nao rodou?" nao tem resposta no log.
               `${j.horaDisparo} -> ${j.horaInicio}-${j.horaFim} ` +
               `[senha da ${rotuloDoTurno(j.turno)}]` +
+              // O grupo entra na auditoria pelo mesmo motivo que o turno: e o
+              // que a janela APLICA, e "por que a prova abriu para o grupo
+              // errado?" nao tem resposta no log sem ele. "sem grupo" e dito em
+              // voz alta de proposito — e um estado valido, e confundi-lo com
+              // "esqueci de olhar" e o que faz o recurso parecer quebrado.
+              ` [${j.nomeGrupo ? `grupo "${j.nomeGrupo}"` : 'sem grupo'}]` +
               `${j.diaSeguinte ? ' (D+1)' : ''}${j.ativo ? '' : ' [inativa]'}`,
           )
           .join('; '),
@@ -672,6 +709,17 @@ export class GradeSenhasService {
       horaInicio,
       horaFim,
       turno: janela.turno,
+      // ⚠️ Vazio vira NULO, e nao string vazia. Nulo significa "esta janela nao
+      // troca grupo"; um `""` gravado passaria pela checagem de "tem grupo?" e
+      // faria a resolucao procurar um grupo sem nome em cada turma, produzindo
+      // uma pendencia por turma sem que nada estivesse configurado. O `trim` e
+      // pelo mesmo motivo: espaco digitado por engano nao e cadastro.
+      nomeGrupo: janela.nomeGrupo?.trim() || null,
+      // So faz sentido com o nome. Guardar a categoria de uma janela que nao
+      // troca grupo deixaria um cadastro orfao que ninguem sabe reativar.
+      categoriaGrupo: janela.nomeGrupo?.trim()
+        ? janela.categoriaGrupo?.trim() || null
+        : null,
       // Calculado, nunca recebido. O admin nao tinha como responder isto melhor
       // que a aritmetica, e tinha como responder errado.
       diaSeguinte: ehDoDiaSeguinte(horaDisparo, horaInicio),

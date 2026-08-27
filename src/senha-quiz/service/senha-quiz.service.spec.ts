@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { D2lCondicoesService } from '../../d2l/service/d2l-condicoes.service';
 import { D2lQuizzesService } from '../../d2l/service/d2l-quizzes.service';
 import { PrismaService } from '../../database/prisma.service';
 import {
@@ -13,16 +14,67 @@ import { PeriodoService } from '../../periodo/service/periodo.service';
 import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 import { GradeSenhasService } from './grade-senhas.service';
 import { ModalidadeDaTurmaService } from './modalidade-da-turma.service';
+import { ResolucaoGrupoService } from './resolucao-grupo.service';
 import { ResolucaoOrgUnitService } from './resolucao-orgunit.service';
 import { SenhaQuizService } from './senha-quiz.service';
 
 /** Deixa o `void this.executar(...)` terminar antes das asserções. */
 const deixarOLoteTerminar = () => new Promise((r) => setTimeout(r, 0));
 
+/**
+ * O `ConditionsData` como a instancia real devolve: um operando de grupo
+ * apontando para "Prova 1", com o `State` opaco que precisa voltar intacto.
+ */
+const CONDICOES_PROVA_1 = {
+  Expression: {
+    Type: 'Expression',
+    State: null,
+    ExpressionParams: {
+      Operator: 'All',
+      Operands: [
+        {
+          Type: 'EnrolledInGroup',
+          State: '224735',
+          EnrolledInGroupParams: { GroupId: 156988, GroupCategoryId: null },
+          Text: { Text: 'Membro do grupo: Prova 1', Html: '<b>Prova 1</b>' },
+        },
+      ],
+    },
+    Text: { Text: 'Todas as condicoes', Html: 'Todas as condicoes' },
+  },
+};
+
+/** Uma janela que TROCA grupo — o oposto do padrao do `montar`. */
+const JANELA_COM_GRUPO = {
+  id: 10,
+  modalidadeId: 1,
+  horaInicio: '15:00',
+  horaFim: '18:00',
+  turno: Turno.TARDE,
+  nomeGrupo: 'Prova 2',
+  categoriaGrupo: null,
+  ativo: true,
+  versao: 3,
+};
+
 describe('SenhaQuizService', () => {
   let itensGravados: Record<string, unknown>[];
   let execucao: Record<string, unknown>;
   let gravacoes: { orgUnitId: string; quizId: string; corpo: unknown }[];
+  /** Todo PUT em `conditionalRelease` que saiu do lote. */
+  let condicoesGravadas: {
+    orgUnitId: string;
+    quizId: string;
+    corpo: unknown;
+  }[];
+  /**
+   * A ORDEM em que as escritas sairam, na linha do tempo real do lote.
+   *
+   * Existe porque a ordem entre a troca de grupo e o PUT do quiz e uma decisao
+   * de seguranca, nao uma coincidencia de implementacao — ver o teste que a
+   * verifica.
+   */
+  let ordemDasEscritas: string[];
   /** Turmas cuja listagem de questionarios chegou a ser pedida ao Brightspace. */
   let listagens: string[];
 
@@ -53,9 +105,19 @@ describe('SenhaQuizService', () => {
     /** orgUnitId -> a decisao do `ModalidadeDaTurmaService`. */
     modalidadePorTurma?: Record<string, unknown>;
     janela?: Record<string, unknown> | null;
+    /** O `ConditionsData` que o GET de condicoes devolve. */
+    condicoes?: Record<string, unknown> | null;
+    /** orgUnitId -> os grupos que a turma tem, achatados numa categoria so. */
+    gruposPorTurma?: Record<string, { GroupId: number; Name: string }[]>;
+    /** A turma nao tem categoria de grupo nenhuma. */
+    semCategoria?: boolean;
+    lerCondicoesLanca?: boolean;
+    gravarCondicoesLanca?: boolean;
   }) => {
     itensGravados = [];
     gravacoes = [];
+    condicoesGravadas = [];
+    ordemDasEscritas = [];
     listagens = [];
     execucao = { id: 7, status: StatusExecucao.EM_ANDAMENTO };
 
@@ -104,6 +166,11 @@ describe('SenhaQuizService', () => {
                 horaInicio: '15:00',
                 horaFim: '18:00',
                 turno: Turno.TARDE,
+                // Por padrao a janela NAO troca grupo — e o estado de quem
+                // ainda nao cadastrou nada na tela, e mantem os testes antigos
+                // medindo exatamente o que mediam antes.
+                nomeGrupo: null,
+                categoriaGrupo: null,
                 ativo: true,
                 versao: 3,
               }
@@ -133,11 +200,53 @@ describe('SenhaQuizService', () => {
           (orgUnitId: string, quizId: string, corpo: unknown) => {
             if (opcoes.gravarLanca)
               return Promise.reject(new Error('403 sem escopo'));
+            ordemDasEscritas.push('quiz');
             gravacoes.push({ orgUnitId, quizId, corpo });
             return Promise.resolve();
           },
         ),
     } as unknown as D2lQuizzesService;
+
+    const condicoesCliente = {
+      habilitado: jest.fn().mockReturnValue(true),
+      listarCategoriasDeGrupo: jest
+        .fn()
+        .mockImplementation(() =>
+          opcoes.semCategoria
+            ? Promise.resolve([])
+            : Promise.resolve([
+                { GroupCategoryId: 8882, Name: 'Separacao de provas' },
+              ]),
+        ),
+      listarGrupos: jest.fn().mockImplementation((orgUnitId: string) =>
+        Promise.resolve(
+          opcoes.gruposPorTurma?.[orgUnitId] ?? [
+            { GroupId: 156988, Name: 'Prova 1' },
+            { GroupId: 156989, Name: 'Prova 2' },
+          ],
+        ),
+      ),
+      lerCondicoes: jest.fn().mockImplementation(() => {
+        if (opcoes.lerCondicoesLanca)
+          return Promise.reject(new Error('403 sem escopo de grupos'));
+        return Promise.resolve(
+          opcoes.condicoes === undefined ? CONDICOES_PROVA_1 : opcoes.condicoes,
+        );
+      }),
+      gravarCondicoes: jest
+        .fn()
+        .mockImplementation(
+          (orgUnitId: string, quizId: string, corpo: unknown) => {
+            if (opcoes.gravarCondicoesLanca)
+              return Promise.reject(new Error('500 do tenant'));
+            ordemDasEscritas.push('condicoes');
+            condicoesGravadas.push({ orgUnitId, quizId, corpo });
+            return Promise.resolve();
+          },
+        ),
+    } as unknown as D2lCondicoesService;
+
+    const grupos = new ResolucaoGrupoService(condicoesCliente);
 
     const resolucao = {
       resolver: jest.fn().mockResolvedValue({
@@ -187,7 +296,9 @@ describe('SenhaQuizService', () => {
         SENHA_QUIZ_CONCORRENCIA: '4',
       }),
       quizzes,
+      condicoesCliente,
       resolucao,
+      grupos,
       modalidades,
       grade,
       periodo,
@@ -483,7 +594,9 @@ describe('SenhaQuizService', () => {
         prisma,
         new ConfigService({}),
         {} as unknown as D2lQuizzesService,
+        {} as unknown as D2lCondicoesService,
         {} as unknown as ResolucaoOrgUnitService,
+        {} as unknown as ResolucaoGrupoService,
         {} as unknown as ModalidadeDaTurmaService,
         {} as unknown as GradeSenhasService,
         {} as unknown as PeriodoService,
@@ -782,6 +895,335 @@ describe('SenhaQuizService', () => {
       expect(criacao.data.versaoAplicada).toBe(3);
       expect(criacao.data.janelaDeProvaId).toBe(10);
       expect(criacao.data.horaInicioAplicada).toBe('15:00');
+    });
+  });
+
+  /**
+   * ==========================================================================
+   * A TROCA DO GRUPO QUE LIBERA A PROVA
+   * ==========================================================================
+   * Acontece no MESMO disparo que move a data — o cliente pediu "nos mesmos
+   * horarios em que trocamos as datas". Estes testes travam as tres decisoes
+   * dele (26/08/2026), que sao o que distingue este recurso de uma porta
+   * aberta para o turno anterior.
+   */
+  describe('troca de grupo', () => {
+    const EAD = {
+      situacao: 'ENCONTRADA',
+      modalidadeId: 1,
+      codigo: 'EAD',
+      nome: 'EaD',
+      reservas: 40,
+    };
+
+    const OPCOES = {
+      tipo: 'DATA' as const,
+      janelaId: 10,
+      data: '2026-09-16',
+      simulacao: false,
+      forcar: false,
+    };
+
+    const umaTurmaEad = {
+      quizzesPorTurma: QUIZZES,
+      modalidadePorTurma: { '156126': EAD },
+      janela: JANELA_COM_GRUPO,
+    };
+
+    it('aponta a condicao para o grupo da janela', async () => {
+      const { servico } = montar(umaTurmaEad);
+
+      await servico.iniciar(OPCOES, 'admin@ucb.br');
+      await deixarOLoteTerminar();
+
+      expect(condicoesGravadas).toHaveLength(1);
+      const corpo = condicoesGravadas[0].corpo as {
+        Expression: { ExpressionParams: { Operands: Record<string, any>[] } };
+      };
+
+      expect(
+        corpo.Expression.ExpressionParams.Operands[0].EnrolledInGroupParams,
+      ).toEqual({ GroupId: 156989, GroupCategoryId: null });
+
+      expect(itensGravados[0]).toMatchObject({
+        resultadoGrupo: 'TROCADO',
+        grupoAnterior: 'Prova 1 (#156988)',
+        grupoAplicado: 'Prova 2 (#156989)',
+      });
+    });
+
+    /**
+     * ⚠️ A ORDEM NAO E INDIFERENTE. O PUT do quiz e o que ABRE a prova no
+     * horario novo. Com o grupo primeiro, o estado entre as duas escritas e
+     * "janela antiga + grupo novo" — prova fechada, inofensivo. Na ordem
+     * inversa seria "janela nova + grupo antigo": a prova ABERTA para a sessao
+     * anterior, que e o que este recurso existe para impedir.
+     */
+    it('troca o grupo ANTES de gravar a janela no questionario', async () => {
+      const { servico } = montar(umaTurmaEad);
+
+      await servico.iniciar(OPCOES, 'admin@ucb.br');
+      await deixarOLoteTerminar();
+
+      expect(ordemDasEscritas).toEqual(['condicoes', 'quiz']);
+    });
+
+    /**
+     * A outra metade da mesma decisao: se o quiz nao pode nem ser lido, o grupo
+     * JA foi trocado. O estado resultante e "janela antiga + grupo novo" —
+     * prova fechada, ninguem prejudicado. Se a ordem se invertesse um dia, este
+     * teste passaria a ver `resultadoGrupo` nulo.
+     */
+    it('o grupo ja foi trocado quando a leitura do quiz falha', async () => {
+      const { servico } = montar({
+        ...umaTurmaEad,
+        quizLido: undefined,
+        gravarLanca: true,
+      });
+
+      await servico.iniciar(OPCOES, 'admin@ucb.br');
+      await deixarOLoteTerminar();
+
+      expect(itensGravados[0]).toMatchObject({
+        resultado: ResultadoSenhaQuiz.FALHA_AO_GRAVAR,
+        resultadoGrupo: 'TROCADO',
+      });
+      expect(ordemDasEscritas).toEqual(['condicoes']);
+    });
+
+    /**
+     * DECISAO 2 do cliente: falha de grupo NAO bloqueia a data. Sem a data a
+     * prova nao abre para NINGUEM; sem a troca de grupo ela abre para o grupo
+     * anterior. Bloquear a data trocaria o problema menor pelo maior.
+     */
+    it('aplica a DATA mesmo quando o grupo nao existe na turma', async () => {
+      const { servico } = montar({
+        ...umaTurmaEad,
+        gruposPorTurma: { '156126': [{ GroupId: 1, Name: 'Outro grupo' }] },
+      });
+
+      await servico.iniciar(OPCOES, 'admin@ucb.br');
+      await deixarOLoteTerminar();
+
+      expect(gravacoes).toHaveLength(1);
+      expect(condicoesGravadas).toHaveLength(0);
+      expect(itensGravados[0]).toMatchObject({
+        resultado: ResultadoSenhaQuiz.DEFINIDA,
+        resultadoGrupo: 'GRUPO_NAO_ENCONTRADO',
+      });
+      expect(String(itensGravados[0].detalhe)).toContain('Outro grupo');
+    });
+
+    it('aplica a DATA mesmo quando o PUT das condicoes falha', async () => {
+      const { servico } = montar({
+        ...umaTurmaEad,
+        gravarCondicoesLanca: true,
+      });
+
+      await servico.iniciar(OPCOES, 'admin@ucb.br');
+      await deixarOLoteTerminar();
+
+      expect(gravacoes).toHaveLength(1);
+      expect(itensGravados[0]).toMatchObject({
+        resultado: ResultadoSenhaQuiz.DEFINIDA,
+        resultadoGrupo: 'FALHA_AO_GRAVAR_CONDICOES',
+      });
+    });
+
+    /**
+     * DECISAO 3: so se TROCA condicao existente, nunca se CRIA. Criar mudaria o
+     * comportamento de uma prova que talvez seja aberta a todos de proposito.
+     */
+    it('nao cria condicao onde nao ha — nenhum PUT sai', async () => {
+      const { servico } = montar({
+        ...umaTurmaEad,
+        condicoes: {
+          Expression: {
+            Type: 'Expression',
+            State: null,
+            ExpressionParams: { Operator: 'All', Operands: [] },
+          },
+        },
+      });
+
+      await servico.iniciar(OPCOES, 'admin@ucb.br');
+      await deixarOLoteTerminar();
+
+      expect(condicoesGravadas).toHaveLength(0);
+      expect(itensGravados[0].resultadoGrupo).toBe('SEM_CONDICAO_DE_GRUPO');
+    });
+
+    /**
+     * ⚠️ ZERO PUT no dry-run, aqui como no do quiz. E a unica conferencia
+     * possivel antes de mexer na condicao de liberacao de toda a instituicao.
+     */
+    it('SIMULACAO nao emite nenhum PUT de condicoes', async () => {
+      const { servico } = montar(umaTurmaEad);
+
+      await servico.iniciar({ ...OPCOES, simulacao: true }, 'admin@ucb.br');
+      await deixarOLoteTerminar();
+
+      expect(condicoesGravadas).toHaveLength(0);
+      expect(gravacoes).toHaveLength(0);
+      expect(itensGravados[0]).toMatchObject({
+        resultado: ResultadoSenhaQuiz.SIMULADA,
+        resultadoGrupo: 'SIMULADO',
+        grupoAplicado: 'Prova 2 (#156989)',
+      });
+    });
+
+    /**
+     * O backup e a UNICA forma de voltar atras: o PUT substitui tudo e a API nao
+     * guarda historico. Gravado tambem no dry-run, porque e nele que se descobre
+     * o que a prova tem hoje.
+     */
+    it('guarda as condicoes anteriores, inclusive na simulacao', async () => {
+      const { servico } = montar(umaTurmaEad);
+
+      await servico.iniciar({ ...OPCOES, simulacao: true }, 'admin@ucb.br');
+      await deixarOLoteTerminar();
+
+      const backup = JSON.parse(
+        String(itensGravados[0].condicoesAnteriores),
+      ) as typeof CONDICOES_PROVA_1;
+
+      expect(backup).toEqual(CONDICOES_PROVA_1);
+    });
+
+    it('reconhece quando a prova JA estava no grupo, sem gravar', async () => {
+      const { servico } = montar({
+        ...umaTurmaEad,
+        condicoes: {
+          Expression: {
+            Type: 'Expression',
+            State: null,
+            ExpressionParams: {
+              Operator: 'All',
+              Operands: [
+                {
+                  Type: 'EnrolledInGroup',
+                  State: 'x',
+                  EnrolledInGroupParams: {
+                    GroupId: 156989,
+                    GroupCategoryId: null,
+                  },
+                },
+              ],
+            },
+          },
+        },
+      });
+
+      await servico.iniciar(OPCOES, 'admin@ucb.br');
+      await deixarOLoteTerminar();
+
+      expect(condicoesGravadas).toHaveLength(0);
+      expect(itensGravados[0].resultadoGrupo).toBe('JA_ERA_O_GRUPO');
+    });
+
+    /**
+     * O contador `gruposPendentes` tem o MESMO peso de `naoEncontradas`: uma
+     * execucao com 0 falhas e N aqui NAO e verde. Ver a licao de 26/08/2026
+     * sobre `semModalidade` aparecer com "0 pendencia(s)".
+     */
+    it('conta trocados e pendentes separado do resultado da data', async () => {
+      const { servico } = montar({
+        resolucao: {
+          totalNoCsv: 2,
+          resolvidas: [
+            turmaResolvida(1, '156126'),
+            turmaResolvida(2, '156127'),
+          ],
+          naoResolvidas: [],
+          aprendidos: 0,
+        },
+        quizzesPorTurma: {
+          '156126': [{ QuizId: 42, Name: 'Prova N1' }],
+          '156127': [{ QuizId: 43, Name: 'Prova N1' }],
+        },
+        modalidadePorTurma: { '156126': EAD, '156127': EAD },
+        // A segunda turma nao tem o grupo — anomalia de cadastro, ja que toda
+        // turma deveria te-lo.
+        gruposPorTurma: {
+          '156127': [{ GroupId: 1, Name: 'Outro' }],
+        },
+        janela: JANELA_COM_GRUPO,
+      });
+
+      await servico.iniciar(OPCOES, 'admin@ucb.br');
+      await deixarOLoteTerminar();
+
+      expect(execucao).toMatchObject({
+        definidas: 2,
+        falhas: 0,
+        gruposTrocados: 1,
+        gruposPendentes: 1,
+      });
+    });
+
+    /**
+     * O estado de quem ainda nao cadastrou nada na tela. O lote precisa se
+     * comportar EXATAMENTE como antes de 26/08/2026 — nenhuma chamada de grupo,
+     * e `resultadoGrupo` nulo (ausencia de tentativa, nao desfecho ruim).
+     */
+    it('janela SEM grupo nao toca em condicao nenhuma', async () => {
+      const { servico } = montar({
+        quizzesPorTurma: QUIZZES,
+        modalidadePorTurma: { '156126': EAD },
+      });
+
+      await servico.iniciar(OPCOES, 'admin@ucb.br');
+      await deixarOLoteTerminar();
+
+      expect(condicoesGravadas).toHaveLength(0);
+      expect(gravacoes).toHaveLength(1);
+      expect(itensGravados[0].resultadoGrupo).toBeNull();
+      expect(execucao).toMatchObject({
+        gruposTrocados: 0,
+        gruposPendentes: 0,
+      });
+    });
+
+    /**
+     * Um `"  "` salvo por engano na tela passaria por qualquer checagem de
+     * "tem grupo?" e faria a resolucao procurar um grupo sem nome em cada turma,
+     * produzindo uma pendencia por turma sem que nada estivesse configurado.
+     */
+    it('nome so com espacos conta como SEM grupo', async () => {
+      const { servico } = montar({
+        quizzesPorTurma: QUIZZES,
+        modalidadePorTurma: { '156126': EAD },
+        janela: { ...JANELA_COM_GRUPO, nomeGrupo: '   ' },
+      });
+
+      await servico.iniciar(OPCOES, 'admin@ucb.br');
+      await deixarOLoteTerminar();
+
+      expect(condicoesGravadas).toHaveLength(0);
+      expect(itensGravados[0].resultadoGrupo).toBeNull();
+    });
+
+    /**
+     * O lote de SENHAS nao tem janela, logo nao tem grupo — ele toca TODAS as
+     * turmas do CSV, e trocar a condicao de liberacao ali apontaria a prova de
+     * toda a instituicao para o grupo de uma sessao so.
+     */
+    it('o lote de SENHAS nunca toca em condicoes', async () => {
+      const { servico } = montar({ quizzesPorTurma: QUIZZES });
+
+      await servico.iniciar(
+        {
+          data: '2026-09-16',
+          turno: Turno.MANHA,
+          simulacao: false,
+          forcar: false,
+        },
+        'admin@ucb.br',
+      );
+      await deixarOLoteTerminar();
+
+      expect(condicoesGravadas).toHaveLength(0);
+      expect(itensGravados[0].resultadoGrupo).toBeNull();
     });
   });
 });

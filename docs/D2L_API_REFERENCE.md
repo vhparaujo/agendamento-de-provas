@@ -338,8 +338,8 @@ Se o aluno cancelar/for remanejado, remova o special access antigo.
 
 ### 5.7 Trocar a senha do questionário (`PUT .../quizzes/(quizId)`)
 
-**Este é o único trecho da §5 que o portal implementa hoje** (`src/senha-quiz/`).
-Special access continua não implementado — ver §9.
+**Este e a §5.8 são os trechos da §5 que o portal implementa hoje**
+(`src/senha-quiz/`). Special access continua não implementado — ver §9.
 
 ```
 GET /d2l/api/le/(version)/(orgUnitId)/quizzes/          Scope: quizzing:quizzes:read
@@ -398,6 +398,109 @@ O escopo vem do token, mas quem executa é o usuário dono do refresh token (§3
 Sem a role de edição de questionários no nível certo, o D2L pode responder **200
 sem gravar nada**. Confirme com um `GET` depois do `PUT` pelo menos uma vez em
 homologação.
+
+### 5.8 Trocar o GRUPO que libera a prova (`conditionalRelease`)
+
+**Implementado desde 26/08/2026** (`src/d2l/service/d2l-condicoes.service.ts` +
+`src/senha-quiz/service/condicoes.ts`). Roda no MESMO disparo que aplica a janela
+de datas — ver "Datas das provas" no CLAUDE.md.
+
+Mover a data fecha a prova pelo relógio, mas quem fez a sessão anterior continua
+*elegível* pela condição de liberação do questionário, que aponta para o grupo
+daquela sessão. Esta é a metade que fecha essa porta.
+
+```
+GET  /d2l/api/lp/(version)/(orgUnitId)/groupcategories/
+GET  /d2l/api/lp/(version)/(orgUnitId)/groupcategories/(categoryId)/groups/
+GET  /d2l/api/lp/(version)/(orgUnitId)/conditionalRelease/conditions/quizzes/(quizId)
+PUT  /d2l/api/lp/(version)/(orgUnitId)/conditionalRelease/conditions/quizzes/(quizId)
+```
+
+Scopes: `groups:group:read` para as duas primeiras; `conditionalRelease` não tem
+scope documentado e é coberta por `core:*:*`.
+
+#### ⚠️ É **LP**, e o mínimo é 1.49
+
+As quatro rotas não existem antes disso (1.45 e anteriores estão obsoletas). Uma
+LP baixa **não** devolve 400 explicando: devolve **404 com corpo vazio**,
+indistinguível de "questionário não existe". `D2lCondicoesService` recusa na
+primeira chamada, dizendo onde conferir. Este tenant está em 1.62.
+
+#### As condições NÃO são campo do `QuizData`
+
+É um recurso separado do LP. Consequência boa: a troca de grupo **não passa pelos
+35 campos de `montarCorpoDoQuiz`** e não pode apagar `EndDate` nem `Password`. As
+duas escritas falham independentemente — e é isso que sustenta a regra "falha de
+grupo não bloqueia a data".
+
+#### O PUT substitui a lista INTEIRA de condições
+
+Mesmo princípio do PUT de quiz, **com um agravante**: condições que a API não
+modela chegam com `Type: "RoundTrip"` e um `State` opaco. Se não voltarem com
+`Type` e `State` **intactos**, elas somem — e nada no retorno da API acusa isso.
+Uma prova pode ter restrição de data, de nota, de conclusão de conteúdo; o lote
+não sabe ler nenhuma, e não precisa: precisa devolvê-las verbatim.
+
+`trocarGrupoNasCondicoes` clona todos os operandos e mexe em exatamente um campo
+de um tipo de operando. `condicoes.spec.ts` é a rede — o teste do `RoundTrip` é o
+mais importante do arquivo.
+
+Forma do `ConditionsData` (validada contra a instância real, turma `156979`):
+
+```json
+{
+  "Expression": {
+    "Type": "Expression",
+    "State": null,
+    "ExpressionParams": {
+      "Operator": "All",
+      "Operands": [
+        {
+          "Type": "EnrolledInGroup",
+          "State": "224735",
+          "EnrolledInGroupParams": { "GroupId": 156988, "GroupCategoryId": null },
+          "Text": { "Text": "Membro do grupo: ...", "Html": "..." }
+        }
+      ]
+    },
+    "Text": { "Text": "Todas as condições devem ser satisfeitas", "Html": "..." }
+  }
+}
+```
+
+O corpo do PUT é o mesmo objeto **sem nenhum `Text`** (gerado pelo servidor e
+ignorado na escrita) e com `EnrolledInGroupParams` trocado por
+`{ GroupId: <novo>, GroupCategoryId: null }`. O `State` do operando trocado
+**continua o antigo** — foi nessa forma que o PUT manual validado devolveu 200.
+
+#### Três regras que o lote não negocia
+
+| Situação | O que acontece |
+|---|---|
+| `EnrolledInGroup` com `GroupId` | troca o `GroupId`, preserva o resto |
+| `EnrolledInGroup` com `GroupCategoryId` | **preserva**: significa "qualquer grupo da categoria"; trocar mudaria o *significado* da condição, não o alvo |
+| Quiz sem condição de grupo | **nada é criado**, nenhum PUT sai. `SEM_CONDICAO_DE_GRUPO` |
+
+#### Nome de grupo, nunca `GroupId`
+
+Cada turma tem os seus próprios grupos, com ids próprios, mesmo com nomes
+idênticos: "Prova 2" existe em todas as turmas com um id diferente em cada. Por
+isso `JanelaDeProva.nomeGrupo` guarda o **nome**, e o id é resolvido turma a turma
+(`resolucao-grupo.service.ts`, cache por execução). Gravar um id na janela
+liberaria a prova de 156 turmas para um grupo que só existe numa.
+
+A comparação de nome é **normalizada** (sem acento, sem caixa, sem espaço duplo)
+— ao contrário da de nome de quiz, que é literal. Um falso negativo aqui não é
+erro visível: é uma turma inteira ficando com a condição da sessão anterior.
+**Nome ambíguo** (mesmo nome em duas categorias) é erro duro, nunca chute.
+
+#### Custo em chamadas
+
+Por turma: +2 (categorias + grupos), cacheado por `orgUnitId` dentro da execução;
++1 a menos quando `categoriaGrupo` está preenchido. Por quiz casado: +2 (GET e
+PUT das condições). Aproximadamente **dobra** o número de chamadas do lote de
+datas — o `ritmo` (concorrência 4, atraso 400 ms) e a tolerância de 30 min do
+cron absorvem isso, mas meça no primeiro dry-run real.
 
 ---
 

@@ -251,6 +251,7 @@ segredo ausente em produção.
 | `JWT_SECRET` | ✅ | mínimo 16 caracteres |
 | `JWT_REFRESH_SECRET` | ✅ | mínimo 16 caracteres, diferente do anterior |
 | `PORT`, `API_PREFIX`, `NODE_ENV` | | default `3000`, `api`, `development` |
+| `TRUST_PROXY` | prod | **obrigatória atrás de proxy** — nº de saltos confiáveis (`1` = um proxy, `2` = dois). Ausente, todo aluno chega com o IP do proxy e o rate limit por IP vira orçamento compartilhado pela instituição |
 | `SWAGGER_ENABLED` | | vazio = ligado fora de produção; `true` publica também em produção |
 | `THROTTLE_NOS_TESTES` | | só para teste: liga o rate limiting sob `NODE_ENV=test` |
 | `JWT_EXPIRES_IN` / `JWT_REFRESH_EXPIRES_IN` | | default `15m` / `7d` |
@@ -350,9 +351,13 @@ limite de 15 MB, extensão `.csv` obrigatória.
 
 ### Consulta do que foi importado
 
-Todas exigem JWT de admin e são **somente leitura**: a planilha é a fonte de
-verdade, e um ajuste feito por aqui seria desfeito no próximo upload sem ninguém
-perceber. Para corrigir um registro, corrige-se o CSV e reimporta.
+Todas exigem JWT de admin e **nada aqui edita um registro**: a planilha é a
+fonte de verdade, e um ajuste feito por aqui seria desfeito no próximo upload sem
+ninguém perceber. Para corrigir um campo, corrige-se o CSV e reimporta.
+
+As duas exceções são de **apagar**, não de editar, e existem pelo mesmo motivo:
+**a importação é `upsert` e nunca remove o que saiu do arquivo**. Sem uma ação
+explícita, a linha errada fica no banco para sempre — reimportar não a apaga.
 
 | Método | Rota | Descrição |
 |---|---|---|
@@ -362,15 +367,29 @@ perceber. Para corrigir um registro, corrige-se o CSV e reimporta.
 | `POST` | `/alunos/:id/mesclar` | Funde o vínculo duplicado pela troca de grafia do curso |
 | `GET` | `/turmas` | Pesquisa as turmas/disciplinas do CSV — paginada |
 | `GET` | `/turmas/:id` | A turma: origem e quantos agendamentos a cobrem |
+| `DELETE` | `/turmas/:id` | Tira a turma do catálogo — ela deixa de ser agendável |
 
-**`POST /alunos/:id/mesclar` é a única escrita**, e é exceção justamente porque
-reimportar **não** resolve o caso dela: quando a grafia do curso muda, a linha
-antiga deixa de estar no arquivo e a importação nunca apaga — sem uma ação
-explícita, a duplicata fica no banco para sempre. O `:id` da URL é o vínculo que
-**fica** e `absorverId` (no corpo) é o que será **apagado**, na mesma direção do
-relatório de importação. Recusa matrículas diferentes (400) e recusa quando os
-dois têm prova confirmada no mesmo período letivo (409); divergência de
-modalidade ou polo não bloqueia e volta em `avisos`.
+**`POST /alunos/:id/mesclar`** resolve a duplicata que a troca de grafia do curso
+cria: quando o nome do curso muda, a linha antiga deixa de estar no arquivo e a
+importação nunca apaga. O `:id` da URL é o vínculo que **fica** e `absorverId`
+(no corpo) é o que será **apagado**, na mesma direção do relatório de importação.
+Recusa matrículas diferentes (400) e recusa quando os dois têm prova confirmada
+no mesmo período letivo (409); divergência de modalidade ou polo não bloqueia e
+volta em `avisos`.
+
+**`DELETE /turmas/:id`** desfaz carga errada — linha duplicada, turma que entrou
+na planilha sem ter prova. O efeito é imediato: a disciplina sai do filtro final
+e ninguém mais consegue agendá-la.
+
+- **Não substitui corrigir a planilha.** Se a linha continuar no CSV, o próximo
+  upload traz a turma de volta — com id novo e **sem o `orgUnitId`** que os
+  launches já tinham aprendido. Apagar aqui conserta agora; tirar da planilha
+  conserta de verdade. A resposta diz isso, e a tela avisa antes de confirmar.
+- **Turma com prova marcada é recusada (409).** Apagar não desmarcaria nada — o
+  agendamento aponta para a disciplina pelo `orgUnitId`, como fotografia e sem
+  chave estrangeira —, só tiraria o nome da turma do relatório, que passaria a
+  nomear o arquivo pelo número cru do D2L. Se as provas não deviam existir, o
+  caminho é cancelá-las (`DELETE /agendamentos/:id`) antes.
 
 **Cada item de `/alunos` é um vínculo (aluno + curso), não um aluno.** O mesmo RA
 em dois cursos aparece como duas linhas, com modalidades possivelmente diferentes
@@ -1074,7 +1093,7 @@ exceção nomeada no próprio teste, com o motivo escrito.
 | Controle | Como está |
 |---|---|
 | **Deny by default** | Guard global: rota sem `@SomenteAdmin()`/`@SomenteAluno()`/`@Publico()` é **negada** |
-| **Rate limiting** | 5/min em login, refresh, troca de senha e launch LTI · 10/5min em uploads · 120/min no resto |
+| **Rate limiting** | 5/min em login, refresh, troca de senha e callback OAuth do D2L · 60/min no launch LTI · 10/5min em uploads · 120/min no resto |
 | **Cabeçalhos** | `helmet` com CSP `default-src 'none'` na API (relaxada só na página do Swagger) |
 | **Auditoria** | Log JSON por evento: login, falhas, troca de senha, ações administrativas, 401/403/429 |
 | **Senhas** | bcrypt 12 rounds; comparação em tempo constante; mensagem uniforme no login |

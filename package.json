@@ -35,7 +35,8 @@
     "lti:diagnosticar": "tsx scripts/lti-diagnosticar.ts",
     "d2l:autorizar": "tsx scripts/d2l-autorizar.ts",
     "d2l:token": "tsx scripts/d2l-token.ts",
-    "d2l:notas": "tsx scripts/d2l-notas.ts"
+    "d2l:notas": "tsx scripts/d2l-notas.ts",
+    "agendamentos:incompletos": "tsx scripts/agendamentos-incompletos.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",

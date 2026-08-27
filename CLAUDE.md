@@ -302,8 +302,16 @@ consultada. **Não coloque `UseGuards(JwtAdminGuard)` numa rota**: com o guard
 global, o token seria verificado duas vezes por request.
 
 **Limite de requisições** (`@nestjs/throttler`, ASVS 6.3.1): 120/min no geral;
-**5/min** em login, refresh, troca de senha e launch LTI (`@Throttle(LIMITE_AUTENTICACAO)`);
+**5/min** em login, refresh, troca de senha e callback OAuth do D2L
+(`@Throttle(LIMITE_AUTENTICACAO)`); **60/min** no launch LTI (`LIMITE_LAUNCH`);
 10 a cada 5min nos uploads (`LIMITE_UPLOAD`). Números em `src/config/throttler.config.ts`.
+
+⚠️ O launch saiu dos 5/min em 26/08/2026, depois de o limite derrubar uma janela
+inteira: ele não é rota de adivinhação de credencial (exige `id_token` assinado
+pelo Brightspace) e alunos legítimos compartilham IP (NAT do câmpus). O motivo
+completo está no comentário de `LIMITE_LAUNCH`. **O limite por IP só funciona com
+`TRUST_PROXY` correto** — sem ele todo aluno chega com o IP do proxy e qualquer
+número vira orçamento compartilhado pela instituição.
 Nos testes o limitador é desligado por `skipIf`; ligue com `THROTTLE_NOS_TESTES=true`
 apenas na suíte que testa o próprio limitador.
 
@@ -678,6 +686,10 @@ tudo misturado.
 - **Valence API — troca da senha dos questionários**: ✅ **implementado
   (18/08/2026), a pedido do cliente.** `src/senha-quiz/` — ver "Senha das provas"
   abaixo.
+- **Valence API — troca do GRUPO que libera o questionário**: ✅ **implementado
+  (26/08/2026), a pedido do cliente.** Roda no mesmo disparo que move as datas —
+  ver "O grupo que libera a prova troca no MESMO disparo", abaixo. Exige o escopo
+  `groups:group:read` **no consentimento** (reautorize) e LP ≥ 1.49.
 - **Valence API — special access nos quizzes**: ⬜ **ADIADA (decisão de
   03/08/2026).** O sistema hoje agenda, emite relatório e troca a senha da prova;
   a liberação individual por aluno fica para uma fase posterior. Não implemente
@@ -782,12 +794,15 @@ src/
                pdf-lista-presenca.ts puro, assets/logo.png opcional)
   d2l/         ✅ autorização OAuth (d2l-oauth) · canal HTTP compartilhado
                (d2l-http) · leitura de matrículas (d2l-enrollments) · cliente de
-               questionários (d2l-quizzes). Special access continua adiado —
+               questionários (d2l-quizzes) · condições de liberação e grupos
+               (d2l-condicoes, LP ≥ 1.49). Special access continua adiado —
                não criar sem pedido.
   senha-quiz/  ✅ a grade dia × turno (grade-senhas.service) · o lote
                (senha-quiz.service) · o cron (senha-quiz.cron) · puras:
-               quiz-body.ts, senha.ts, turno.ts, relogio.ts ·
-               resolucao-orgunit.service.ts (CSV ∩ ofertas do semestre)
+               quiz-body.ts, condicoes.ts, grupo.ts, senha.ts, turno.ts,
+               relogio.ts · resolucao-orgunit.service.ts (CSV ∩ ofertas do
+               semestre) · resolucao-grupo.service.ts (nome de grupo → GroupId,
+               turma a turma)
 
   app.module.ts  app.controller.ts (health)  main.ts
 ```
@@ -1913,8 +1928,9 @@ cada questionário casado; use `EXATO` assim que os nomes estiverem padronizados
 
 ## Datas das provas (etapa 11)
 
-A mesma aba passou a fazer duas coisas: trocar a **senha** e mover a **janela de
-datas** do questionário. No dia da prova a prova fica aberta *só* durante a
+A mesma aba passou a fazer três coisas: trocar a **senha**, mover a **janela de
+datas** do questionário e — desde 26/08/2026 — trocar o **grupo** que libera a
+prova (ver a seção própria, mais abaixo). No dia da prova a prova fica aberta *só* durante a
 sessão corrente, e a senha (que já rodava por turno) continua sendo o segundo
 fator. Quem fez a prova das 15h não consegue nem abrir o questionário às 19h.
 
@@ -2104,6 +2120,10 @@ Os três caminhos que levam a isso, todos reportados por turma no CSV da execuç
 `SEM_AGENDAMENTO`, `MODALIDADE_AMBIGUA`, ou a turma derivou para **outra**
 modalidade (aí ela foi tocada, mas por outro disparo, com outra janela).
 
+E o lote de senhas **nunca toca em condição de liberação**: ele alcança todas as
+turmas do CSV, sem janela, e trocar o grupo ali apontaria a prova da instituição
+inteira para o grupo de uma sessão só.
+
 **`semModalidade` tem o mesmo peso de `naoEncontradas` na tela.** Ficou fora da
 contagem de pendências até 26/08/2026, e o efeito foi exatamente o previsto no
 comentário daquele contador: uma execução em que *toda* turma caiu em
@@ -2165,6 +2185,96 @@ em zero turma — o cron dispara e conclui limpo. Quem mostra a contagem real po
 modalidade é `GET /senhas-de-prova/turmas`. O calendário existir antes do
 primeiro aluno é o certo; a alternativa seria descobrir no dia da primeira prova
 presencial que não havia horário nenhum cadastrado.
+
+### O grupo que libera a prova troca no MESMO disparo (26/08/2026)
+
+Mover a data fecha a prova **pelo relógio**. Mas quem fez a sessão anterior
+continua *elegível*: a condição de liberação do questionário aponta para o grupo
+daquela sessão, e ela não muda sozinha. O que o cliente fazia à mão no CLI
+`../brightspace-change-conditions`, uma vez por turno, agora acontece no mesmo
+tick do cron.
+
+**Não virou `TipoExecucaoQuiz.GRUPO`.** É parte do lote `DATA`: mesma janela,
+mesmo recorte de modalidade, mesma execução, mesmo relatório. Um terceiro tipo
+gastaria mais um tick do cron (que aplica um lote por minuto) e deixaria data e
+grupo em execuções separadas, com dois relatórios para uma decisão só — além de
+ser mais um lugar onde `recusarSeJaRodando()` poderia ficar cego.
+
+**A troca NÃO passa pelo objeto do quiz.** Condições de liberação são um recurso
+do LP (`GET/PUT .../conditionalRelease/conditions/quizzes/{id}`), não um campo do
+`QuizData`. Consequência boa: ela não pode apagar `EndDate` nem `Password`, e as
+duas escritas falham independentemente. Detalhes da API na §5.8 de
+`docs/D2L_API_REFERENCE.md`.
+
+#### As três decisões do cliente
+
+| Pergunta | Resposta | Por quê |
+|---|---|---|
+| Onde mora o nome do grupo? | **Fixo por janela** (`JanelaDeProva.nomeGrupo`), reusado nos seis dias | Os grupos da instância se chamam "Prova 1/2/3". São ~14 nomes no total; a secretaria reimporta o CSV de alunos no mesmo grupo a cada dia |
+| Falha de grupo bloqueia a data? | **Não.** Vira linha de pendência | Sem a data a prova não abre para NINGUÉM; sem a troca de grupo ela abre para o grupo anterior. Bloquear troca o problema menor pelo maior |
+| Cria condição onde não há? | **Nunca.** Só troca | Criar uma restrição onde não havia muda o comportamento de uma prova que talvez seja aberta a todos de propósito — e o PUT substitui a lista inteira |
+
+#### ⚠️ O grupo vem ANTES do PUT do quiz, e a ordem não é indiferente
+
+O PUT do quiz é o que **abre** a prova no horário novo. Com o grupo primeiro, o
+estado entre as duas escritas é "janela antiga + grupo novo": prova fechada,
+inofensivo. Na ordem inversa seria "janela nova + grupo antigo" — a prova
+**aberta para a sessão anterior**, que é exatamente o que o recurso existe para
+impedir. São dois recursos independentes da API, sem transação possível entre
+eles; o que se escolhe é qual estado intermediário se prefere.
+`ordemDasEscritas`, no spec, trava isso.
+
+#### NOME, nunca `GroupId`
+
+Cada turma tem os seus próprios grupos, com ids próprios, mesmo com nomes
+idênticos: "Prova 2" existe em todas as turmas com um id diferente em cada.
+`resolucao-grupo.service.ts` resolve o id turma a turma, com cache **por
+execução** — um cache que sobrevivesse entre lotes esconderia um grupo criado às
+11h do disparo das 12:01, sem nada no log dizendo por quê.
+
+Nome ambíguo (mesmo nome em duas categorias) é erro duro, como
+`ORGUNIT_AMBIGUO` e `MODALIDADE_AMBIGUA`: o homônimo errado liberaria a prova
+para o turno errado, e o erro só apareceria no dia.
+
+**A comparação é normalizada** (sem acento, sem caixa, sem espaço duplo) — ao
+contrário de `casarPorNome`, que compara nome de *questionário* literalmente. São
+duas regras com dois motivos: lá afrouxar casaria o quiz errado num universo de
+dezenas; aqui um falso negativo é uma turma inteira ficando com a condição da
+sessão anterior. Hífen e pontuação **não** são normalizados: isso é conteúdo.
+
+#### ⚠️ `gruposPendentes` tem o mesmo peso de `naoEncontradas`
+
+É a mesma lição de 26/08/2026 sobre `semModalidade`, um nível adiante: ali a prova
+**abre no horário certo** e o contador de falhas fica em zero, mas ela continua
+liberada para a sessão anterior. Sem esse contador nas pendências da tela, uma
+execução em que *todo* grupo falhou apareceria verde.
+
+**Como toda turma já tem todos os grupos criados** (decisão do cliente), zero é o
+estado normal: qualquer valor acima disso é anomalia de cadastro — nome digitado
+errado na janela, ou grupo que faltou ser criado numa turma. O `detalhe` do item
+lista os grupos que existem naquela turma, para distinguir os dois casos.
+
+#### Detalhes que vão custar tempo se esquecidos
+
+- **`nomeGrupo` e `categoriaGrupo` SOBEM a `versao` da janela.** Mesmo bug de
+  25/08/2026 num campo novo: corrigir um nome errado às 12:43, depois do disparo
+  das 12:01, não reprocessaria nada em silêncio. Só valeria no dia seguinte — com
+  a prova aberta para a sessão anterior o dia inteiro.
+- **Vazio vira `null`, nunca `""`.** Um `"  "` salvo por engano passaria pela
+  checagem de "tem grupo?" e produziria uma pendência por turma sem nada estar
+  configurado.
+- **`groups:group:read` precisa de REAUTORIZAÇÃO.** O escopo vive no
+  consentimento: acrescentar ao `.env` não muda nada sem `npm run d2l:autorizar`.
+  Sem ele, o lote aplica as datas e reporta `FALHA_AO_LER_CONDICOES` em toda
+  turma — e nada nas falhas acusa.
+- **LP >= 1.49**, senão as rotas devolvem **404 com corpo vazio**, indistinguível
+  de "questionário não existe". `D2lCondicoesService` recusa na primeira chamada.
+- **`condicoesAnteriores` é o único desfazer.** O PUT substitui tudo e a API não
+  guarda histórico. Gravado também no dry-run — é nele que se descobre o que a
+  prova tem hoje.
+- **O lote de SENHAS nunca toca em condições.** Ele alcança TODAS as turmas do
+  CSV, sem janela; trocar a condição ali apontaria a prova da instituição inteira
+  para o grupo de uma sessão só.
 
 ### Detalhes que já custaram tempo
 

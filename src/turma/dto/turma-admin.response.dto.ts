@@ -94,3 +94,16 @@ export class TurmaImportadaDetalheDto
   })
   totalAgendamentos!: number | null;
 }
+
+export class RemocaoTurmaDto {
+  @ApiProperty({
+    example:
+      'Turma "GEG09I30108 — LIDERANCA GESTAO DE CONFLITOS E NEGOCIACAO" ' +
+      'removida do catalogo. Tire a linha da planilha tambem: o proximo upload ' +
+      'do CSV a traria de volta.',
+    description:
+      'O aviso sobre a planilha faz parte da resposta de proposito: a remocao ' +
+      'so dura ate o proximo upload se a linha continuar no CSV.',
+  })
+  mensagem!: string;
+}

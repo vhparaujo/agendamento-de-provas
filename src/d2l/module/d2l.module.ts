@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { D2lCatalogoController } from '../controller/d2l-catalogo.controller';
 import { D2lController } from '../controller/d2l.controller';
+import { D2lCondicoesService } from '../service/d2l-condicoes.service';
 import { D2lEnrollmentsService } from '../service/d2l-enrollments.service';
 import { D2lGradesService } from '../service/d2l-grades.service';
 import { D2lHttpService } from '../service/d2l-http.service';
@@ -22,6 +23,12 @@ import { D2lQuizzesService } from '../service/d2l-quizzes.service';
  * src/senha-quiz. **Gravar SPECIAL ACCESS continua adiado**: sao coisas
  * diferentes, e aquela decisao nao foi revista.
  *
+ * Desde 26/08/2026 contem o cliente de CONDICOES DE LIBERACAO e GRUPOS
+ * (`D2lCondicoesService`), que e o que troca QUAL GRUPO pode abrir a prova no
+ * mesmo disparo que move a data. Ele nasceu separado do de quizzes porque as
+ * condicoes nao sao campo do `QuizData`: sao um recurso do LP, com numeracao de
+ * versao independente da do LE.
+ *
  * PrismaService e AuditoriaService vem de modulos globais.
  */
 @Module({
@@ -31,6 +38,7 @@ import { D2lQuizzesService } from '../service/d2l-quizzes.service';
     D2lHttpService,
     D2lEnrollmentsService,
     D2lQuizzesService,
+    D2lCondicoesService,
     D2lGradesService,
   ],
   exports: [
@@ -38,6 +46,7 @@ import { D2lQuizzesService } from '../service/d2l-quizzes.service';
     D2lHttpService,
     D2lEnrollmentsService,
     D2lQuizzesService,
+    D2lCondicoesService,
     D2lGradesService,
   ],
 })

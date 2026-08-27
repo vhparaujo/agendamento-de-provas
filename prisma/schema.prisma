@@ -883,6 +883,21 @@ model ExecucaoSenhaQuiz {
   naoEncontradas Int @default(0)
   falhas         Int @default(0)
 
+  /// Fase 2b, so em `DATA` com grupo configurado na janela — a troca da condicao
+  /// de liberacao do questionario.
+  ///
+  /// ⚠️ `gruposPendentes` tem o MESMO peso de `naoEncontradas` e `semModalidade`
+  /// na tela. Cada unidade aqui e uma prova que vai abrir no horario certo para
+  /// o grupo da sessao ANTERIOR — o aluno que ja fez a prova as 15h consegue
+  /// abri-la de novo as 19h, que e exatamente o que este recurso existe para
+  /// impedir. Uma execucao com 0 falhas e 30 aqui NAO e verde.
+  ///
+  /// Como cada turma ja tem TODOS os grupos criados (decisao do cliente), este
+  /// contador em zero e o estado normal: qualquer valor acima disso e anomalia
+  /// de cadastro, nao operacao de rotina.
+  gruposTrocados  Int @default(0)
+  gruposPendentes Int @default(0)
+
   /// Quantos GETs devolveram `Password` PREENCHIDO.
   ///
   /// Zero com itens > 0 significa que a API esconde o campo (o QuizReadData so o
@@ -951,6 +966,56 @@ enum ResultadoSenhaQuiz {
   FALHA_AO_GRAVAR
 }
 
+/// O desfecho da troca do GRUPO que libera a prova — a condicao `EnrolledInGroup`
+/// do questionario.
+///
+/// ⚠️ **E um enum SEPARADO de `ResultadoSenhaQuiz`, de proposito.** Sao dois
+/// desfechos independentes na mesma linha: a data pode ter sido `DEFINIDA` com o
+/// grupo pendente, e e assim que o cliente pediu (decisao de 26/08/2026). Sem a
+/// data a prova nao abre para NINGUEM; sem a troca de grupo ela abre para o grupo
+/// anterior. Fundir os dois enums forcaria escolher qual dos dois problemas
+/// reportar, e o relatorio perderia justamente o caso misto.
+enum ResultadoGrupoQuiz {
+  TROCADO
+  /// Dry-run: o grupo foi resolvido, a condicao casou e teria sido trocada.
+  SIMULADO
+  /// A condicao ja apontava para o grupo-alvo. Nao e erro — acontece ao
+  /// reprocessar a mesma janela, e vale marcar para o relatorio nao parecer
+  /// que houve troca onde nao houve.
+  JA_ERA_O_GRUPO
+
+  /// O questionario nao tem nenhuma condicao `EnrolledInGroup` para trocar.
+  ///
+  /// ⚠️ **Nada e criado.** Adicionar uma condicao de liberacao onde nao havia
+  /// mudaria o comportamento de uma prova que talvez fosse aberta a todos de
+  /// proposito — e o PUT substitui a lista INTEIRA de condicoes, entao criar
+  /// implicaria reescrever o que nao se sabe ler. Vira linha de pendencia.
+  SEM_CONDICAO_DE_GRUPO
+
+  /// A condicao existe, mas por CATEGORIA (`GroupCategoryId` preenchido em vez
+  /// de `GroupId`). Isso significa "qualquer grupo da categoria": trocar mudaria
+  /// o SIGNIFICADO da condicao, nao o alvo dela. Preservada.
+  CONDICAO_POR_CATEGORIA
+
+  /// O nome cadastrado na janela nao existe entre os grupos da turma.
+  ///
+  /// ⚠️ Como toda turma ja tem todos os grupos criados, isto e ANOMALIA DE
+  /// CADASTRO: nome digitado errado na tela, ou grupo que faltou ser criado
+  /// naquela turma. O `detalhe` do item lista os grupos que existem.
+  GRUPO_NAO_ENCONTRADO
+
+  /// O mesmo nome aparece em duas categorias da turma. NAO se escolhe uma: o
+  /// homonimo errado liberaria a prova para o turno errado, e o erro so
+  /// apareceria no dia. Preencha `categoriaGrupo` na janela para desempatar.
+  GRUPO_AMBIGUO
+
+  /// A turma nao tem nenhuma categoria de grupo — nao ha onde procurar.
+  SEM_CATEGORIA_DE_GRUPO
+
+  FALHA_AO_LER_CONDICOES
+  FALHA_AO_GRAVAR_CONDICOES
+}
+
 /// Uma linha por (turma, quiz casado). Turma sem quiz casado gera UMA linha
 /// QUIZ_NAO_ENCONTRADO; turma que nao resolveu o orgUnitId gera UMA linha
 /// ORGUNIT_NAO_RESOLVIDO.
@@ -989,6 +1054,33 @@ model ItemSenhaQuiz {
   /// como `AgendamentoDisciplina.notaFinal`.
   startDateAplicado DateTime?
   endDateAplicado   DateTime?
+
+  /// So em execucoes `DATA` cuja janela tem `nomeGrupo`. NULO significa "a troca
+  /// de grupo nem foi tentada nesta linha" — janela sem grupo cadastrado, ou
+  /// linha que nem chegou ao questionario (orgUnit nao resolvido, modalidade
+  /// ambigua). Nao confunda com um desfecho ruim: aqui ausencia e ausencia.
+  resultadoGrupo ResultadoGrupoQuiz?
+
+  /// O grupo que a condicao apontava ANTES, no formato "Prova 1 (#156988)".
+  ///
+  /// O nome vem do mapa que a resolucao ja carregou para a turma; quando o id
+  /// nao esta nesse mapa (grupo de outra categoria, por exemplo) sobra so
+  /// "#156988". Um numero solto no relatorio nao responde "de qual sessao a
+  /// prova estava liberada?", que e a pergunta que se faz com o cliente na frente.
+  grupoAnterior String?
+  grupoAplicado String?
+
+  /// Fotografia do GET das condicoes ANTES da troca, verbatim.
+  ///
+  /// ⚠️ **E a unica forma de voltar atras.** O PUT de `conditionalRelease`
+  /// substitui a lista INTEIRA de condicoes e a API nao guarda historico: sem
+  /// isto, uma troca errada nao tem desfazer. O CLI de origem grava o mesmo JSON
+  /// em `logs/backup/` antes de qualquer escrita, inclusive no dry-run; aqui ele
+  /// fica no banco, ao lado da execucao que o produziu.
+  ///
+  /// Gravado tambem na SIMULACAO, pelo mesmo motivo que la: e no dry-run que se
+  /// descobre o que a prova tem hoje.
+  condicoesAnteriores String? @db.Text
 
   detalhe String? @db.Text
 
@@ -1079,6 +1171,42 @@ model JanelaDeProva {
   /// no banco desalinharia. A regra vive em `ehDoDiaSeguinte` (`janela.ts`).
   diaSeguinte Boolean @default(false)
 
+  /// O NOME do grupo, no Brightspace, que passa a liberar a prova quando ESTA
+  /// janela dispara.
+  ///
+  /// ⚠️ **Nao e um grupo unico com os alunos trocados a cada sessao**: cada
+  /// turma tem UM GRUPO POR SESSAO — "Prova 1", "Prova 2", "Prova 3"… — e o que
+  /// o disparo troca e o grupo APONTADO pela condicao, nao o conteudo dele. O
+  /// numero de grupos por turma cai da modalidade, como as janelas: 3 no EaD, 6
+  /// em Semi/Modular, 5 no Presencial. Sao ~14 nomes no total, um por janela.
+  ///
+  /// O nome e fixo por janela e vale para todas as turmas e para todos os dias
+  /// de prova: a lista de nomes nao muda, quem anda por ela e o disparo.
+  ///
+  /// ⚠️ **Guarda o NOME, nunca o `GroupId`.** Cada turma tem os seus proprios
+  /// grupos, com ids proprios, mesmo com nomes identicos: "Prova 2" existe em
+  /// todas as turmas com um id diferente em cada. O id e resolvido turma a turma
+  /// no momento do disparo (`resolucao-grupo.service.ts`). Gravar um id aqui
+  /// liberaria a prova de 156 turmas para um grupo que so existe numa.
+  ///
+  /// ⚠️ **NULO = a troca de grupo nao acontece nesta janela**, e o lote de datas
+  /// se comporta exatamente como antes. E o que mantem o recurso opt-in por
+  /// modalidade e o que deixa o Presencial (que ainda nao tem aluno importado)
+  /// sem efeito colateral nenhum.
+  ///
+  /// NAO tem semente. Mesmo argumento de `ConfiguracaoSenhaQuiz.nomeQuiz`: um
+  /// NOME chutado casa com o grupo errado em silencio, enquanto a ausencia
+  /// apenas nao troca nada e aparece no dry-run.
+  nomeGrupo String? @db.VarChar(200)
+
+  /// A categoria de grupo onde procurar, para desempatar homonimos.
+  ///
+  /// Opcional, e quando informada tambem BARATEIA a resolucao: busca-se numa
+  /// categoria so, em vez de listar os grupos de todas. Sem ela, o mesmo nome em
+  /// duas categorias e recusado como `GRUPO_AMBIGUO` — escolher no chute
+  /// liberaria a prova para o turno errado sem ninguem perceber.
+  categoriaGrupo String? @db.VarChar(200)
+
   /// Desligar a janela sem apagar a linha, para nao perder o horario cadastrado
   /// quando um semestre tiver menos sessoes que o outro.
   ativo Boolean @default(true)
@@ -1096,6 +1224,14 @@ model JanelaDeProva {
   /// Sobe so quando o horario MUDA (nao em todo PUT) pelo mesmo motivo da senha:
   /// salvar de novo o mesmo calendario nao pode fazer o lote inteiro rodar outra
   /// vez em toda a instituicao.
+  ///
+  /// ⚠️ **`nomeGrupo` e `categoriaGrupo` contam como mudanca** (26/08/2026). Sao
+  /// campos que o disparo APLICA, exatamente como as horas, e um nome de grupo
+  /// digitado errado tem a mesma cara do bug de 25/08/2026: o admin corrige as
+  /// 12:43 depois do disparo das 12:01, o `upsert` preserva o id, a idempotencia
+  /// encontra a execucao concluida e pula EM SILENCIO — a correcao so valeria no
+  /// dia seguinte. `ativo` continua nao contando: religar uma sessao nao muda o
+  /// que ela grava.
   versao Int @default(1)
 
   /// Fotografia do e-mail, como em `SenhaDeProva.atualizadoPor`.
