@@ -546,21 +546,39 @@ O rastro vai para `VINCULOS_MESCLADOS` no log de auditoria, **não** para
 `HistoricoAgendamento`: aquela tabela responde "mudaram minha prova de horário?",
 e a mesclagem não muda prova nenhuma — sala, data e horário continuam idênticos.
 
-⚠️ **`alteracoesComAgendamento[]`: troca de modalidade ou polo em quem já tem
-prova marcada.** São os dois campos que a importação muda **por baixo de uma
-reserva confirmada** sem que nada mais reclame — a modalidade vem do dropdown e
-sobrescreve todas as linhas do arquivo; o polo segue a coluna CAMPUS. A reserva
-continua na sala antiga (outra duração, ou outro campus), e o sintoma aparece
-depois e disfarçado: **o remanejo passa a ser recusado** com "esta sala não é da
-modalidade do aluno". Por isso a importação passou a reportar essas linhas
-(`importacao-alunos.service.ts` → `avisarSeMexeEmProvaMarcada`), com `de`/`para`
-em nomes, e a logar em WARN.
+⚠️ **`alteracoesComAgendamento[]`: os TRÊS campos que a importação muda por
+baixo de uma prova marcada.** São as mudanças que passam **sem que nada mais no
+sistema reclame** — a importação grava, a reserva continua exatamente onde
+estava, e o `avisarSeMexeEmProvaMarcada` (`importacao-alunos.service.ts`) é o
+único lugar que junta as duas pontas. Todas saem com `de`/`para` e vão para WARN.
 
-Duas escolhas conscientes ali: **avisa e não bloqueia** (a planilha é a fonte de
-verdade e pode estar corrigindo um cadastro errado — quem decide entre remanejar
-e cancelar é a secretaria), e conta **só o semestre vigente** (prova de semestre
-passado já aconteceu; avisar sobre ela seria o ruído que ensina o time a ignorar
-o aviso).
+| Campo | O que a reserva passa a contradizer | O que fazer |
+|---|---|---|
+| `modalidade` | a prova tem outra duração e o aluno segue na sala antiga | remanejar ou cancelar |
+| `polo` | a reserva fica no campus anterior | remanejar ou cancelar |
+| `statusCurso` | o aluno **perdeu a elegibilidade** e continua com a cadeira | manter ou cancelar |
+
+As duas primeiras aparecem depois e disfarçadas — **o remanejo passa a ser
+recusado** com "esta sala não é da modalidade do aluno". A terceira
+(**01/09/2026**) não produz nem isso: `ativo` vira `false`, o aluno some do
+compulsório e não troca mais de horário pelo portal, e mesmo assim continua na
+lista de presença do dia. Era **completamente silenciosa**, porque
+"Transf. Interna" é um status *conhecido* e por isso não entra em
+`statusDesconhecidos[]` — a única pista era `bloqueados` subir um.
+
+⚠️ **A pergunta é "PERDEU a elegibilidade?", não "o status mudou?".** A
+comparação é sobre `ativo`, o campo derivado, **nunca** sobre o texto do status:
+"Trancado" → "Cancelado" não muda nada para o aluno e viraria aviso em toda
+planilha, e ler a string aqui seria a segunda cópia da regra que já mora em
+`status-curso.enum.ts`. Ganhar elegibilidade também não avisa — voltar a poder
+agendar tendo prova marcada não deixa nada inconsistente.
+
+Três escolhas conscientes ali: **avisa e não bloqueia** (a planilha é a fonte de
+verdade e pode estar corrigindo um cadastro errado — quem decide é a
+secretaria), conta **só o semestre vigente** (prova de semestre passado já
+aconteceu; avisar sobre ela seria o ruído que ensina o time a ignorar o aviso), e
+**exige reserva confirmada** nos três casos — quem perde a elegibilidade sem
+prova marcada é o caso normal, e já está em `bloqueados`.
 
 **Encoding é detectado, não presumido**: latin1 (arquivos atuais) ou UTF-8/BOM
 (se a planilha for reexportada). Ler errado quebraria o casamento do polo por nome.

@@ -75,12 +75,15 @@ export class MudancaDto implements Mudanca {
 }
 
 /**
- * Um vinculo que JA TINHA PROVA MARCADA e mudou de modalidade ou de polo.
+ * Um vinculo que JA TINHA PROVA MARCADA e mudou de modalidade, de polo ou de
+ * elegibilidade (STATUS CURSO) nesta importacao.
  *
- * A reserva continua apontando para a sala antiga — prova de outra duracao, ou
- * em outro campus — e nada mais no sistema reclama. O aviso existe porque o
- * sintoma so aparece dias depois e disfarcado: o remanejo passa a ser recusado
- * com "esta sala nao e da modalidade do aluno".
+ * Nos dois primeiros a reserva continua apontando para a sala antiga — prova de
+ * outra duracao, ou em outro campus — e o sintoma so aparece dias depois,
+ * disfarcado: o remanejo passa a ser recusado com "esta sala nao e da
+ * modalidade do aluno". No terceiro o aluno perde o direito de agendar e mantem
+ * a cadeira: nao troca mais de horario, sai do compulsorio, e ainda assim
+ * aparece na lista de presenca do dia.
  */
 export class AlteracaoComAgendamentoDto implements AlteracaoComAgendamento {
   @ApiProperty({
@@ -112,6 +115,18 @@ export class AlteracaoComAgendamentoDto implements AlteracaoComAgendamento {
       'Presente so quando o polo mudou. A prova marcada continua no campus anterior.',
   })
   polo?: MudancaDto;
+
+  @ApiPropertyOptional({
+    type: MudancaDto,
+    description:
+      'Presente so quando o vinculo PERDEU a elegibilidade nesta importacao ' +
+      '(ex.: "Ativo" -> "Transf. Interna"). Os valores sao os STATUS CURSO ' +
+      'brutos da planilha. A prova marcada NAO e cancelada: o aluno deixa de ' +
+      'poder agendar e trocar, sai do compulsorio, e continua ocupando a vaga. ' +
+      'Ganhar elegibilidade nao aparece aqui, nem troca entre dois status que ' +
+      'ja bloqueavam.',
+  })
+  statusCurso?: MudancaDto;
 
   @ApiProperty({
     example: 1,
@@ -256,10 +271,11 @@ export class ResultadoImportacaoAlunosDto implements ResultadoImportacaoAlunos {
   @ApiProperty({
     type: [AlteracaoComAgendamentoDto],
     description:
-      'Vinculos COM PROVA MARCADA cuja modalidade ou polo mudaram nesta ' +
-      'importacao. Nao bloqueia o upload — a planilha e a fonte de verdade e ' +
-      'pode estar corrigindo um cadastro errado —, mas cada linha aqui pede ' +
-      'decisao: remanejar a reserva ou cancela-la.',
+      'Vinculos COM PROVA MARCADA cuja modalidade, polo ou elegibilidade ' +
+      '(STATUS CURSO) mudaram nesta importacao. Nao bloqueia o upload — a ' +
+      'planilha e a fonte de verdade e pode estar corrigindo um cadastro ' +
+      'errado —, mas cada linha aqui pede decisao: remanejar a reserva, ' +
+      'cancela-la, ou manter a vaga de quem perdeu a elegibilidade.',
   })
   alteracoesComAgendamento!: AlteracaoComAgendamentoDto[];
 

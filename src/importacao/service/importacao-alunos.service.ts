@@ -45,28 +45,47 @@ export interface Mudanca {
 }
 
 /**
- * Um vinculo que JA TINHA PROVA MARCADA e teve modalidade ou polo trocados por
- * esta importacao.
+ * Um vinculo que JA TINHA PROVA MARCADA e foi mexido por esta importacao de um
+ * jeito que a reserva ja gravada NAO acompanha.
  *
- * Existe porque essas duas trocas nao aparecem sozinhas. A reserva continua
- * apontando para a sala antiga: o aluno segue alocado num horario de outra
- * duracao (modalidade) ou em outro campus (polo), e nada no sistema reclama.
- * O sintoma tipico chega dias depois e disfarcado — o remanejo passa a ser
- * recusado com "esta sala nao e da modalidade do aluno".
+ * Sao tres mudancas, e o que as junta aqui e serem todas silenciosas — a
+ * importacao grava, e nada mais no sistema reclama:
+ *
+ *   modalidade . a prova passa a ter outra duracao, e o aluno segue alocado na
+ *                sala antiga. O sintoma chega dias depois e disfarcado: o
+ *                remanejo e recusado com "esta sala nao e da modalidade do aluno".
+ *   polo ....... o aluno "muda de campus" e a reserva fica no campus anterior.
+ *   status ..... o aluno PERDEU a elegibilidade (STATUS CURSO saiu de "Ativo")
+ *                e continua ocupando a cadeira. Ele nao agenda nem troca mais,
+ *                o compulsorio deixou de enxerga-lo — mas a prova marcada segue
+ *                de pe, na lista de presenca e nos relatorios.
  *
  * NAO bloqueia a importacao de proposito: a planilha e a fonte de verdade, e
  * pode ser a correcao de um erro anterior. Quem decide o que fazer com a reserva
- * (remanejar ou cancelar) e a secretaria — o que ela nao pode e nao ficar sabendo.
+ * (remanejar, cancelar ou manter) e a secretaria — o que ela nao pode e nao
+ * ficar sabendo.
  */
 export interface AlteracaoComAgendamento {
   linha: number;
   matricula: string;
   nome: string;
   curso: string;
-  /** Ausente quando so o polo mudou. */
+  /** Ausente quando a modalidade nao mudou. */
   modalidade?: Mudanca;
-  /** Ausente quando so a modalidade mudou. */
+  /** Ausente quando o polo nao mudou. */
   polo?: Mudanca;
+  /**
+   * Presente so quando o vinculo PERDEU a elegibilidade nesta importacao —
+   * `ativo` saindo de `true` para `false`. Os valores sao os STATUS CURSO
+   * brutos ("Ativo" -> "Transf. Interna"), que e o que a secretaria le na
+   * planilha.
+   *
+   * GANHAR elegibilidade nao entra: voltar a poder agendar tendo prova marcada
+   * nao deixa nada inconsistente. Trocar entre dois status que ja bloqueavam
+   * ("Trancado" -> "Cancelado") tambem nao — o aluno ja estava barrado, e um
+   * aviso que se repete a cada planilha e o que ensina o time a ignora-lo.
+   */
+  statusCurso?: Mudanca;
   /** Reservas confirmadas do vinculo — no semestre vigente, quando ha um. */
   agendamentosConfirmados: number;
 }
@@ -314,9 +333,17 @@ export class ImportacaoAlunosService {
     // Sobe para WARN: mexer em quem ja tem prova marcada e o unico resultado
     // desta rota que pode exigir acao humana DEPOIS que a tela ja foi fechada.
     if (alteracoesComAgendamento.length > 0) {
+      // As perdas de elegibilidade saem contadas a parte porque a acao e outra:
+      // modalidade/polo pedem remanejo, e aqui a pergunta e se a pessoa fica
+      // com a cadeira. Sem o numero, o log so diria "alguma coisa mudou".
+      const perderamElegibilidade = alteracoesComAgendamento.filter(
+        (a) => a.statusCurso,
+      );
+
       this.logger.warn(
-        `${alteracoesComAgendamento.length} vinculo(s) COM PROVA MARCADA tiveram ` +
-          `modalidade ou polo alterados por "${arquivo.originalname}": ` +
+        `${alteracoesComAgendamento.length} vinculo(s) COM PROVA MARCADA foram ` +
+          `alterados por "${arquivo.originalname}" ` +
+          `(${perderamElegibilidade.length} perderam a elegibilidade pelo STATUS CURSO): ` +
           alteracoesComAgendamento.map((a) => a.matricula).join(', '),
       );
     }
@@ -422,14 +449,27 @@ export class ImportacaoAlunosService {
     // Idempotente: reenviar o mesmo arquivo atualiza, nunca duplica.
     const existente = await this.prisma.alunoImportado.findUnique({
       where: { matricula_curso: { matricula, curso } },
-      select: { id: true, modalidadeId: true, poloId: true },
+      select: {
+        id: true,
+        modalidadeId: true,
+        poloId: true,
+        // `ativo` e `statusCurso` sao lidos so para o aviso de perda de
+        // elegibilidade: e o estado ANTERIOR, e o upsert logo abaixo o apaga.
+        ativo: true,
+        statusCurso: true,
+      },
     });
 
     // ANTES do upsert: depois dele nao ha mais como saber o que era.
     const alteracao = existente
       ? await this.avisarSeMexeEmProvaMarcada(
           existente,
-          { modalidadeId: ctx.modalidadeId, poloId },
+          {
+            modalidadeId: ctx.modalidadeId,
+            poloId,
+            podeAgendar,
+            statusCurso: status,
+          },
           { linha: numero, matricula, nome, curso },
           ctx,
         )
@@ -528,16 +568,29 @@ export class ImportacaoAlunosService {
   }
 
   /**
-   * Modalidade e polo sao os dois campos que a importacao troca **por baixo de
-   * uma reserva ja confirmada** sem que nada quebre na hora:
+   * Os TRES campos que a importacao troca **por baixo de uma reserva ja
+   * confirmada** sem que nada quebre na hora:
    *
    * - modalidade: a prova tem outra duracao, mas o aluno segue alocado na sala
    *   antiga. O sintoma aparece dias depois, disfarcado — o remanejo passa a ser
    *   recusado com "esta sala nao e da modalidade do aluno".
    * - polo: o aluno "muda de campus" e a reserva fica no campus anterior. O
    *   relatorio de agendamentos mostra o polo DA PROVA, entao la parece coerente.
+   * - STATUS CURSO: o vinculo perde a elegibilidade e a cadeira continua dele.
+   *   Este e o mais silencioso dos tres, porque nao produz nem sintoma tardio:
+   *   `bloqueados` sobe um no resumo do upload e mais nada acontece. O aluno
+   *   some do compulsorio, nao troca mais de horario pelo portal, e ainda assim
+   *   aparece na lista de presenca do dia — ocupando vaga que a secretaria
+   *   poderia estar dando a outra pessoa.
    *
-   * Nenhum dos dois e erro por si so: a planilha e a fonte de verdade e pode
+   * ⚠️ A pergunta e "PERDEU a elegibilidade?", nao "o status mudou?" — a
+   * comparacao e sobre `ativo` (o campo derivado), nunca sobre o texto do
+   * status. "Trancado" -> "Cancelado" nao muda nada para o aluno e viraria
+   * aviso em toda planilha; a regra de quais grafias bloqueiam ja mora num
+   * lugar so (`status-curso.enum.ts`), e ler o texto aqui seria a segunda
+   * copia dela.
+   *
+   * Nenhum dos tres e erro por si so: a planilha e a fonte de verdade e pode
    * estar corrigindo um cadastro errado. Por isso isto **avisa e nao bloqueia** —
    * o que nao pode e a secretaria descobrir no dia da prova.
    *
@@ -545,8 +598,19 @@ export class ImportacaoAlunosService {
    * reimportacao normal, nenhuma linha passa daqui.
    */
   private async avisarSeMexeEmProvaMarcada(
-    existente: { id: number; modalidadeId: number; poloId: number },
-    novo: { modalidadeId: number; poloId: number },
+    existente: {
+      id: number;
+      modalidadeId: number;
+      poloId: number;
+      ativo: boolean;
+      statusCurso: string;
+    },
+    novo: {
+      modalidadeId: number;
+      poloId: number;
+      podeAgendar: boolean;
+      statusCurso: string;
+    },
     identificacao: {
       linha: number;
       matricula: string;
@@ -561,8 +625,13 @@ export class ImportacaoAlunosService {
   ): Promise<AlteracaoComAgendamento | undefined> {
     const mudouModalidade = existente.modalidadeId !== novo.modalidadeId;
     const mudouPolo = existente.poloId !== novo.poloId;
+    // Perda, nao mudanca: so o sentido `true -> false` deixa a reserva orfa de
+    // um aluno elegivel. Ver o comentario da funcao.
+    const perdeuElegibilidade = existente.ativo && !novo.podeAgendar;
 
-    if (!mudouModalidade && !mudouPolo) return undefined;
+    if (!mudouModalidade && !mudouPolo && !perdeuElegibilidade) {
+      return undefined;
+    }
 
     const agendamentosConfirmados = await this.prisma.agendamento.count({
       where: {
@@ -594,6 +663,14 @@ export class ImportacaoAlunosService {
             polo: {
               de: nome(ctx.nomeDoPolo, existente.poloId),
               para: nome(ctx.nomeDoPolo, novo.poloId),
+            },
+          }
+        : {}),
+      ...(perdeuElegibilidade
+        ? {
+            statusCurso: {
+              de: existente.statusCurso,
+              para: novo.statusCurso,
             },
           }
         : {}),

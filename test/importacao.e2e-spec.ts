@@ -226,19 +226,23 @@ describe('Importacao de CSVs (e2e)', () => {
     let nomeEad: string;
     let nomeModular: string;
 
-    const csv = (campus: string) =>
+    const csv = (campus: string, status = 'Ativo') =>
       [
         'RA;ALUNO;EMAIL INSTITUCIONAL;CURSO;STATUS CURSO;CAMPUS',
-        `${RA};ALUNO COM PROVA;;${CURSO};Ativo;${campus}`,
-        `${RA_SEM_PROVA};ALUNO SEM PROVA;;${CURSO};Ativo;${campus}`,
+        `${RA};ALUNO COM PROVA;;${CURSO};${status};${campus}`,
+        `${RA_SEM_PROVA};ALUNO SEM PROVA;;${CURSO};${status};${campus}`,
       ].join('\r\n');
 
-    const subir = (campus: string, modalidade: string) =>
+    const subir = (campus: string, modalidade: string, status = 'Ativo') =>
       request(app.getHttpServer())
         .post('/api/importacao/alunos')
         .set('Authorization', `Bearer ${token}`)
         .field('modalidade', modalidade)
-        .attach('arquivo', Buffer.from(csv(campus), 'utf8'), 'alunos-e2e.csv');
+        .attach(
+          'arquivo',
+          Buffer.from(csv(campus, status), 'utf8'),
+          'alunos-e2e.csv',
+        );
 
     async function limpar() {
       await prisma.agendamento.deleteMany({
@@ -431,6 +435,74 @@ describe('Importacao de CSVs (e2e)', () => {
         where: { matricula: RA },
         data: { status: 'CONFIRMADO' },
       });
+    });
+
+    /**
+     * O caso mais silencioso dos tres: "Transf. Interna" e um status CONHECIDO,
+     * entao ele nao entra em `statusDesconhecidos`, e como modalidade e polo
+     * nao mudaram nada mais no upload muda de cor. Antes deste aviso, a unica
+     * pista era `bloqueados` subir um.
+     */
+    it('avisa quando o aluno PERDE a elegibilidade com prova marcada', async () => {
+      const res = await subir(POLO_A, 'EAD', 'Transf. Interna').expect(201);
+
+      // O aluno SEM prova perdeu a elegibilidade igual e nao entra: nao ha
+      // reserva para ficar orfa. Mesmo criterio de modalidade e polo.
+      expect(res.body.alteracoesComAgendamento).toHaveLength(1);
+
+      const aviso = res.body.alteracoesComAgendamento[0];
+
+      expect(aviso).toMatchObject({
+        matricula: RA,
+        curso: CURSO,
+        agendamentosConfirmados: 1,
+        statusCurso: { de: 'Ativo', para: 'Transf. Interna' },
+      });
+      // so o status mudou
+      expect(aviso.modalidade).toBeUndefined();
+      expect(aviso.polo).toBeUndefined();
+
+      // Status conhecido: nao e novidade a classificar, e por isso o aviso
+      // precisa existir por conta propria.
+      expect(res.body.statusDesconhecidos).toEqual([]);
+      expect(res.body.podemAgendar).toBe(0);
+
+      // Avisa e NAO bloqueia: a perda de elegibilidade e gravada...
+      const depois = await prisma.alunoImportado.findFirstOrThrow({
+        where: { matricula: RA },
+      });
+      expect(depois.ativo).toBe(false);
+      expect(depois.statusCurso).toBe('Transf. Interna');
+
+      // ...e a prova continua de pe. Cancelar e decisao da secretaria.
+      const prova = await prisma.agendamento.findFirstOrThrow({
+        where: { matricula: RA },
+      });
+      expect(prova.status).toBe('CONFIRMADO');
+    });
+
+    it('trocar entre dois status que JA bloqueavam nao gera aviso', async () => {
+      // Monta a precondicao aqui e nao no teste anterior: o aviso e sobre a
+      // TRANSICAO, entao um teste que dependesse da ordem estaria medindo o
+      // estado deixado por outro.
+      await subir(POLO_A, 'EAD', 'Transf. Interna').expect(201);
+
+      // O aluno ja estava barrado; repetir o aviso a cada planilha e o que
+      // ensina o time a ignora-lo.
+      const res = await subir(POLO_A, 'EAD', 'Cancelado').expect(201);
+
+      expect(res.body.alteracoesComAgendamento).toEqual([]);
+    });
+
+    it('RECUPERAR a elegibilidade nao gera aviso', async () => {
+      await subir(POLO_A, 'EAD', 'Trancado').expect(201);
+
+      // Voltar a poder agendar tendo prova marcada nao deixa nada
+      // inconsistente — a reserva ja era dele.
+      const res = await subir(POLO_A, 'EAD', 'Ativo').expect(201);
+
+      expect(res.body.alteracoesComAgendamento).toEqual([]);
+      expect(res.body.podemAgendar).toBe(2);
     });
   });
 

@@ -1271,18 +1271,27 @@ valores de `CAMPUS` que não casaram com nenhum polo do seed, e
 **A importação nunca apaga**: quem não está no arquivo não é tocado. Para incluir
 uma pessoa, basta um CSV com a linha dela — o `upsert` é por `[matricula, curso]`.
 
-> ⚠️ **`alteracoesComAgendamento[]` — troca de modalidade ou polo em quem já tem
-> prova marcada.** São os dois campos que a importação muda *por baixo* de uma
-> reserva confirmada: a modalidade vem do dropdown e sobrescreve todas as linhas
-> do arquivo, e o polo segue a coluna `CAMPUS`. A reserva continua na sala antiga
-> — prova de outra duração, ou em outro campus — e nada mais no sistema reclama.
-> O sintoma aparece depois e disfarçado: o remanejo passa a ser recusado com
-> *"esta sala não é da modalidade do aluno"*.
+> ⚠️ **`alteracoesComAgendamento[]` — mudança em quem já tem prova marcada.**
+> São os três campos que a importação muda *por baixo* de uma reserva
+> confirmada, sem que nada mais no sistema reclame:
+>
+> - **modalidade** (vem do dropdown e sobrescreve todas as linhas do arquivo) e
+>   **polo** (segue a coluna `CAMPUS`): a reserva continua na sala antiga — prova
+>   de outra duração, ou em outro campus. O sintoma aparece depois e disfarçado:
+>   o remanejo passa a ser recusado com *"esta sala não é da modalidade do
+>   aluno"*.
+> - **`statusCurso`**: o aluno saiu de "Ativo" (ex.: `Transf. Interna`) e
+>   **perdeu o direito de agendar** — não troca mais de horário, sai do
+>   compulsório —, mas **a vaga continua reservada** e ele aparece na lista de
+>   presença do dia. O vínculo **não é apagado** e a prova **não é cancelada**.
+>   Só a *perda* de elegibilidade aparece aqui: recuperá-la, ou trocar entre dois
+>   status que já bloqueavam, não gera aviso.
 >
 > O upload **não é bloqueado** (a planilha pode estar corrigindo um cadastro
-> errado), mas cada linha dessas pede decisão: remanejar ou cancelar a reserva.
-> A contagem considera só o **semestre vigente** — prova de semestre passado já
-> aconteceu, e avisar sobre ela seria o ruído que faz o aviso ser ignorado.
+> errado), mas cada linha dessas pede decisão: remanejar, cancelar, ou manter a
+> vaga de quem perdeu a elegibilidade. A contagem considera só o **semestre
+> vigente** — prova de semestre passado já aconteceu, e avisar sobre ela seria o
+> ruído que faz o aviso ser ignorado.
 
 > ⚠️ **`cursosRenomeados[]` — a grafia do curso mudou e o vínculo se duplicou.**
 > A chave é `[matricula, curso]`, então `PSICOLOGIA` virando
