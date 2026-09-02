@@ -8,6 +8,7 @@ import {
 import { PrismaService } from '../../database/prisma.service';
 import { StatusAgendamento } from '../../generated/prisma/client';
 import { Transacao } from '../../agendamento/service/lock-de-vagas';
+import { PeriodoService } from '../../periodo/service/periodo.service';
 import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 
 export interface ResultadoMesclagem {
@@ -55,6 +56,7 @@ export class MesclagemVinculosService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditoria: AuditoriaService,
+    private readonly periodo: PeriodoService,
   ) {}
 
   /**
@@ -185,6 +187,17 @@ export class MesclagemVinculosService {
    * depois a substitutiva. Recusar esse caso travaria a mesclagem em todo RA que
    * fez as duas.
    *
+   * ⚠️ **Mas os periodos letivos da JANELA VIGENTE contam como UM.** A mesclagem
+   * entre modalidades e permitida (`conferirHeranca` avisa e nao bloqueia), e
+   * desde que as duas grades convivem os dois vinculos de uma mesma pessoa podem
+   * ter provas da MESMA janela gravadas sob org units diferentes — o EaD sob o
+   * modulo, o Presencial sob o semestre. Comparar o id cru faria a trava deixar
+   * passar exatamente o estado que ela existe para impedir: uma pessoa com duas
+   * reservas confirmadas para a mesma prova, em duas salas.
+   *
+   * Os periodos ANTIGOS continuam comparados pelo id, e nao ha como confundi-los
+   * com a janela: eles nao estao nela.
+   *
    * Recusa em vez de escolher uma: decidir qual prova sobrevive e das duas uma —
    * ou sao a mesma pessoa e uma das reservas precisa ser cancelada (decisao da
    * secretaria, que pode ate ser a mais recente), ou sao dois vinculos de
@@ -203,8 +216,14 @@ export class MesclagemVinculosService {
       select: { alunoId: true, periodoLetivoId: true, rodada: true },
     });
 
+    // Tudo que pertence a janela vigente colapsa numa chave so; o resto
+    // continua identificado pelo proprio periodo letivo.
+    const janela = await this.periodo.janelaVigente();
+    const daJanela = new Set(janela?.periodoLetivoIds ?? []);
+
     const chave = (a: { periodoLetivoId: string; rodada: string }) =>
-      `${a.periodoLetivoId}\u0000${a.rodada}`;
+      `${daJanela.has(a.periodoLetivoId) ? 'JANELA_VIGENTE' : a.periodoLetivoId}` +
+      `\u0000${a.rodada}`;
 
     const provasDoDestino = new Set(
       confirmados.filter((a) => a.alunoId === destinoId).map(chave),
@@ -216,8 +235,8 @@ export class MesclagemVinculosService {
 
     if (conflito) {
       throw new ConflictException(
-        `Os dois vinculos tem prova CONFIRMADA no periodo letivo ` +
-          `${conflito.periodoLetivoId}, rodada ${conflito.rodada}. Mesclar deixaria ` +
+        `Os dois vinculos tem prova CONFIRMADA na mesma janela (periodo letivo ` +
+          `${conflito.periodoLetivoId}, rodada ${conflito.rodada}). Mesclar deixaria ` +
           `a mesma pessoa com duas reservas para a mesma prova, em duas salas. ` +
           `Cancele uma das provas antes de mesclar — ou reveja se estes vinculos ` +
           `sao mesmo a mesma coisa.`,

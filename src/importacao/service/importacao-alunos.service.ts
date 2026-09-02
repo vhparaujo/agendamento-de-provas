@@ -217,8 +217,13 @@ export class ImportacaoAlunosService {
      */
     // So o semestre importa para o aviso: uma prova ja marcada e uma prova ja
     // marcada, seja ela da regular ou da substitutiva.
-    const periodoLetivoVigente = (await this.periodo.periodoLetivoVigente())
-      ?.periodoLetivoId;
+    // A importacao e de UMA modalidade por vez (o admin escolhe a aba no
+    // upload), entao da para resolver o periodo letivo exato desta planilha em
+    // vez de olhar a janela inteira: o aviso fica mais preciso — a prova de um
+    // aluno EaD nao interessa a uma importacao de presenciais.
+    const periodoLetivoVigente = (
+      await this.periodo.periodoLetivoDaModalidade(modalidade.codigo)
+    )?.periodoLetivoId;
 
     /**
      * Todos os vinculos que existem ANTES desta importacao, agrupados por RA.

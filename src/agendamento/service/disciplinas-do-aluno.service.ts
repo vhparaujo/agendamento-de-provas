@@ -114,8 +114,11 @@ export class DisciplinasDoAlunoService {
   ) {}
 
   /** As disciplinas que o aluno consegue agendar. Pode vir vazia. */
-  async agendaveis(aluno: AlunoJwtPayload): Promise<DisciplinaComNota[]> {
-    const { agendaveis } = await this.cruzar(aluno);
+  async agendaveis(
+    aluno: AlunoJwtPayload,
+    modalidadeCodigo: string,
+  ): Promise<DisciplinaComNota[]> {
+    const { agendaveis } = await this.cruzar(aluno, modalidadeCodigo);
     return agendaveis;
   }
 
@@ -123,15 +126,27 @@ export class DisciplinasDoAlunoService {
    * Igual ao anterior, mas devolve tambem o MOTIVO de nao ter achado — o portal
    * usa para dizer ao aluno algo melhor que "nao ha o que agendar".
    */
-  async cruzar(aluno: AlunoJwtPayload): Promise<DisciplinasParaAgendar> {
-    // O semestre e a rodada saem da MESMA leitura, e nao de duas: o filtro de
-    // nota e do periodo vigente, e ler o periodo de novo mais adiante abriria a
-    // janela para ele mudar no meio do cruzamento.
-    const vigente = await this.periodo.periodoLetivoVigente();
+  async cruzar(
+    aluno: AlunoJwtPayload,
+    modalidadeCodigo: string,
+  ): Promise<DisciplinasParaAgendar> {
+    // O periodo letivo e a rodada saem da MESMA leitura, e nao de duas: o filtro
+    // de nota e do periodo vigente, e ler o periodo de novo mais adiante abriria
+    // a janela para ele mudar no meio do cruzamento.
+    //
+    // A modalidade e do VINCULO, e e ela que escolhe a arvore do Brightspace:
+    // o aluno EaD busca disciplina no modulo 2026/4 e o presencial no semestre
+    // 2026/2, na mesma janela e no mesmo dia.
+    const vigente =
+      await this.periodo.periodoLetivoDaModalidade(modalidadeCodigo);
 
     if (!vigente) return { agendaveis: [], motivo: SEM_PERIODO_LETIVO };
 
-    const origem = await this.turmasDoAluno(aluno, vigente.filtroDeNota);
+    const origem = await this.turmasDoAluno(
+      aluno,
+      modalidadeCodigo,
+      vigente.filtroDeNota,
+    );
 
     if (origem.motivo) return { agendaveis: [], motivo: origem.motivo };
 
@@ -196,7 +211,10 @@ export class DisciplinasDoAlunoService {
    * turmas — quando a causa foi a rede. O erro sobe, `resolverUm` o classifica
    * como `FALHA_NA_INTEGRACAO`, e rodar de novo reprocessa so aquele aluno.
    */
-  async cruzarPorUserId(userIdD2L: string): Promise<DisciplinasParaAgendar> {
+  async cruzarPorUserId(
+    userIdD2L: string,
+    modalidadeCodigo: string,
+  ): Promise<DisciplinasParaAgendar> {
     if (!this.enrollments.habilitado()) {
       return {
         agendaveis: [],
@@ -206,8 +224,10 @@ export class DisciplinasDoAlunoService {
       };
     }
 
-    const { turmas, motivo, filtroDeNota } =
-      await this.turmasPorUserId(userIdD2L);
+    const { turmas, motivo, filtroDeNota } = await this.turmasPorUserId(
+      userIdD2L,
+      modalidadeCodigo,
+    );
 
     if (motivo) return { agendaveis: [], motivo };
 
@@ -288,6 +308,7 @@ export class DisciplinasDoAlunoService {
   /** As turmas do aluno, antes de qualquer filtro de prova. */
   private async turmasDoAluno(
     aluno: AlunoJwtPayload,
+    modalidadeCodigo: string,
     filtroDeNota: FiltroDeNota | null,
   ): Promise<{
     turmas: TurmaDoLaunch[];
@@ -316,7 +337,10 @@ export class DisciplinasDoAlunoService {
     }
 
     try {
-      const { turmas, motivo } = await this.turmasPorUserId(aluno.userIdD2L);
+      const { turmas, motivo } = await this.turmasPorUserId(
+        aluno.userIdD2L,
+        modalidadeCodigo,
+      );
 
       return { turmas, origem: 'ENROLLMENTS', motivo };
     } catch (erro) {
@@ -407,13 +431,19 @@ export class DisciplinasDoAlunoService {
   }
 
   /**
-   * As ofertas do aluno no semestre CADASTRADO pelo admin.
+   * As ofertas do aluno no periodo letivo CADASTRADO pelo admin PARA A
+   * MODALIDADE DELE.
    *
    * Compartilhado pelas duas portas (launch e compulsorio) de proposito: se
    * fossem duas implementacoes, uma delas acabaria sem o filtro do periodo
-   * letivo — e traria os semestres passados junto.
+   * letivo — e traria os semestres passados junto. Vale igual para a
+   * modalidade: uma implementacao que a esquecesse mandaria os presenciais
+   * procurarem disciplina na grade dos modulos, e eles nao achariam nenhuma.
    */
-  private async turmasPorUserId(userIdD2L: string): Promise<{
+  private async turmasPorUserId(
+    userIdD2L: string,
+    modalidadeCodigo: string,
+  ): Promise<{
     turmas: TurmaDoLaunch[];
     filtroDeNota: FiltroDeNota | null;
     motivo?: string;
@@ -425,7 +455,8 @@ export class DisciplinasDoAlunoService {
     // substitutiva e outra prova das mesmas materias. O que a janela da SUB
     // muda e QUANTAS delas o aluno agenda, e isso e o `filtroDeNota`, aplicado
     // depois do cruzamento com o CSV.
-    const vigente = await this.periodo.periodoLetivoVigente();
+    const vigente =
+      await this.periodo.periodoLetivoDaModalidade(modalidadeCodigo);
 
     if (!vigente) {
       return { turmas: [], filtroDeNota: null, motivo: SEM_PERIODO_LETIVO };
@@ -442,9 +473,20 @@ export class DisciplinasDoAlunoService {
       // materias), mas a faixa de nota decide quais delas o aluno agenda — e
       // ela sai da mesma leitura, para as duas nao poderem divergir.
       filtroDeNota: vigente.filtroDeNota,
+      // A frase NOMEIA o periodo letivo e a modalidade que o escolheu.
+      //
+      // E a unica defesa contra o erro mais caro deste cadastro: um
+      // `periodoLetivoId` que nao bate NAO da erro — a busca responde 200 com
+      // lista vazia, a intersecao da vazia, e a modalidade inteira recebe uma
+      // frase generica sem nada ligando o sintoma a causa. Com o id na
+      // mensagem, o primeiro aluno que abrir um chamado ja entrega o
+      // diagnostico: "2026/4" numa tela de presencial e o mapa cadastrado
+      // errado, e nao a matricula dele.
       motivo:
         ofertas.length === 0
-          ? 'Nenhuma disciplina sua aparece no periodo letivo vigente. Procure a secretaria academica.'
+          ? `Nenhuma disciplina sua aparece no periodo letivo vigente ` +
+            `(${vigente.periodoLetivoId}, modalidade ${modalidadeCodigo}). ` +
+            'Procure a secretaria academica.'
           : undefined,
     };
   }

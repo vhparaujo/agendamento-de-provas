@@ -61,7 +61,7 @@ describe('ResolucaoOrgUnitService', () => {
       ],
     );
 
-    const r = await servico.resolver('103');
+    const r = await servico.resolver(['103']);
 
     expect(r.resolvidas).toEqual([
       {
@@ -100,7 +100,7 @@ describe('ResolucaoOrgUnitService', () => {
       ],
     );
 
-    const r = await servico.resolver('103');
+    const r = await servico.resolver(['103']);
 
     expect(r.resolvidas.map((t) => t.orgUnitId)).toEqual(['156126']);
     expect(r.naoResolvidas).toHaveLength(0);
@@ -127,7 +127,7 @@ describe('ResolucaoOrgUnitService', () => {
       ],
     );
 
-    const r = await servico.resolver('103');
+    const r = await servico.resolver(['103']);
 
     expect(r.resolvidas.map((t) => t.turmaId)).toEqual([1]);
     expect(r.naoResolvidas.map((t) => t.turmaId)).toEqual([2]);
@@ -151,7 +151,7 @@ describe('ResolucaoOrgUnitService', () => {
       ],
     );
 
-    const r = await servico.resolver('103');
+    const r = await servico.resolver(['103']);
 
     expect(r.resolvidas).toHaveLength(0);
     expect(r.naoResolvidas).toHaveLength(1);
@@ -172,7 +172,7 @@ describe('ResolucaoOrgUnitService', () => {
       ],
     );
 
-    const r = await servico.resolver('103');
+    const r = await servico.resolver(['103']);
 
     expect(r.aprendidos).toBe(1);
     expect(atualizadas).toEqual([
@@ -200,7 +200,7 @@ describe('ResolucaoOrgUnitService', () => {
       ],
     );
 
-    const r = await servico.resolver('103');
+    const r = await servico.resolver(['103']);
 
     expect(r.resolvidas.map((t) => t.orgUnitId)).toEqual(['156126']);
     expect(r.aprendidos).toBe(0);
@@ -218,7 +218,7 @@ describe('ResolucaoOrgUnitService', () => {
       [oferta('156126', 'OUTRO_CODE_TOTALMENTE_2026/1', 'OUTRO NOME')],
     );
 
-    const r = await servico.resolver('103');
+    const r = await servico.resolver(['103']);
 
     expect(r.resolvidas.map((t) => t.turmaId)).toEqual([1]);
   });
@@ -226,7 +226,7 @@ describe('ResolucaoOrgUnitService', () => {
   it('sem CSV de turmas nao chama o Brightspace nem falha', async () => {
     const servico = montar([], []);
 
-    const r = await servico.resolver('103');
+    const r = await servico.resolver(['103']);
 
     expect(r).toEqual({
       totalNoCsv: 0,

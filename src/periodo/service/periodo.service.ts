@@ -43,8 +43,25 @@ export interface SituacaoPeriodo {
    * texto para o aluno ler, nao para o codigo comparar.
    */
   encerrado: boolean;
-  /** Id do periodo letivo no Brightspace. Vai gravado em cada agendamento. */
+  /**
+   * Id do periodo letivo no Brightspace. Vai gravado em cada agendamento.
+   *
+   * ⚠️ E o do ALUNO quando `situacaoAtual` recebeu uma modalidade, e o
+   * PRINCIPAL da janela quando nao recebeu. A mesma janela cobre mais de um
+   * periodo letivo ao mesmo tempo (modulos e semestres correm em paralelo), e
+   * quem precisa dos dois usa `periodoLetivoIds`.
+   */
   periodoLetivoId?: string;
+  /**
+   * TODOS os periodos letivos que esta janela cobre — o principal mais os do
+   * mapa por modalidade, sem repetir.
+   *
+   * Existe porque as travas por PESSOA (uma prova por matricula em cada faixa)
+   * nao podem recortar pelo periodo de UM vinculo: um mesmo RA pode ter um
+   * vinculo EaD (modulo 2026/4) e um Presencial (semestre 2026/2), e olhar so
+   * um dos dois deixaria a pessoa marcar duas provas no mesmo horario.
+   */
+  periodoLetivoIds?: string[];
   /**
    * QUAL prova do semestre e esta janela ("N2", "SUB"...).
    *
@@ -69,7 +86,18 @@ export interface SituacaoPeriodo {
 }
 
 export interface PeriodoVigente {
+  /**
+   * O periodo letivo DESTE ALUNO — resolvido pela modalidade do vinculo. E o
+   * que vai gravado na reserva como fotografia.
+   */
   periodoLetivoId: string;
+  /**
+   * A janela inteira. Anda junto do `periodoLetivoId` de proposito: quem agenda
+   * precisa dos DOIS na mesma operacao — o primeiro para gravar a reserva, o
+   * segundo para as travas por pessoa (ver `exigirUmaProvaPorFaixa`). Duas
+   * leituras separadas poderiam divergir no meio da confirmacao.
+   */
+  periodoLetivoIds: string[];
   /** A rodada da janela vigente. Vai gravada como fotografia em cada reserva. */
   rodada: string;
   /** Ver `FiltroDeNota`. `null` quando a janela nao filtra por nota. */
@@ -77,10 +105,38 @@ export interface PeriodoVigente {
   dataFechamento: Date;
 }
 
+/**
+ * Uma linha do mapa `modalidade -> periodo letivo` de uma janela.
+ *
+ * O `modalidadeNome` vem junto porque este objeto vai para a TELA do admin, e
+ * "PRESENCIAL" e o codigo, nao o rotulo.
+ */
+export interface LetivoDaModalidade {
+  modalidadeId: number;
+  modalidadeCodigo: string;
+  modalidadeNome: string;
+  periodoLetivoId: string;
+  /**
+   * `true` quando esta modalidade NAO tem linha propria no mapa e caiu no
+   * periodo letivo principal da janela. A tela destaca; o log avisa. Nao e erro
+   * — e o que segura o sistema de pe quando uma modalidade nova e semeada
+   * depois de a janela ja estar cadastrada.
+   */
+  herdadoDoPrincipal: boolean;
+}
+
 /** Um periodo como o admin o ve, com o que ja foi agendado nele. */
 export interface PeriodoAdmin {
   id: number;
+  /** O periodo letivo PRINCIPAL — ver a coluna homonima no schema. */
   periodoLetivoId: string;
+  /**
+   * O mapa `modalidade -> periodo letivo` desta janela, uma linha por
+   * modalidade cadastrada. Vai INTEIRO para a tela: e o unico jeito de um id
+   * errado deixar de ser invisivel — o id que nao bate nao da erro, so devolve
+   * lista vazia de disciplina para a modalidade inteira.
+   */
+  letivosPorModalidade: LetivoDaModalidade[];
   rodada: string;
   /** Ver `FiltroDeNota`. `null` quando a janela nao filtra por nota. */
   filtroDeNota: FiltroDeNota | null;
@@ -138,9 +194,13 @@ export class PeriodoService {
    * marcado no banco de proposito: cada semestre vira uma linha nova, e o
    * historico dos anteriores continua de pe para consulta e exportacao.
    */
-  async situacaoAtual(agora: Date = new Date()): Promise<SituacaoPeriodo> {
+  async situacaoAtual(
+    agora: Date = new Date(),
+    modalidadeCodigo?: string,
+  ): Promise<SituacaoPeriodo> {
     const periodo = await this.prisma.periodoAgendamento.findFirst({
       orderBy: { createdAt: 'desc' },
+      include: MAPA_DA_JANELA,
     });
 
     // SEM PERIODO CADASTRADO = FECHADO. Mesma escolha do filtro de turmas: na
@@ -161,7 +221,12 @@ export class PeriodoService {
     const base: SituacaoPeriodo = {
       aberto: false,
       encerrado: false,
-      periodoLetivoId: periodo.periodoLetivoId,
+      // Com modalidade, o periodo letivo DELA; sem modalidade, o principal —
+      // e o caso de `GET /portal/periodo`, que so informa o prazo.
+      periodoLetivoId: modalidadeCodigo
+        ? this.resolverPorModalidade(periodo, modalidadeCodigo)
+        : periodo.periodoLetivoId,
+      periodoLetivoIds: idsDaJanela(periodo),
       rodada: periodo.rodada,
       filtroDeNota: lerFiltroDeNota(periodo),
       descricao: periodo.descricao,
@@ -202,22 +267,31 @@ export class PeriodoService {
   }
 
   /**
-   * O periodo letivo vigente, ABERTO OU NAO.
+   * ==========================================================================
+   * O PERIODO LETIVO DE UM ALUNO — resolvido pela MODALIDADE do vinculo
+   * ==========================================================================
+   * Vigente, ABERTO OU NAO. A distincao importa: o portal usa isto para mostrar
+   * so a prova atual, e o aluno precisa continuar enxergando onde e quando e a
+   * prova dele depois de o prazo fechar. Fechar tranca a ESCOLHA, nao a consulta.
    *
-   * A distincao importa: o portal do aluno usa isto para mostrar so a prova do
-   * semestre atual, e ele precisa continuar enxergando onde e quando e a prova
-   * dele mesmo depois de o prazo fechar. Fechar o agendamento tranca a ESCOLHA,
-   * nao a consulta.
+   * ⚠️ **A modalidade e obrigatoria, e e a metade nova da pergunta.** A UCB
+   * corre duas grades em paralelo: EaD/Semi/Modular andam por MODULO (2026/4) e
+   * Presencial anda por SEMESTRE (2026/2) — dois org units vivos ao mesmo tempo
+   * no Brightspace. Sem a modalidade nao ha resposta certa, so um chute que
+   * deixa metade da universidade sem disciplina agendavel. E deixa em silencio:
+   * o org unit errado devolve 200 com lista vazia, nunca um erro.
    *
-   * `undefined` quando nao ha periodo cadastrado — nesse caso nao existe
-   * "semestre atual", e o portal nao tem o que mostrar.
+   * Devolve tambem a `rodada`, pela razao de sempre: os dois periodos do mesmo
+   * semestre (a N2 e a SUB) compartilham o `periodoLetivoId`, e quem filtrar so
+   * por ele mistura as duas provas. Voltar um objeto obriga cada chamador a
+   * dizer, na desestruturacao, o que importa para ele.
    *
-   * Devolve o PAR `periodoLetivoId + rodada`, e nao a string sozinha: os dois
-   * periodos do mesmo semestre (a N2 e a SUB) compartilham o `periodoLetivoId`,
-   * e quem filtrar so por ele mistura as duas provas. Voltar um objeto obriga
-   * cada chamador a dizer, na desestruturacao, se a rodada importa para ele.
+   * `undefined` quando nao ha periodo cadastrado.
+   *
+   * Para quem CONTA, LISTA, EXPORTA ou trava por PESSOA, o metodo e o outro:
+   * `janelaVigente()`. Ver a nota la.
    */
-  async periodoLetivoVigente(): Promise<
+  async periodoLetivoDaModalidade(modalidadeCodigo: string): Promise<
     | {
         periodoLetivoId: string;
         rodada: string;
@@ -227,29 +301,116 @@ export class PeriodoService {
   > {
     const periodo = await this.prisma.periodoAgendamento.findFirst({
       orderBy: { createdAt: 'desc' },
-      select: {
-        periodoLetivoId: true,
-        rodada: true,
-        notaMinima: true,
-        notaMaxima: true,
-      },
+      include: MAPA_DA_JANELA,
     });
 
     if (!periodo) return undefined;
 
     return {
-      periodoLetivoId: periodo.periodoLetivoId,
+      periodoLetivoId: this.resolverPorModalidade(periodo, modalidadeCodigo),
       rodada: periodo.rodada,
       filtroDeNota: lerFiltroDeNota(periodo),
     };
   }
 
   /**
+   * ==========================================================================
+   * A JANELA INTEIRA — todos os periodos letivos que ela cobre
+   * ==========================================================================
+   * O complemento de `periodoLetivoDaModalidade`. Sao dois metodos com nomes
+   * diferentes, e nao um com parametro opcional, de proposito: a escolha entre
+   * "o periodo DESTE aluno" e "todos os periodos DESTA janela" precisa ser
+   * explicita em cada chamada. Um parametro opcional seria esquecido, e o
+   * sintoma — aluno com duas provas no mesmo horario, presencial sem disciplina
+   * — aparece longe da causa.
+   *
+   * A regra de bolso:
+   *
+   * | Quem pergunta | Usa |
+   * |---|---|
+   * | age sobre UM aluno (disciplinas, agendar, trocar) | `periodoLetivoDaModalidade(modalidade)` |
+   * | conta, lista, exporta, relata | `janelaVigente()` + `{ in: periodoLetivoIds }` |
+   * | trava por PESSOA (uma prova por matricula em cada faixa) | `janelaVigente()` — **obrigatoriamente** |
+   *
+   * A ultima linha e a que nao pode errar: um mesmo RA pode ter um vinculo EaD
+   * (modulo) e um Presencial (semestre), com `periodoLetivoId` DIFERENTES na
+   * mesma janela. Recortar pelo periodo de um vinculo so faria a trava nao
+   * enxergar a reserva do outro — e a pessoa marcaria duas provas no mesmo
+   * horario, em duas salas.
+   */
+  async janelaVigente(): Promise<
+    | {
+        /** Todos os org units cobertos, sem repetir. Para `{ in: ... }`. */
+        periodoLetivoIds: string[];
+        /** O principal — o rotulo da janela, nao o de nenhum aluno especifico. */
+        principal: string;
+        rodada: string;
+        filtroDeNota: FiltroDeNota | null;
+      }
+    | undefined
+  > {
+    const periodo = await this.prisma.periodoAgendamento.findFirst({
+      orderBy: { createdAt: 'desc' },
+      include: MAPA_DA_JANELA,
+    });
+
+    if (!periodo) return undefined;
+
+    return {
+      periodoLetivoIds: idsDaJanela(periodo),
+      principal: periodo.periodoLetivoId,
+      rodada: periodo.rodada,
+      filtroDeNota: lerFiltroDeNota(periodo),
+    };
+  }
+
+  /**
+   * O periodo letivo de uma modalidade dentro de UMA janela ja carregada.
+   *
+   * O fallback para o principal e deliberado e ruidoso: uma modalidade semeada
+   * depois de a janela ser cadastrada nao pode derrubar o agendamento das
+   * outras, mas tambem nao pode passar despercebida — o aluno dela vai buscar
+   * disciplina na arvore errada e receber lista vazia. Por isso o `warn` diz
+   * exatamente o que fazer.
+   */
+  private resolverPorModalidade(
+    periodo: JanelaComMapa,
+    modalidadeCodigo: string,
+  ): string {
+    const codigo = modalidadeCodigo.trim().toUpperCase();
+
+    const linha = periodo.letivosPorModalidade.find(
+      (l) => l.modalidade.codigo.toUpperCase() === codigo,
+    );
+
+    if (linha) return linha.periodoLetivoId;
+
+    this.logger.warn(
+      `A modalidade ${codigo} nao tem periodo letivo proprio na janela ` +
+        `${periodo.id} e caiu no principal (${periodo.periodoLetivoId}). Se ela ` +
+        'nao segue a mesma grade, os alunos dela vao receber "nenhuma disciplina ' +
+        'sua aparece no periodo letivo vigente". Cadastre o mapa em /periodos.',
+    );
+
+    return periodo.periodoLetivoId;
+  }
+
+  /**
    * Devolve o periodo vigente ou recusa a operacao com o motivo exato — o aluno
    * precisa saber se ainda nao abriu, se ja fechou, ou se ninguem configurou.
+   *
+   * Recebe a modalidade do VINCULO e devolve os dois recortes de uma leitura so:
+   * `periodoLetivoId` (o do aluno, que vai gravado na reserva) e
+   * `periodoLetivoIds` (a janela inteira, que as travas por pessoa usam). Ler os
+   * dois separadamente abriria a janela para eles divergirem no meio da
+   * confirmacao — o mesmo motivo pelo qual a `rodada` e o `filtroDeNota` saem
+   * daqui juntos.
    */
-  async exigirAberto(agora: Date = new Date()): Promise<PeriodoVigente> {
-    const situacao = await this.situacaoAtual(agora);
+  async exigirAberto(
+    modalidadeCodigo: string,
+    agora: Date = new Date(),
+  ): Promise<PeriodoVigente> {
+    const situacao = await this.situacaoAtual(agora, modalidadeCodigo);
 
     if (!situacao.aberto) {
       throw new ForbiddenException(situacao.motivo);
@@ -257,6 +418,7 @@ export class PeriodoService {
 
     return {
       periodoLetivoId: situacao.periodoLetivoId!,
+      periodoLetivoIds: situacao.periodoLetivoIds!,
       rodada: situacao.rodada!,
       filtroDeNota: situacao.filtroDeNota ?? null,
       dataFechamento: situacao.dataFechamento!,
@@ -292,7 +454,11 @@ export class PeriodoService {
     }
 
     return {
+      // Sem modalidade: aqui e o PRINCIPAL. A declaracao filtra pela janela
+      // inteira (`periodoLetivoIds`), porque o aluno pode ter dois vinculos em
+      // grades diferentes e as duas provas sao dele.
       periodoLetivoId: situacao.periodoLetivoId!,
+      periodoLetivoIds: situacao.periodoLetivoIds!,
       rodada: situacao.rodada!,
       filtroDeNota: situacao.filtroDeNota ?? null,
       dataFechamento: situacao.dataFechamento!,
@@ -306,9 +472,17 @@ export class PeriodoService {
   async listar(): Promise<PeriodoAdmin[]> {
     const periodos = await this.prisma.periodoAgendamento.findMany({
       orderBy: { createdAt: 'desc' },
+      include: MAPA_DA_JANELA,
     });
 
     if (periodos.length === 0) return [];
+
+    // O mapa vai para a tela com TODAS as modalidades, inclusive as que nao tem
+    // linha propria — sao justamente as que o admin precisa ver para saber que
+    // caem no principal.
+    const modalidades = await this.prisma.modalidade.findMany({
+      orderBy: { id: 'asc' },
+    });
 
     // Uma consulta agrupada em vez de uma por periodo. O agrupamento e pelo PAR
     // `periodoLetivoId + rodada`: agrupar so pelo semestre faria a linha da SUB
@@ -327,12 +501,29 @@ export class PeriodoService {
       ]),
     );
 
+    /**
+     * O total de uma JANELA e a soma dos periodos letivos que ela cobre.
+     *
+     * Sem a soma, a tela mostraria so as provas dos modulares e o admin leria
+     * "1.200 agendamentos" numa janela com 1.900 — os 700 presenciais estariam
+     * gravados sob o outro org unit, invisiveis. A `rodada` continua separando
+     * a N2 da SUB dentro da mesma janela.
+     */
+    const totalDaJanela = (periodo: JanelaComMapa): number =>
+      idsDaJanela(periodo).reduce(
+        (soma, letivo) =>
+          soma +
+          (porPeriodoLetivo.get(chaveDaRodada(letivo, periodo.rodada)) ?? 0),
+        0,
+      );
+
     const agora = new Date();
 
     // O vigente e o mais recente — o mesmo criterio que `situacaoAtual` usa.
     return periodos.map((p, indice) => ({
       id: p.id,
       periodoLetivoId: p.periodoLetivoId,
+      letivosPorModalidade: montarMapa(p, modalidades),
       rodada: p.rodada,
       filtroDeNota: lerFiltroDeNota(p),
       descricao: p.descricao,
@@ -345,14 +536,30 @@ export class PeriodoService {
         p.aberto &&
         (!p.dataAbertura || agora >= p.dataAbertura) &&
         agora <= p.dataFechamento,
-      totalAgendamentos:
-        porPeriodoLetivo.get(chaveDaRodada(p.periodoLetivoId, p.rodada)) ?? 0,
+      totalAgendamentos: totalDaJanela(p),
       criadoEm: p.createdAt,
     }));
   }
 
   async criar(dados: {
     periodoLetivoId: string;
+    /**
+     * O mapa `modalidade -> periodo letivo` desta janela.
+     *
+     * OMITIDO = todas as modalidades ficam no `periodoLetivoId` principal. E o
+     * comportamento de antes do mapa, e continua sendo o caso legitimo de quem
+     * tem uma grade so.
+     *
+     * INFORMADO = tem de cobrir TODAS as modalidades cadastradas. Cobrir
+     * parcialmente seria pior que nao cobrir: a modalidade esquecida cairia no
+     * principal em silencio, que e exatamente o erro que o mapa existe para
+     * impedir. Recusar aqui custa uma correcao de formulario; deixar passar
+     * custa uma modalidade inteira sem disciplina no dia da abertura.
+     */
+    letivosPorModalidade?: {
+      modalidadeCodigo: string;
+      periodoLetivoId: string;
+    }[];
     rodada?: string;
     notaMinima?: number | null;
     notaMaxima?: number | null;
@@ -370,6 +577,17 @@ export class PeriodoService {
 
     const rodada = dados.rodada?.trim() || RODADA_PADRAO;
     const filtro = exigirFiltroDeNotaValido(dados.notaMinima, dados.notaMaxima);
+
+    const principal = dados.periodoLetivoId.trim();
+
+    // O mapa e validado ANTES da checagem de duplicata: um payload malformado e
+    // problema dele mesmo, e um 409 dizendo "ja existe janela para este periodo"
+    // manda o admin corrigir a coisa errada — ele reenviaria com outra rodada e
+    // continuaria com o mapa incompleto.
+    const mapa = await this.exigirMapaCompleto(
+      principal,
+      dados.letivosPorModalidade,
+    );
 
     // Criar um periodo novo TROCA o vigente, porque vigente = mais recente.
     // Sem este aviso, o admin poderia cadastrar o semestre seguinte com semanas
@@ -395,9 +613,11 @@ export class PeriodoService {
       );
     }
 
+    // A janela e o mapa nascem juntos: uma janela sem mapa e uma janela que
+    // manda todo mundo para o mesmo org unit sem ninguem ter decidido isso.
     const criado = await this.prisma.periodoAgendamento.create({
       data: {
-        periodoLetivoId: dados.periodoLetivoId.trim(),
+        periodoLetivoId: principal,
         rodada,
         notaMinima: filtro?.minima ?? null,
         notaMaxima: filtro?.maxima ?? null,
@@ -405,6 +625,7 @@ export class PeriodoService {
         aberto: dados.aberto ?? false,
         dataAbertura: abertura,
         dataFechamento: fechamento,
+        letivosPorModalidade: { create: mapa },
       },
     });
 
@@ -412,13 +633,103 @@ export class PeriodoService {
   }
 
   /**
-   * ⚠️ `periodoLetivoId` NAO se edita, e `rodada` so enquanto a janela esta
-   * VAZIA — ver `exigirRodadaAindaTrocavel`.
+   * ==========================================================================
+   * O MAPA VALIDADO — traduz codigos de modalidade em linhas gravaveis
+   * ==========================================================================
+   * Tres recusas, todas pelo mesmo motivo: o `periodoLetivoId` errado NAO da
+   * erro em lugar nenhum. A busca de ofertas responde 200 com lista vazia, a
+   * intersecao com as matriculas do aluno da vazia, e a modalidade inteira
+   * recebe "nenhuma disciplina sua aparece no periodo letivo vigente". Toda
+   * conferencia que nao acontecer aqui vira suporte no dia da abertura.
+   *
+   * 1. codigo de modalidade que nao existe → 400 dizendo quais existem;
+   * 2. modalidade cadastrada que ficou de fora → 400 nomeando as que faltam;
+   * 3. `periodoLetivoId` vazio → 400.
+   */
+  private async exigirMapaCompleto(
+    principal: string,
+    informado?: { modalidadeCodigo: string; periodoLetivoId: string }[],
+  ): Promise<{ modalidadeId: number; periodoLetivoId: string }[]> {
+    const modalidades = await this.prisma.modalidade.findMany({
+      orderBy: { id: 'asc' },
+    });
+
+    // Sem modalidade cadastrada nao ha mapa a montar — banco recem-migrado,
+    // antes do seed. A janela nasce so com o principal e o seed seguinte nao
+    // quebra nada: `resolverPorModalidade` cai no principal e avisa.
+    if (modalidades.length === 0) return [];
+
+    if (!informado || informado.length === 0) {
+      return modalidades.map((m) => ({
+        modalidadeId: m.id,
+        periodoLetivoId: principal,
+      }));
+    }
+
+    const porCodigo = new Map(
+      modalidades.map((m) => [m.codigo.toUpperCase(), m]),
+    );
+
+    const escolhido = new Map<number, string>();
+
+    for (const linha of informado) {
+      const codigo = linha.modalidadeCodigo?.trim().toUpperCase() ?? '';
+      const modalidade = porCodigo.get(codigo);
+
+      if (!modalidade) {
+        throw new BadRequestException(
+          `Modalidade "${linha.modalidadeCodigo}" nao existe. As cadastradas sao: ` +
+            `${modalidades.map((m) => m.codigo).join(', ')}.`,
+        );
+      }
+
+      const letivo = linha.periodoLetivoId?.trim() ?? '';
+
+      if (!letivo) {
+        throw new BadRequestException(
+          `Informe o periodo letivo da modalidade ${modalidade.codigo}. Sem ele, ` +
+            'os alunos dela nao teriam disciplina nenhuma para agendar.',
+        );
+      }
+
+      escolhido.set(modalidade.id, letivo);
+    }
+
+    const faltando = modalidades.filter((m) => !escolhido.has(m.id));
+
+    if (faltando.length > 0) {
+      throw new BadRequestException(
+        `Falta o periodo letivo de: ${faltando.map((m) => m.codigo).join(', ')}. ` +
+          'O mapa tem de cobrir todas as modalidades — a que ficar de fora cai no ' +
+          'periodo letivo principal em silencio, e os alunos dela recebem "nenhuma ' +
+          'disciplina sua aparece no periodo letivo vigente" sem nada indicando a causa.',
+      );
+    }
+
+    return modalidades.map((m) => ({
+      modalidadeId: m.id,
+      periodoLetivoId: escolhido.get(m.id)!,
+    }));
+  }
+
+  /**
+   * ⚠️ `periodoLetivoId` (o principal) NAO se edita. `rodada` e o MAPA por
+   * modalidade so enquanto a janela esta VAZIA — ver `exigirJanelaVazia`.
    */
   async atualizar(
     id: number,
     dados: {
       rodada?: string;
+      /**
+       * O mapa novo, INTEIRO. Nao ha edicao de uma linha so: o mapa e validado
+       * como conjunto (toda modalidade coberta), e aceitar um pedaco deixaria o
+       * resto no estado anterior sem ninguem conferir se os dois ainda fazem
+       * sentido juntos.
+       */
+      letivosPorModalidade?: {
+        modalidadeCodigo: string;
+        periodoLetivoId: string;
+      }[];
       notaMinima?: number | null;
       notaMaxima?: number | null;
       descricao?: string | null;
@@ -430,11 +741,19 @@ export class PeriodoService {
   ): Promise<PeriodoAdmin> {
     const periodo = await this.prisma.periodoAgendamento.findUnique({
       where: { id },
+      include: MAPA_DA_JANELA,
     });
 
     if (!periodo) throw new NotFoundException(`Periodo ${id} nao encontrado`);
 
     const rodada = dados.rodada?.trim() || undefined;
+
+    const mapaNovo = dados.letivosPorModalidade
+      ? await this.exigirMapaCompleto(
+          periodo.periodoLetivoId,
+          dados.letivosPorModalidade,
+        )
+      : undefined;
 
     // O par de nota e revalidado INTEIRO, mesmo quando so um dos dois campos
     // vem: mandar `notaMaxima` sozinha para uma janela sem filtro deixaria meio
@@ -473,7 +792,28 @@ export class PeriodoService {
     // a unica que existe e a da rodada, logo abaixo, e por outro motivo.
     await this.prisma.$transaction(async (tx) => {
       if (rodada && rodada !== periodo.rodada) {
-        await this.exigirRodadaAindaTrocavel(tx, periodo);
+        await this.exigirJanelaVazia(tx, periodo, 'a rodada');
+      }
+
+      // O mapa e travado pelo MESMO motivo que a rodada, e nao por simetria:
+      // `Agendamento.periodoLetivoId` e fotografia. Trocar o mapa com reservas
+      // gravadas faria a janela apontar para um org unit e as provas dela para
+      // outro — e dali em diante toda consulta pelo par para de casar, do
+      // portal do aluno a exportacao.
+      if (mapaNovo && mudouOMapa(periodo, mapaNovo)) {
+        await this.exigirJanelaVazia(
+          tx,
+          periodo,
+          'o periodo letivo por modalidade',
+        );
+
+        await tx.periodoLetivoModalidade.deleteMany({
+          where: { periodoAgendamentoId: id },
+        });
+
+        await tx.periodoLetivoModalidade.createMany({
+          data: mapaNovo.map((l) => ({ ...l, periodoAgendamentoId: id })),
+        });
       }
 
       await tx.periodoAgendamento.update({
@@ -523,13 +863,16 @@ export class PeriodoService {
    * Essa lista e trabalho da secretaria, e ela precisa saber que existe.
    */
   private async avisarSeAJanelaJaTemReserva(
-    periodo: { id: number; periodoLetivoId: string; rodada: string },
+    periodo: JanelaComMapa,
     filtro: FiltroDeNota | null,
     porAdmin: string,
   ): Promise<void> {
+    // A janela inteira, e nao so o principal: as reservas dos presenciais estao
+    // gravadas sob o outro org unit, e conta-las de fora faria o aviso dizer
+    // "0 reserva" numa janela cheia — calando justamente quando importa.
     const reservas = await this.prisma.agendamento.count({
       where: {
-        periodoLetivoId: periodo.periodoLetivoId,
+        periodoLetivoId: { in: idsDaJanela(periodo) },
         rodada: periodo.rodada,
       },
     });
@@ -572,7 +915,10 @@ export class PeriodoService {
    */
   async remover(id: number, porAdmin: string): Promise<RemocaoPeriodo> {
     return this.prisma.$transaction(async (tx) => {
-      const periodo = await tx.periodoAgendamento.findUnique({ where: { id } });
+      const periodo = await tx.periodoAgendamento.findUnique({
+        where: { id },
+        include: MAPA_DA_JANELA,
+      });
 
       if (!periodo) throw new NotFoundException(`Periodo ${id} nao encontrado`);
 
@@ -584,16 +930,18 @@ export class PeriodoService {
        * que precisa continuar explicavel — quem aparecer no dia sem estar na
        * lista se explica por ele.
        *
-       * A conta e pelo PAR `periodoLetivoId + rodada` — a mesma chave que
-       * identifica a janela. Duas linhas com o MESMO par continuam travando uma
-       * a outra, e e conservador de proposito: nao ha como dizer a qual delas a
+       * A conta e pela JANELA INTEIRA (todos os periodos letivos do mapa) mais
+       * a `rodada` — a mesma chave que identifica a janela. Contar so o
+       * principal deixaria as provas dos presenciais de fora e permitiria apagar
+       * uma janela cheia. Duas linhas com o mesmo par continuam travando uma a
+       * outra, e e conservador de proposito: nao ha como dizer a qual delas a
        * prova pertence. Mas a N2 e a SUB do mesmo semestre nao se travam — o
        * cadastro errado de uma janela vazia da SUB precisa poder ser desfeito, e
        * as provas ja marcadas na N2 nao dizem nada sobre ela.
        */
       const agendamentos = await tx.agendamento.count({
         where: {
-          periodoLetivoId: periodo.periodoLetivoId,
+          periodoLetivoId: { in: idsDaJanela(periodo) },
           rodada: periodo.rodada,
         },
       });
@@ -642,32 +990,40 @@ export class PeriodoService {
 
   /**
    * ==========================================================================
-   * TROCAR A RODADA: so enquanto a janela nao tiver prova nenhuma
+   * MEXER NA CHAVE DA JANELA: so enquanto ela nao tiver prova nenhuma
    * ==========================================================================
-   * A `rodada` e metade da chave que liga esta janela as reservas — e o
-   * `Agendamento.rodada` e FOTOGRAFIA, gravada no instante da reserva. Trocar a
-   * rodada da janela com provas dentro nao renomeia prova nenhuma: a janela
-   * passaria a dizer "SUB" enquanto as 20 provas dela continuam dizendo "N2", e
-   * a partir dali TODA consulta pelo par para de casar. O portal diria ao aluno
-   * que ele nao tem prova marcada, a exportacao o listaria como "Nao Agendado",
-   * e o compulsorio o alocaria de novo — tres sintomas longe da causa.
+   * Vale para a `rodada` E para o mapa por modalidade — as duas metades da
+   * chave que liga esta janela as reservas, e as duas gravadas em cada
+   * `Agendamento` como FOTOGRAFIA, no instante da reserva.
+   *
+   * Trocar qualquer uma delas com provas dentro nao mexe em prova nenhuma: a
+   * janela passaria a dizer "SUB" (ou a apontar para 2026/2) enquanto as 20
+   * provas dela continuam dizendo "N2" (ou 2026/4), e a partir dali TODA
+   * consulta pelo par para de casar. O portal diria ao aluno que ele nao tem
+   * prova marcada, a exportacao o listaria como "Nao Agendado", e o compulsorio
+   * o alocaria de novo — tres sintomas longe da causa.
    *
    * Com a janela vazia nao ha nada a desalinhar, e e ai que a troca resolve o
-   * caso real: cadastrou como N2 o que era a substitutiva, e percebeu antes de
-   * abrir. A alternativa seria apagar e recriar — pior, porque `vigente` = o
-   * cadastrado mais recentemente, e recriar embaralha essa ordem.
+   * caso real: cadastrou como N2 o que era a substitutiva, ou apontou o
+   * Presencial para a grade dos modulos, e percebeu antes de abrir. A
+   * alternativa seria apagar e recriar — pior, porque `vigente` = o cadastrado
+   * mais recentemente, e recriar embaralha essa ordem.
    *
    * A contagem inclui CANCELADO, pelo mesmo motivo do `remover`: a pergunta e
    * "alguem ja usou esta janela?", e o cancelamento e justamente o registro que
    * precisa continuar explicavel no dia da prova.
    */
-  private async exigirRodadaAindaTrocavel(
+  private async exigirJanelaVazia(
     tx: Prisma.TransactionClient,
-    periodo: { periodoLetivoId: string; rodada: string },
+    periodo: JanelaComMapa,
+    oQueMudou: string,
   ): Promise<void> {
+    // A contagem cobre a janela INTEIRA. Contar so o principal deixaria as
+    // provas dos presenciais (gravadas sob o outro org unit) invisiveis, e a
+    // trava liberaria a edicao que ela existe para impedir.
     const agendamentos = await tx.agendamento.count({
       where: {
-        periodoLetivoId: periodo.periodoLetivoId,
+        periodoLetivoId: { in: idsDaJanela(periodo) },
         rodada: periodo.rodada,
       },
     });
@@ -675,12 +1031,11 @@ export class PeriodoService {
     if (agendamentos === 0) return;
 
     throw new ConflictException(
-      `Esta janela ja tem ${agendamentos} agendamento(s) gravado(s) como rodada ` +
-        `"${periodo.rodada}" (incluindo cancelados), e a rodada da reserva e uma ` +
-        'fotografia: trocar a da janela nao renomearia nenhuma delas. As provas ' +
-        'ficariam orfas — sumiriam do portal do aluno e voltariam a contar como ' +
-        '"nao agendado". A rodada so pode ser corrigida enquanto a janela estiver ' +
-        'vazia.',
+      `Esta janela ja tem ${agendamentos} agendamento(s) gravado(s) na rodada ` +
+        `"${periodo.rodada}" (incluindo cancelados), e o que a reserva grava e uma ` +
+        `fotografia: mudar ${oQueMudou} agora nao mexeria em nenhuma delas. As ` +
+        'provas ficariam orfas — sumiriam do portal do aluno e voltariam a contar ' +
+        'como "nao agendado". So da para corrigir enquanto a janela estiver vazia.',
     );
   }
 
@@ -692,6 +1047,103 @@ export class PeriodoService {
 
     return periodo;
   }
+}
+
+/**
+ * ============================================================================
+ * O MAPA DA JANELA — helpers compartilhados
+ * ============================================================================
+ */
+
+/**
+ * O `include` que carrega o mapa junto da janela. Uma constante, e nao um
+ * objeto solto em cada consulta: se uma delas esquecesse o `include`,
+ * `idsDaJanela` devolveria so o principal e a diferenca seria invisivel —
+ * tudo continuaria funcionando, so que ignorando a metade presencial.
+ */
+const MAPA_DA_JANELA = {
+  letivosPorModalidade: { include: { modalidade: true } },
+} as const;
+
+/** Uma janela com o mapa carregado — o que `MAPA_DA_JANELA` produz. */
+type JanelaComMapa = {
+  id: number;
+  periodoLetivoId: string;
+  rodada: string;
+  letivosPorModalidade: {
+    modalidadeId: number;
+    periodoLetivoId: string;
+    modalidade: { id: number; codigo: string; nome: string };
+  }[];
+};
+
+/**
+ * Todos os periodos letivos que a janela cobre, sem repetir.
+ *
+ * O PRINCIPAL entra sempre, mesmo quando ja esta no mapa: ele e o destino do
+ * fallback de uma modalidade sem linha propria, entao uma reserva pode ter sido
+ * gravada com ele. Deixa-lo de fora faria essa prova sumir de toda consulta pela
+ * janela — e ela existe.
+ */
+function idsDaJanela(periodo: {
+  periodoLetivoId: string;
+  letivosPorModalidade: { periodoLetivoId: string }[];
+}): string[] {
+  return [
+    ...new Set([
+      periodo.periodoLetivoId,
+      ...periodo.letivosPorModalidade.map((l) => l.periodoLetivoId),
+    ]),
+  ];
+}
+
+/**
+ * O mapa como a TELA do admin precisa ver: uma linha por modalidade cadastrada,
+ * inclusive as que nao tem entrada propria e caem no principal — sao justamente
+ * as que ele precisa enxergar para decidir se aquilo esta certo.
+ */
+function montarMapa(
+  periodo: JanelaComMapa,
+  modalidades: { id: number; codigo: string; nome: string }[],
+): LetivoDaModalidade[] {
+  const porModalidade = new Map(
+    periodo.letivosPorModalidade.map((l) => [
+      l.modalidadeId,
+      l.periodoLetivoId,
+    ]),
+  );
+
+  return modalidades.map((m) => ({
+    modalidadeId: m.id,
+    modalidadeCodigo: m.codigo,
+    modalidadeNome: m.nome,
+    periodoLetivoId: porModalidade.get(m.id) ?? periodo.periodoLetivoId,
+    herdadoDoPrincipal: !porModalidade.has(m.id),
+  }));
+}
+
+/**
+ * O mapa novo diz algo diferente do que ja esta gravado?
+ *
+ * Existe para que reenviar o formulario sem mexer no mapa NAO caia na trava de
+ * janela vazia. Editar so a data de fechamento de uma janela cheia e a operacao
+ * mais comum da tela, e ela manda o mapa junto — recusar ali seria travar o uso
+ * normal por causa de uma mudanca que nao houve.
+ */
+function mudouOMapa(
+  periodo: JanelaComMapa,
+  novo: { modalidadeId: number; periodoLetivoId: string }[],
+): boolean {
+  const atual = new Map(
+    periodo.letivosPorModalidade.map((l) => [
+      l.modalidadeId,
+      l.periodoLetivoId,
+    ]),
+  );
+
+  if (atual.size !== novo.length) return true;
+
+  return novo.some((l) => atual.get(l.modalidadeId) !== l.periodoLetivoId);
 }
 
 /**

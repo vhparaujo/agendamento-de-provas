@@ -92,6 +92,9 @@ model Modalidade {
   salaFaixas   SalaFaixa[]
   agendamentos Agendamento[] // fotografia da modalidade do aluno na reserva
   janelas      JanelaDeProva[] // horarios do questionario no dia da prova
+  // Qual periodo letivo do Brightspace vale para esta modalidade em cada janela
+  // de agendamento: modular anda por modulo, presencial por semestre.
+  periodosLetivos PeriodoLetivoModalidade[]
 
   @@map("modalidade")
 }
@@ -520,9 +523,33 @@ model IntegracaoD2L {
 // prazo. Antes da `rodada`, cadastrar a segunda janela do semestre era recusado
 // como duplicata — e, se passasse, a trava "uma prova por vinculo no semestre"
 // impediria o mesmo aluno de agendar as duas.
+//
+// E UMA JANELA COBRE MAIS DE UM PERIODO LETIVO AO MESMO TEMPO. A UCB divide o
+// ano de duas formas simultaneas: EaD/Semi/Modular andam por MODULO (quatro por
+// ano — 2026/1..2026/4) e Presencial anda por SEMESTRE (dois — 2026/1, 2026/2).
+// Em novembro de 2026 o aluno EaD esta sob `2026/4` e o presencial sob `2026/2`,
+// que sao dois org units DIFERENTES e VIVOS ao mesmo tempo no Brightspace. Como
+// as disciplinas do aluno saem dos descendentes desse org unit, o id errado nao
+// da erro nenhum: devolve lista vazia, e a modalidade inteira recebe "nenhuma
+// disciplina sua aparece no periodo letivo vigente".
+//
+// Por isso o `periodoLetivoId` de uma janela nao e uma string, e sim um MAPA por
+// modalidade (`PeriodoLetivoModalidade`). O que continua unico na janela e o
+// PRAZO: datas, `rodada` e faixa de nota valem para todo mundo.
 
 model PeriodoAgendamento {
   id              Int       @id @default(autoincrement())
+  /// O periodo letivo PRINCIPAL da janela — na pratica o dos modulos, que cobre
+  /// tres das quatro modalidades. NAO e mais o unico: quem responde "qual org
+  /// unit vale para ESTE aluno" e `letivosPorModalidade`.
+  ///
+  /// Continua existindo por tres razoes concretas:
+  /// 1. e a metade do par que identifica a janela (`criar` recusa a duplicata
+  ///    `periodoLetivoId + rodada`, e e assim que 2026/3+SUB convive com
+  ///    2026/3+N2);
+  /// 2. e o rotulo da janela na tela do admin e no portal do aluno;
+  /// 3. e o FALLBACK de uma modalidade sem linha no mapa — semear uma quinta
+  ///    modalidade nao pode derrubar o agendamento das outras quatro.
   periodoLetivoId String // Id do Periodo Letivo no Brightspace (ex: 103)
   /// Qual prova do semestre e esta janela: "N2", "SUB", "N1"... Texto livre de
   /// proposito: quem nomeia a rodada e a secretaria, e um enum obrigaria uma
@@ -551,7 +578,53 @@ model PeriodoAgendamento {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
+  /// O mapa `modalidade -> periodo letivo` desta janela. Uma linha por
+  /// modalidade cadastrada; ver `PeriodoLetivoModalidade`.
+  letivosPorModalidade PeriodoLetivoModalidade[]
+
   @@map("periodo_agendamento")
+}
+
+// ----------------------------------------------------------------------------
+// O MAPA `MODALIDADE -> PERIODO LETIVO` DE UMA JANELA
+// ----------------------------------------------------------------------------
+//
+// Existe porque a mesma prova acontece, no mesmo prazo, para alunos que estao em
+// org units de Periodo Letivo DIFERENTES no Brightspace: os modulares em 2026/4
+// e os presenciais em 2026/2. Sem o mapa e preciso escolher um dos dois, e a
+// outra metade da universidade fica sem disciplina agendavel.
+//
+// POR QUE UMA TABELA, e nao duas colunas (`periodoLetivoIdModular` /
+// `...Semestral`): duas colunas embutem no schema a suposicao de que existem
+// exatamente duas grades e de que se sabe, aqui, qual modalidade cai em qual.
+// Quem sabe disso e a secretaria, no cadastro. Uma linha por modalidade tambem
+// deixa o mapa APARECER na tela do admin, que e o unico jeito de um id errado
+// deixar de ser invisivel.
+//
+// A `rodada` NAO entra aqui de proposito: as duas rodadas do mesmo periodo
+// cobrem as mesmas materias, entao o mapa e da JANELA, nao da prova.
+//
+// ⚠️ Trocar o mapa depois de a janela ter reservas desalinha tudo, pelo mesmo
+// motivo que trocar a `rodada`: `Agendamento.periodoLetivoId` e fotografia. Por
+// isso ele so e editavel enquanto a janela estiver VAZIA
+// (`exigirJanelaVazia`, em `periodo.service.ts`).
+model PeriodoLetivoModalidade {
+  id                   Int    @id @default(autoincrement())
+  periodoAgendamentoId Int
+  modalidadeId         Int
+  /// Org unit do Periodo Letivo no Brightspace PARA ESTA MODALIDADE. O do aluno
+  /// sai da modalidade do VINCULO dele, nunca do relogio.
+  periodoLetivoId      String
+
+  periodo    PeriodoAgendamento @relation(fields: [periodoAgendamentoId], references: [id], onDelete: Cascade)
+  modalidade Modalidade         @relation(fields: [modalidadeId], references: [id])
+
+  // Uma modalidade nao pode ter dois periodos letivos na mesma janela: seria
+  // impossivel dizer qual das duas arvores vale para o aluno.
+  @@unique([periodoAgendamentoId, modalidadeId])
+  @@index([modalidadeId])
+  @@index([periodoLetivoId])
+  @@map("periodo_letivo_modalidade")
 }
 
 // ----------------------------------------------------------------------------

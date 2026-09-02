@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { createMariaDbAdapter } from '../src/database/mariadb-adapter';
-import { PrismaClient } from '../src/generated/prisma/client';
+import { Prisma, PrismaClient } from '../src/generated/prisma/client';
 
 /**
  * ============================================================================
@@ -46,12 +46,21 @@ async function main(): Promise<void> {
   const prisma = new PrismaClient({ adapter: createMariaDbAdapter() });
 
   try {
-    // O mesmo recorte de `periodoLetivoVigente()`: o cadastrado mais
+    // O mesmo recorte de `janelaVigente()`: a janela cadastrada mais
     // recentemente. Ler daqui, e nao de um argumento, e o que faz o diagnostico
     // falar da MESMA rodada que o lote vai usar.
+    //
+    // O mapa por modalidade vem junto porque a janela cobre as duas grades ao
+    // mesmo tempo: as reservas dos presenciais estao gravadas sob o org unit do
+    // semestre e as dos modulares sob o do modulo. Recortar por um so faria o
+    // diagnostico dizer que metade das turmas nao tem agendamento nenhum.
     const periodo = await prisma.periodoAgendamento.findFirst({
       orderBy: { createdAt: 'desc' },
-      select: { periodoLetivoId: true, rodada: true },
+      select: {
+        periodoLetivoId: true,
+        rodada: true,
+        letivosPorModalidade: { select: { periodoLetivoId: true } },
+      },
     });
 
     if (!periodo) {
@@ -63,9 +72,18 @@ async function main(): Promise<void> {
       return;
     }
 
-    const { periodoLetivoId, rodada } = periodo;
+    const { rodada } = periodo;
+
+    const periodosLetivos = [
+      ...new Set([
+        periodo.periodoLetivoId,
+        ...periodo.letivosPorModalidade.map((l) => l.periodoLetivoId),
+      ]),
+    ];
+
     console.log(
-      `[turmas:modalidades] periodo letivo ${periodoLetivoId}, rodada ${rodada}\n`,
+      `[turmas:modalidades] periodos letivos ${periodosLetivos.join(', ')}, ` +
+        `rodada ${rodada}\n`,
     );
 
     // A MESMA agregacao de `ModalidadeDaTurmaService`, mais o join com o CSV de
@@ -83,7 +101,7 @@ async function main(): Promise<void> {
         JOIN modalidade m              ON m.id = a.modalidadeId
         LEFT JOIN turma_importada t    ON t.orgUnitId = ad.orgUnitId
        WHERE a.status          = 'CONFIRMADO'
-         AND a.periodoLetivoId = ${periodoLetivoId}
+         AND a.periodoLetivoId IN (${Prisma.join(periodosLetivos)})
          AND a.rodada          = ${rodada}
        GROUP BY ad.orgUnitId
        ORDER BY quantas DESC, reservas DESC

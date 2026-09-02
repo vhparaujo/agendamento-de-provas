@@ -266,9 +266,12 @@ describe('SenhaQuizService', () => {
     } as unknown as GradeSenhasService;
 
     const periodo = {
-      periodoLetivoVigente: jest
-        .fn()
-        .mockResolvedValue({ periodoLetivoId: '103', rodada: 'N2' }),
+      janelaVigente: jest.fn().mockResolvedValue({
+        periodoLetivoIds: ['103'],
+        principal: '103',
+        rodada: 'N2',
+        filtroDeNota: null,
+      }),
     } as unknown as PeriodoService;
 
     const auditoria = { registrar: jest.fn() } as unknown as AuditoriaService;

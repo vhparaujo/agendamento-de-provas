@@ -308,6 +308,15 @@ export class AgendamentoAdminController {
    * e URL de relatorio e coisa que se cola, edita e compartilha.
    */
   private lerFiltro(query: Record<string, string>) {
+    const lista = (valor?: string): string[] | undefined => {
+      const itens = (valor ?? '')
+        .split(',')
+        .map((v) => v.trim())
+        .filter(Boolean);
+
+      return itens.length > 0 ? itens : undefined;
+    };
+
     const inteiro = (valor?: string) => {
       const numero = Number(valor);
       return valor !== undefined && Number.isInteger(numero) && numero > 0
@@ -320,7 +329,11 @@ export class AgendamentoAdminController {
       faixaId: inteiro(query.faixaId),
       salaId: inteiro(query.salaId),
       modalidadeId: inteiro(query.modalidadeId),
-      periodoLetivoId: query.periodoLetivoId || undefined,
+      // Aceita uma LISTA separada por virgula: uma janela cobre mais de um
+      // periodo letivo ao mesmo tempo (o do modulo e o do semestre), e a tela
+      // manda a janela inteira para nao esconder metade dos alunos. Um id
+      // sozinho continua valendo e vira uma lista de um elemento.
+      periodoLetivoId: lista(query.periodoLetivoId),
       rodada: query.rodada || undefined,
       de: query.de || undefined,
       ate: query.ate || undefined,

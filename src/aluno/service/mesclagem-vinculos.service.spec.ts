@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
+import { PeriodoService } from '../../periodo/service/periodo.service';
 import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 import { MesclagemVinculosService } from './mesclagem-vinculos.service';
 
@@ -101,8 +102,20 @@ function montar(vinculos: Vinculo[], reservas: Reserva[] = []) {
       eventos.push({ evento, detalhe: ctx.detalhe }),
   } as unknown as AuditoriaService;
 
+  // A janela vigente colapsa os periodos letivos das duas grades numa chave so
+  // — ver `recusarSeAmbosTemProva`. Aqui ela cobre so '103', que e o periodo das
+  // reservas destes cenarios.
+  const periodo = {
+    janelaVigente: jest.fn().mockResolvedValue({
+      periodoLetivoIds: ['103'],
+      principal: '103',
+      rodada: 'N2',
+      filtroDeNota: null,
+    }),
+  } as unknown as PeriodoService;
+
   return {
-    service: new MesclagemVinculosService(falso.servico, auditoria),
+    service: new MesclagemVinculosService(falso.servico, auditoria, periodo),
     eventos,
     ...falso,
   };

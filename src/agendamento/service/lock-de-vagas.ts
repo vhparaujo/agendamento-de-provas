@@ -80,6 +80,14 @@ export async function travarAluno(
  *   08:30 tambem — sao duas provas diferentes no mesmo momento, e a trava aqui e
  *   por PESSOA, nao por prova. `faixasBloqueadasParaOVinculo` (o
  *   `conflitaComOutraProva` do portal) espelha exatamente este recorte.
+ * - **Sao os periodos letivos da JANELA INTEIRA, no plural, e nao o do vinculo
+ *   que esta agendando.** E a consequencia direta de a mesma janela cobrir duas
+ *   grades: um mesmo RA pode ter um vinculo EaD (modulo 2026/4) e um Presencial
+ *   (semestre 2026/2), e as duas reservas dele ficam gravadas sob org units
+ *   DIFERENTES. Recortar pelo periodo de um vinculo so faria esta trava nao
+ *   enxergar a reserva do outro — e a pessoa marcaria as duas provas no mesmo
+ *   horario, em duas salas. E exatamente o que a trava existe para impedir, e
+ *   falharia calada.
  *
  * `exceto` existe para a troca e o remanejo: o agendamento que esta sendo movido
  * nao pode conflitar consigo mesmo.
@@ -89,14 +97,15 @@ export async function exigirUmaProvaPorFaixa(
   dados: {
     matricula: string;
     faixaId: number;
-    periodoLetivoId: string;
+    /** Os periodos letivos da JANELA — ver a nota acima sobre o plural. */
+    periodoLetivoIds: string[];
     exceto?: number;
   },
 ): Promise<void> {
   const outra = await tx.agendamento.findFirst({
     where: {
       matricula: dados.matricula,
-      periodoLetivoId: dados.periodoLetivoId,
+      periodoLetivoId: { in: dados.periodoLetivoIds },
       salaFaixa: { faixaId: dados.faixaId },
       ...CONFIRMADO,
       ...(dados.exceto ? { id: { not: dados.exceto } } : {}),

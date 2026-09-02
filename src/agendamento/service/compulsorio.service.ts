@@ -73,6 +73,13 @@ interface Pessoa {
   disciplinas: DisciplinaComNota[];
   /** Conta desativada no LMS: aloca, mas nao conseguiria abrir a prova. */
   contaInativa: boolean;
+  /**
+   * A arvore do Brightspace de onde estas disciplinas sairam — o periodo letivo
+   * da modalidade que resolveu esta pessoa. Volta junto da lista, e nao e
+   * recalculado depois, para que a reserva grave exatamente o org unit que
+   * produziu as disciplinas dela.
+   */
+  periodoLetivoId: string;
 }
 
 /** Um vinculo pronto para entrar na fila de alocacao. */
@@ -82,6 +89,31 @@ interface Candidato extends Pessoa {
   curso: string;
   poloId: number;
   modalidadeId: number;
+  /**
+   * O periodo letivo DESTE vinculo, resolvido pela modalidade dele. Vai gravado
+   * na reserva como fotografia.
+   *
+   * Fica no candidato, e nao no lote, porque o lote atravessa as duas grades: o
+   * mesmo `ExecucaoCompulsorio` aloca o presencial sob 2026/2 e o EaD sob
+   * 2026/4, na mesma passada.
+   */
+  periodoLetivoId: string;
+}
+
+/**
+ * O recorte do lote, congelado no inicio — o vigente pode mudar durante a
+ * execucao, e uma execucao que trocasse de semestre no meio alocaria metade dos
+ * alunos numa prova e metade em outra.
+ *
+ * `ids` no plural porque a janela cobre as duas grades ao mesmo tempo (modulos e
+ * semestres). Quem CONTA (elegiveis, faixas ja ocupadas, trava por pessoa) usa
+ * `ids`; quem GRAVA usa o periodo letivo do vinculo, resolvido pela modalidade.
+ * `principal` e so o rotulo da execucao.
+ */
+interface JanelaDoLote {
+  principal: string;
+  ids: string[];
+  rodada: string;
 }
 
 /** Uma linha do relatorio de quem NAO entrou (ou entrou com ressalva). */
@@ -169,7 +201,7 @@ export class CompulsorioService {
       );
     }
 
-    const vigente = await this.periodo.periodoLetivoVigente();
+    const vigente = await this.periodo.janelaVigente();
 
     if (!vigente) {
       throw new BadRequestException(
@@ -178,17 +210,21 @@ export class CompulsorioService {
       );
     }
 
-    const { periodoLetivoId, rodada } = vigente;
+    const janela: JanelaDoLote = {
+      principal: vigente.principal,
+      ids: vigente.periodoLetivoIds,
+      rodada: vigente.rodada,
+    };
 
-    const elegiveis = await this.elegiveis(
-      periodoLetivoId,
-      rodada,
-      opcoes.poloId,
-    );
+    const { principal: periodoLetivoId, rodada } = janela;
+
+    const elegiveis = await this.elegiveis(janela, opcoes.poloId);
 
     const execucao = await this.prisma.execucaoCompulsorio.create({
       data: {
         simulacao: opcoes.simulacao,
+        // O PRINCIPAL, como rotulo do lote. O recorte real e a janela inteira —
+        // as reservas gravadas por esta execucao ficam sob mais de um org unit.
         periodoLetivoId,
         rodada,
         iniciadoPor: adminEmail,
@@ -201,19 +237,12 @@ export class CompulsorioService {
       ator: adminEmail,
       detalhe:
         `execucao ${execucao.id}, ${opcoes.simulacao ? 'SIMULACAO' : 'GRAVANDO'}, ` +
-        `${elegiveis.length} elegivel(is), periodo letivo ${periodoLetivoId} ` +
-        `rodada ${rodada}` +
+        `${elegiveis.length} elegivel(is), periodos letivos ` +
+        `${janela.ids.join(', ')} rodada ${rodada}` +
         (opcoes.poloId ? `, polo ${opcoes.poloId}` : ''),
     });
 
-    void this.executar(
-      execucao.id,
-      periodoLetivoId,
-      rodada,
-      elegiveis,
-      opcoes,
-      adminEmail,
-    );
+    void this.executar(execucao.id, janela, elegiveis, opcoes, adminEmail);
 
     return execucao;
   }
@@ -373,20 +402,22 @@ export class CompulsorioService {
    * prova DA SUB — inclusive, e principalmente, quem fez a N2. Sem a rodada na
    * conta, o lote da segunda prova do semestre acharia zero elegiveis e
    * relataria sucesso.
+   *
+   * ⚠️ **O periodo letivo entra como a JANELA INTEIRA (`in`), e nao como um id.**
+   * As reservas dos presenciais estao gravadas sob o org unit do semestre e as
+   * dos modulares sob o do modulo. Recortar por um so faria a metade que ja
+   * agendou aparecer como elegivel — e o lote a agendaria DE NOVO, em outra sala
+   * e outro horario, sem nada na tela indicando que ja havia prova.
    */
-  private async elegiveis(
-    periodoLetivoId: string,
-    rodada: string,
-    poloId?: number,
-  ) {
+  private async elegiveis(janela: JanelaDoLote, poloId?: number) {
     return this.prisma.alunoImportado.findMany({
       where: {
         ativo: true,
         ...(poloId ? { poloId } : {}),
         agendamentos: {
           none: {
-            periodoLetivoId,
-            rodada,
+            periodoLetivoId: { in: janela.ids },
+            rodada: janela.rodada,
             status: StatusAgendamento.CONFIRMADO,
           },
         },
@@ -397,10 +428,14 @@ export class CompulsorioService {
         curso: true,
         poloId: true,
         modalidadeId: true,
+        // O codigo da modalidade e o que resolve o periodo letivo do vinculo —
+        // sem ele o lote nao sabe em qual das duas grades procurar as
+        // disciplinas deste aluno.
+        modalidade: { select: { codigo: true } },
         agendamentos: {
           where: {
-            periodoLetivoId,
-            rodada,
+            periodoLetivoId: { in: janela.ids },
+            rodada: janela.rodada,
             status: StatusAgendamento.CANCELADO,
           },
           select: { id: true },
@@ -419,8 +454,7 @@ export class CompulsorioService {
 
   private async executar(
     execucaoId: number,
-    periodoLetivoId: string,
-    rodada: string,
+    janela: JanelaDoLote,
     elegiveis: Awaited<ReturnType<CompulsorioService['elegiveis']>>,
     opcoes: { simulacao: boolean },
     adminEmail: string,
@@ -430,7 +464,7 @@ export class CompulsorioService {
 
     try {
       // ------------------------------------------------------------- fase 0
-      await this.preCarregarNotas(periodoLetivoId);
+      await this.preCarregarNotas(janela);
 
       // ---------------------------------------------------------------- fase 1
       const cancelaram = elegiveis.filter((e) => e.agendamentos.length > 0);
@@ -448,7 +482,7 @@ export class CompulsorioService {
 
       await this.resolverEmLotes(
         paraResolver,
-        periodoLetivoId,
+        janela,
         candidatos,
         excecoes,
         execucaoId,
@@ -457,8 +491,7 @@ export class CompulsorioService {
       // ---------------------------------------------------------------- fase 2
       const alocados = await this.alocarTodos(
         candidatos,
-        periodoLetivoId,
-        rodada,
+        janela,
         opcoes.simulacao,
         excecoes,
       );
@@ -526,20 +559,27 @@ export class CompulsorioService {
    * outra leu ha horas — no meio, o professor pode ter lancado a pendencia que
    * muda a elegibilidade.
    */
-  private async preCarregarNotas(periodoLetivoId: string): Promise<void> {
-    const vigente = await this.periodo.periodoLetivoVigente();
+  private async preCarregarNotas(janela: JanelaDoLote): Promise<void> {
+    const vigente = await this.periodo.janelaVigente();
 
     if (!vigente?.filtroDeNota) return;
 
     this.elegibilidadeDeNota.esquecer();
 
     try {
-      const ofertas = await this.d2l.ofertasDoSemestre(periodoLetivoId);
+      // As turmas dos DOIS periodos letivos. Pre-aquecer so o principal
+      // deixaria os presenciais fora do cache, e cada um deles voltaria a ser
+      // consultado aluno a aluno — o custo que esta fase existe para evitar.
+      const ofertas = (
+        await Promise.all(
+          janela.ids.map((letivo) => this.d2l.ofertasDoSemestre(letivo)),
+        )
+      ).flat();
 
       this.logger.log(
         `Janela com faixa de nota [${vigente.filtroDeNota.minima}; ` +
           `${vigente.filtroDeNota.maxima}): carregando as notas de ` +
-          `${ofertas.length} turma(s) do periodo letivo ${periodoLetivoId}.`,
+          `${ofertas.length} turma(s) dos periodos letivos ${janela.ids.join(', ')}.`,
       );
 
       await this.elegibilidadeDeNota.preAquecer(
@@ -564,18 +604,27 @@ export class CompulsorioService {
    */
   private async resolverEmLotes(
     alunos: Awaited<ReturnType<CompulsorioService['elegiveis']>>,
-    periodoLetivoId: string,
+    janela: JanelaDoLote,
     candidatos: Candidato[],
     excecoes: Excecao[],
     execucaoId: number,
   ): Promise<void> {
     /**
-     * O mesmo RA com dois cursos so custa uma ida a Valence: identidade e
-     * disciplinas vem por PESSOA, nao por vinculo. Sao 2 alunos em 7,5 mil na
-     * base real — o cache existe menos pela economia e mais para os dois
-     * vinculos receberem exatamente a mesma lista.
+     * O mesmo RA com dois cursos DA MESMA MODALIDADE so custa uma ida a
+     * Valence: identidade e disciplinas vem por PESSOA, nao por vinculo. Sao 2
+     * alunos em 7,5 mil na base real — o cache existe menos pela economia e mais
+     * para os dois vinculos receberem exatamente a mesma lista.
+     *
+     * ⚠️ **A chave e `matricula + modalidade`, e nao a matricula sozinha.** Era
+     * a matricula ate as duas grades passarem a conviver: agora as disciplinas
+     * de um vinculo EaD saem da arvore do modulo e as de um Presencial saem da
+     * arvore do semestre, e sao listas DIFERENTES. Com a chave antiga, o segundo
+     * vinculo receberia a lista do primeiro — a prova dele cobriria as
+     * disciplinas da outra grade, em silencio, porque a lista viria cheia e
+     * plausivel. Quem tem dois cursos na mesma modalidade continua custando uma
+     * chamada so, que e o caso real.
      */
-    const porMatricula = new Map<string, Promise<Pessoa | MotivoDaPessoa>>();
+    const porPessoa = new Map<string, Promise<Pessoa | MotivoDaPessoa>>();
     let processados = 0;
 
     for (let i = 0; i < alunos.length; i += CONCORRENCIA) {
@@ -583,17 +632,20 @@ export class CompulsorioService {
 
       const resultados = await Promise.all(
         fatia.map(async (aluno): Promise<Candidato | Excecao> => {
-          if (!porMatricula.has(aluno.matricula)) {
-            porMatricula.set(
-              aluno.matricula,
-              this.resolverUm(aluno.matricula, periodoLetivoId),
+          const modalidadeCodigo = aluno.modalidade.codigo;
+          const chave = `${aluno.matricula}\u0000${modalidadeCodigo}`;
+
+          if (!porPessoa.has(chave)) {
+            porPessoa.set(
+              chave,
+              this.resolverUm(aluno.matricula, janela, modalidadeCodigo),
             );
           }
 
-          const pessoa = await porMatricula.get(aluno.matricula)!;
+          const pessoa = await porPessoa.get(chave)!;
 
-          // O cache guarda o resultado da PESSOA; o vinculo (curso, polo,
-          // modalidade) e sempre o da linha atual.
+          // O cache guarda o resultado da PESSOA NAQUELA GRADE; o vinculo
+          // (curso, polo, modalidade) e sempre o da linha atual.
           return 'motivo' in pessoa
             ? { ...pessoa, alunoId: aluno.id, matricula: aluno.matricula }
             : {
@@ -603,6 +655,7 @@ export class CompulsorioService {
                 curso: aluno.curso,
                 poloId: aluno.poloId,
                 modalidadeId: aluno.modalidadeId,
+                periodoLetivoId: pessoa.periodoLetivoId,
               };
         }),
       );
@@ -631,9 +684,17 @@ export class CompulsorioService {
    */
   private async resolverUm(
     matricula: string,
-    periodoLetivoId: string,
+    janela: JanelaDoLote,
+    modalidadeCodigo: string,
   ): Promise<Pessoa | MotivoDaPessoa> {
     try {
+      // A modalidade escolhe a grade; sem mapa cadastrado para ela, o principal
+      // e o fallback (com `warn` no PeriodoService).
+      const vigente =
+        await this.periodo.periodoLetivoDaModalidade(modalidadeCodigo);
+
+      const periodoLetivoId = vigente?.periodoLetivoId ?? janela.principal;
+
       const identidade = await this.d2l.identidadePorMatricula(matricula);
 
       if (identidade.situacao === 'SEM_CONTA') {
@@ -661,6 +722,7 @@ export class CompulsorioService {
 
       const cruzamento = await this.disciplinas.cruzarPorUserId(
         identidade.userIdD2L,
+        modalidadeCodigo,
       );
 
       if (cruzamento.agendaveis.length === 0) {
@@ -686,7 +748,8 @@ export class CompulsorioService {
           motivo: MotivoExcecao.SEM_DISCIPLINA_AGENDAVEL,
           detalhe:
             cruzamento.motivo ??
-            `Nenhuma disciplina dele no periodo letivo ${periodoLetivoId} cruzou com o CSV de turmas com prova.`,
+            `Nenhuma disciplina dele no periodo letivo ${periodoLetivoId} ` +
+              `(modalidade ${modalidadeCodigo}) cruzou com o CSV de turmas com prova.`,
         };
       }
 
@@ -694,6 +757,7 @@ export class CompulsorioService {
         userIdD2L: identidade.userIdD2L,
         disciplinas: cruzamento.agendaveis,
         contaInativa: !identidade.ativoNoD2L,
+        periodoLetivoId,
       };
     } catch (erro) {
       // Rede, timeout, 500 da Valence: e problema DESTE aluno, nao do lote.
@@ -715,8 +779,7 @@ export class CompulsorioService {
    */
   private async alocarTodos(
     candidatos: Candidato[],
-    periodoLetivoId: string,
-    rodada: string,
+    janela: JanelaDoLote,
     simulacao: boolean,
     excecoes: Excecao[],
   ): Promise<number> {
@@ -736,9 +799,13 @@ export class CompulsorioService {
      * E, como o lock, NAO recorta por rodada: a prova que a pessoa fez na N2
      * ocupa aquele horario para a SUB tambem. Filtrar aqui faria a simulacao
      * prometer alocacoes que a execucao real recusaria.
+     *
+     * Pela mesma razao, sao os periodos letivos da JANELA INTEIRA: a prova que
+     * a pessoa marcou pelo vinculo presencial ocupa o horario dela igual, e ela
+     * esta gravada sob o outro org unit.
      */
     const faixasPorMatricula = ocupacaoSimulada
-      ? await this.faixasJaOcupadas(periodoLetivoId)
+      ? await this.faixasJaOcupadas(janela.ids)
       : null;
 
     let alocados = 0;
@@ -764,12 +831,7 @@ export class CompulsorioService {
               ocupacaoSimulada,
               porMatricula(faixasPorMatricula, candidato.matricula),
             )
-          : await this.alocarDeVerdade(
-              candidato,
-              faixas,
-              periodoLetivoId,
-              rodada,
-            );
+          : await this.alocarDeVerdade(candidato, faixas, janela);
 
       if (coube === 'JA_AGENDOU') {
         // Agendou pelo portal entre a montagem da lista e agora. Nao e excecao
@@ -810,9 +872,13 @@ export class CompulsorioService {
   private async alocarDeVerdade(
     candidato: Candidato,
     faixas: { id: number }[],
-    periodoLetivoId: string,
-    rodada: string,
+    janela: JanelaDoLote,
   ): Promise<boolean | 'JA_AGENDOU'> {
+    // O do VINCULO, resolvido pela modalidade na fase 1 e carregado no
+    // candidato: e a mesma arvore de onde as disciplinas dele sairam.
+    const { periodoLetivoId } = candidato;
+    const { rodada } = janela;
+
     for (const faixa of faixas) {
       try {
         const ja = await this.prisma.$transaction(async (tx) => {
@@ -840,7 +906,7 @@ export class CompulsorioService {
           await exigirUmaProvaPorFaixa(tx, {
             matricula: candidato.matricula,
             faixaId: faixa.id,
-            periodoLetivoId,
+            periodoLetivoIds: janela.ids,
           });
 
           const oferta = await escolherOfertaComLock(
@@ -964,10 +1030,10 @@ export class CompulsorioService {
    * ja gasta ~25 min em rede.
    */
   private async faixasJaOcupadas(
-    periodoLetivoId: string,
+    periodoLetivoIds: string[],
   ): Promise<Map<string, Set<number>>> {
     const agendamentos = await this.prisma.agendamento.findMany({
-      where: { periodoLetivoId, ...CONFIRMADO },
+      where: { periodoLetivoId: { in: periodoLetivoIds }, ...CONFIRMADO },
       select: { matricula: true, salaFaixa: { select: { faixaId: true } } },
     });
 

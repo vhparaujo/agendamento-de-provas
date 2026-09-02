@@ -17,6 +17,43 @@ interface Periodo {
   notaMaxima?: number | null;
   descricao: string | null;
   createdAt: Date;
+  /**
+   * O mapa `modalidade -> periodo letivo`. Ausente no fixture = o que a
+   * migration produz para as janelas antigas: todas as modalidades no
+   * principal.
+   */
+  letivosPorModalidade?: { modalidadeId: number; periodoLetivoId: string }[];
+}
+
+/**
+ * As modalidades cadastradas, como o seed as cria. O mapa e validado contra
+ * ELAS — faltar uma e 400 —, entao o duble precisa das quatro.
+ */
+const MODALIDADES = [
+  { id: 1, codigo: 'EAD', nome: 'EaD' },
+  { id: 2, codigo: 'SEMI', nome: 'Semipresencial' },
+  { id: 3, codigo: 'MODULAR', nome: 'Modular / Hibrido' },
+  { id: 4, codigo: 'PRESENCIAL', nome: 'Presencial' },
+];
+
+/**
+ * O mapa de uma janela, como o `include` do service o traz.
+ *
+ * Sem `letivosPorModalidade` no fixture, sintetiza o produto cartesiano com o
+ * principal — exatamente o que o backfill da migration gravou.
+ */
+function mapaDe(periodo: Periodo) {
+  const linhas =
+    periodo.letivosPorModalidade ??
+    MODALIDADES.map((m) => ({
+      modalidadeId: m.id,
+      periodoLetivoId: periodo.periodoLetivoId,
+    }));
+
+  return linhas.map((l) => ({
+    ...l,
+    modalidade: MODALIDADES.find((m) => m.id === l.modalidadeId)!,
+  }));
 }
 
 interface Reserva {
@@ -35,8 +72,19 @@ function montar(periodos: Periodo[], reservas: Reserva[] = []) {
   const servico = {
     $transaction: (fn: (tx: unknown) => unknown) => fn(servico),
     periodoAgendamento: {
-      findUnique: ({ where }: { where: { id: number } }) =>
-        Promise.resolve(periodos.find((p) => p.id === where.id) ?? null),
+      findUnique: ({ where }: { where: { id: number } }) => {
+        const achado = periodos.find((p) => p.id === where.id);
+
+        return Promise.resolve(
+          achado
+            ? {
+                ...achado,
+                ...COLUNAS_DE_JANELA,
+                letivosPorModalidade: mapaDe(achado),
+              }
+            : null,
+        );
+      },
       // O vigente e o mais recente — mesma ordenacao do service. O `select` e
       // reproduzido de proposito: sem ele o teste passaria com um objeto que o
       // Prisma real nunca devolveria.
@@ -56,6 +104,10 @@ function montar(periodos: Periodo[], reservas: Reserva[] = []) {
           notaMaxima: vigente.notaMaxima ?? null,
           descricao: vigente.descricao,
           ...COLUNAS_DE_JANELA,
+          // O `include` do mapa e sempre pedido junto (`MAPA_DA_JANELA`), e sem
+          // ele `idsDaJanela` devolveria so o principal — o duble ficaria
+          // silenciosamente ignorando a grade presencial.
+          letivosPorModalidade: mapaDe(vigente),
         };
 
         // O `select` e HONRADO: cada chamador pede um conjunto diferente de
@@ -83,7 +135,11 @@ function montar(periodos: Periodo[], reservas: Reserva[] = []) {
         Promise.resolve(
           [...periodos]
             .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-            .map((p) => ({ ...p, ...COLUNAS_DE_JANELA })),
+            .map((p) => ({
+              ...p,
+              ...COLUNAS_DE_JANELA,
+              letivosPorModalidade: mapaDe(p),
+            })),
         ),
       update: ({ where, data }: { where: { id: number }; data: Periodo }) => {
         const alvo = periodos.find((p) => p.id === where.id)!;
@@ -98,12 +154,26 @@ function montar(periodos: Periodo[], reservas: Reserva[] = []) {
 
         return Promise.resolve(alvo);
       },
-      create: ({ data }: { data: Periodo }) => {
-        const criado = {
-          ...data,
+      create: ({
+        data,
+      }: {
+        data: Periodo & {
+          letivosPorModalidade?: {
+            create: { modalidadeId: number; periodoLetivoId: string }[];
+          };
+        };
+      }) => {
+        const { letivosPorModalidade: aninhado, ...colunas } = data;
+
+        const criado: Periodo = {
+          ...colunas,
           id: Math.max(0, ...periodos.map((p) => p.id)) + 1,
           createdAt: new Date(),
+          // O `create` aninhado do Prisma vira o mapa da linha — sem isto o
+          // duble perderia justamente o que `criar` passou a gravar.
+          letivosPorModalidade: aninhado?.create,
         };
+
         periodos.push(criado);
         return Promise.resolve(criado);
       },
@@ -115,12 +185,12 @@ function montar(periodos: Periodo[], reservas: Reserva[] = []) {
       count: ({
         where,
       }: {
-        where: { periodoLetivoId: string; rodada: string };
+        where: { periodoLetivoId: { in: string[] }; rodada: string };
       }) =>
         Promise.resolve(
           reservas.filter(
             (r) =>
-              r.periodoLetivoId === where.periodoLetivoId &&
+              where.periodoLetivoId.in.includes(r.periodoLetivoId) &&
               r.rodada === where.rodada,
           ).length,
         ),
@@ -143,6 +213,40 @@ function montar(periodos: Periodo[], reservas: Reserva[] = []) {
             _count: { _all: total },
           })),
         );
+      },
+    },
+    modalidade: {
+      findMany: () => Promise.resolve(MODALIDADES),
+    },
+    periodoLetivoModalidade: {
+      deleteMany: ({ where }: { where: { periodoAgendamentoId: number } }) => {
+        const alvo = periodos.find((p) => p.id === where.periodoAgendamentoId);
+        if (alvo) alvo.letivosPorModalidade = [];
+        return Promise.resolve({ count: 0 });
+      },
+      createMany: ({
+        data,
+      }: {
+        data: {
+          periodoAgendamentoId: number;
+          modalidadeId: number;
+          periodoLetivoId: string;
+        }[];
+      }) => {
+        for (const linha of data) {
+          const alvo = periodos.find(
+            (p) => p.id === linha.periodoAgendamentoId,
+          );
+          if (!alvo) continue;
+          alvo.letivosPorModalidade = [
+            ...(alvo.letivosPorModalidade ?? []),
+            {
+              modalidadeId: linha.modalidadeId,
+              periodoLetivoId: linha.periodoLetivoId,
+            },
+          ];
+        }
+        return Promise.resolve({ count: data.length });
       },
     },
   } as unknown as PrismaService & Record<string, never>;
@@ -454,6 +558,12 @@ interface LinhaDePeriodo {
   dataAbertura: Date | null;
   dataFechamento: Date;
   createdAt: Date;
+  /** O mapa que o `include` traz junto. Ausente = so o principal. */
+  letivosPorModalidade?: {
+    modalidadeId: number;
+    periodoLetivoId: string;
+    modalidade: { id: number; codigo: string; nome: string };
+  }[];
 }
 
 /**
@@ -463,7 +573,13 @@ interface LinhaDePeriodo {
  */
 function comPeriodo(linha: LinhaDePeriodo | null) {
   const prisma = {
-    periodoAgendamento: { findFirst: () => Promise.resolve(linha) },
+    periodoAgendamento: {
+      // O service sempre pede o mapa junto (`MAPA_DA_JANELA`); um duble sem ele
+      // faria `idsDaJanela` explodir — que e melhor que devolver so o principal
+      // em silencio.
+      findFirst: () =>
+        Promise.resolve(linha && { letivosPorModalidade: [], ...linha }),
+    },
   } as unknown as PrismaService;
 
   return new PeriodoService(prisma, {} as AuditoriaService);
@@ -577,7 +693,7 @@ describe('PeriodoService — a faixa de nota', () => {
       notaMaxima: 6.75,
     });
 
-    await expect(service.periodoLetivoVigente()).resolves.toEqual({
+    await expect(service.periodoLetivoDaModalidade('EAD')).resolves.toEqual({
       periodoLetivoId: '132035',
       rodada: 'SUB',
       filtroDeNota: { minima: 1.5, maxima: 6.75 },
@@ -589,7 +705,7 @@ describe('PeriodoService — a faixa de nota', () => {
 
     await service.criar(JANELA);
 
-    const vigente = await service.periodoLetivoVigente();
+    const vigente = await service.periodoLetivoDaModalidade('EAD');
 
     expect(vigente?.filtroDeNota).toBeNull();
   });
@@ -696,5 +812,337 @@ describe('PeriodoService — a faixa de nota', () => {
 
     expect(periodos[0].notaMinima).toBe(1.5);
     expect(periodos[0].notaMaxima).toBe(6.75);
+  });
+});
+
+/**
+ * ============================================================================
+ * O MAPA `MODALIDADE -> PERIODO LETIVO`
+ * ============================================================================
+ * A UCB corre duas grades ao mesmo tempo: EaD/Semi/Modular por MODULO (quatro
+ * por ano) e Presencial por SEMESTRE (dois). Sao dois org units diferentes e
+ * vivos ao mesmo tempo no Brightspace, e a janela precisa cobrir os dois.
+ *
+ * O que estes testes protegem e o modo de falhar: um `periodoLetivoId` que nao
+ * bate NAO da erro nenhum — a busca de ofertas responde 200 com lista vazia, e
+ * a modalidade inteira recebe "nenhuma disciplina sua aparece no periodo letivo
+ * vigente". Toda conferencia que nao acontecer no cadastro vira suporte no dia
+ * da abertura.
+ */
+describe('PeriodoService — o mapa por modalidade', () => {
+  const JANELA_DUAS_GRADES: Periodo = {
+    id: 90,
+    periodoLetivoId: 'MODULO-2026-4',
+    rodada: 'N2',
+    descricao: '2026/4 + 2026/2',
+    createdAt: new Date('2026-09-01T12:00:00Z'),
+    letivosPorModalidade: [
+      { modalidadeId: 1, periodoLetivoId: 'MODULO-2026-4' }, // EAD
+      { modalidadeId: 2, periodoLetivoId: 'MODULO-2026-4' }, // SEMI
+      { modalidadeId: 3, periodoLetivoId: 'MODULO-2026-4' }, // MODULAR
+      { modalidadeId: 4, periodoLetivoId: 'SEMESTRE-2026-2' }, // PRESENCIAL
+    ],
+  };
+
+  it('resolve o periodo letivo pela modalidade do vinculo', async () => {
+    const { service } = montar([JANELA_DUAS_GRADES]);
+
+    await expect(
+      service.periodoLetivoDaModalidade('EAD'),
+    ).resolves.toMatchObject({ periodoLetivoId: 'MODULO-2026-4' });
+
+    await expect(
+      service.periodoLetivoDaModalidade('PRESENCIAL'),
+    ).resolves.toMatchObject({ periodoLetivoId: 'SEMESTRE-2026-2' });
+  });
+
+  /** O codigo vem do banco e do token; comparar sem normalizar quebraria calado. */
+  it('a modalidade casa sem diferenciar maiuscula de minuscula', async () => {
+    const { service } = montar([JANELA_DUAS_GRADES]);
+
+    await expect(
+      service.periodoLetivoDaModalidade('presencial'),
+    ).resolves.toMatchObject({ periodoLetivoId: 'SEMESTRE-2026-2' });
+  });
+
+  it('janelaVigente devolve os DOIS org units, sem repetir', async () => {
+    const { service } = montar([JANELA_DUAS_GRADES]);
+
+    const janela = await service.janelaVigente();
+
+    expect(janela?.principal).toBe('MODULO-2026-4');
+    // Tres modalidades apontam para o modulo: ele entra UMA vez.
+    expect(janela?.periodoLetivoIds.sort()).toEqual([
+      'MODULO-2026-4',
+      'SEMESTRE-2026-2',
+    ]);
+  });
+
+  /**
+   * O principal entra em `periodoLetivoIds` mesmo quando ja esta no mapa, e
+   * mesmo quando nenhuma modalidade aponta para ele: ele e o destino do
+   * fallback, entao pode haver reserva gravada com ele. Deixa-lo de fora faria
+   * essa prova sumir de toda consulta pela janela.
+   */
+  it('o principal entra na lista mesmo sem modalidade apontando para ele', async () => {
+    const { service } = montar([
+      {
+        ...JANELA_DUAS_GRADES,
+        letivosPorModalidade: [
+          { modalidadeId: 1, periodoLetivoId: 'OUTRO-A' },
+          { modalidadeId: 2, periodoLetivoId: 'OUTRO-A' },
+          { modalidadeId: 3, periodoLetivoId: 'OUTRO-A' },
+          { modalidadeId: 4, periodoLetivoId: 'OUTRO-B' },
+        ],
+      },
+    ]);
+
+    const janela = await service.janelaVigente();
+
+    expect(janela?.periodoLetivoIds).toContain('MODULO-2026-4');
+    expect(janela?.periodoLetivoIds).toHaveLength(3);
+  });
+
+  /**
+   * Modalidade sem linha no mapa cai no principal — e o que segura o sistema de
+   * pe quando uma modalidade nova e semeada depois da janela. Nao e erro: e a
+   * alternativa a derrubar o agendamento das outras quatro.
+   */
+  it('modalidade fora do mapa cai no principal', async () => {
+    const { service } = montar([
+      {
+        ...JANELA_DUAS_GRADES,
+        letivosPorModalidade: [
+          { modalidadeId: 4, periodoLetivoId: 'SEMESTRE-2026-2' },
+        ],
+      },
+    ]);
+
+    await expect(
+      service.periodoLetivoDaModalidade('EAD'),
+    ).resolves.toMatchObject({ periodoLetivoId: 'MODULO-2026-4' });
+  });
+
+  it('sem mapa informado, todas as modalidades ficam no principal', async () => {
+    const { service, periodos } = montar([]);
+
+    await service.criar({
+      periodoLetivoId: '555',
+      dataFechamento: '2026-12-31T23:59:00-03:00',
+    });
+
+    expect(periodos[0].letivosPorModalidade).toEqual([
+      { modalidadeId: 1, periodoLetivoId: '555' },
+      { modalidadeId: 2, periodoLetivoId: '555' },
+      { modalidadeId: 3, periodoLetivoId: '555' },
+      { modalidadeId: 4, periodoLetivoId: '555' },
+    ]);
+  });
+
+  /**
+   * Cobrir o mapa parcialmente e pior que nao cobrir: a modalidade esquecida
+   * cairia no principal em silencio, que e exatamente o erro que o mapa existe
+   * para impedir. A frase precisa dizer QUAIS faltam.
+   */
+  it('recusa o mapa incompleto, nomeando as modalidades que faltam', async () => {
+    const { service } = montar([]);
+
+    await expect(
+      service.criar({
+        periodoLetivoId: '555',
+        dataFechamento: '2026-12-31T23:59:00-03:00',
+        letivosPorModalidade: [
+          { modalidadeCodigo: 'EAD', periodoLetivoId: '555' },
+        ],
+      }),
+    ).rejects.toThrow(/SEMI.*MODULAR.*PRESENCIAL|PRESENCIAL/s);
+  });
+
+  it('recusa codigo de modalidade que nao existe', async () => {
+    const { service } = montar([]);
+
+    await expect(
+      service.criar({
+        periodoLetivoId: '555',
+        dataFechamento: '2026-12-31T23:59:00-03:00',
+        letivosPorModalidade: [
+          { modalidadeCodigo: 'HIBRIDO', periodoLetivoId: '555' },
+        ],
+      }),
+    ).rejects.toThrow(/HIBRIDO/);
+  });
+
+  it('grava o mapa que o admin cadastrou', async () => {
+    const { service, periodos } = montar([]);
+
+    await service.criar({
+      periodoLetivoId: 'MODULO',
+      dataFechamento: '2026-12-31T23:59:00-03:00',
+      letivosPorModalidade: [
+        { modalidadeCodigo: 'EAD', periodoLetivoId: 'MODULO' },
+        { modalidadeCodigo: 'SEMI', periodoLetivoId: 'MODULO' },
+        { modalidadeCodigo: 'MODULAR', periodoLetivoId: 'MODULO' },
+        { modalidadeCodigo: 'PRESENCIAL', periodoLetivoId: 'SEMESTRE' },
+      ],
+    });
+
+    expect(periodos[0].letivosPorModalidade).toContainEqual({
+      modalidadeId: 4,
+      periodoLetivoId: 'SEMESTRE',
+    });
+  });
+
+  /**
+   * O mapa e travado como a `rodada`, e pelo mesmo motivo: o `periodoLetivoId`
+   * da reserva e fotografia. Trocar o da janela com provas dentro faria a janela
+   * apontar para um org unit e as provas dela para outro — e dali em diante toda
+   * consulta pelo par para de casar.
+   */
+  it('recusa mexer no mapa quando a janela ja tem reserva', async () => {
+    const { service } = montar(
+      [JANELA_DUAS_GRADES],
+      [
+        {
+          periodoLetivoId: 'SEMESTRE-2026-2',
+          rodada: 'N2',
+          status: 'CONFIRMADO',
+        },
+      ],
+    );
+
+    await expect(
+      service.atualizar(
+        90,
+        {
+          letivosPorModalidade: [
+            { modalidadeCodigo: 'EAD', periodoLetivoId: 'MODULO-2026-4' },
+            { modalidadeCodigo: 'SEMI', periodoLetivoId: 'MODULO-2026-4' },
+            { modalidadeCodigo: 'MODULAR', periodoLetivoId: 'MODULO-2026-4' },
+            { modalidadeCodigo: 'PRESENCIAL', periodoLetivoId: 'TROCADO' },
+          ],
+        },
+        'admin@ucb.br',
+      ),
+    ).rejects.toThrow(/janela estiver vazia/i);
+  });
+
+  /**
+   * A reserva que trava esta sob o org unit do PRESENCIAL, nao sob o principal.
+   * Contar so o principal (como antes do mapa) deixaria a trava passar — e o
+   * teste acima e o que prova que ela nao passa.
+   *
+   * Este prova o outro lado: reenviar o mapa IGUAL nao dispara a trava, senao
+   * editar a data de fechamento de uma janela cheia ficaria impossivel (a tela
+   * manda o formulario inteiro).
+   */
+  it('reenviar o mapa igual nao dispara a trava', async () => {
+    const { service, periodos } = montar(
+      [JANELA_DUAS_GRADES],
+      [
+        {
+          periodoLetivoId: 'SEMESTRE-2026-2',
+          rodada: 'N2',
+          status: 'CONFIRMADO',
+        },
+      ],
+    );
+
+    await service.atualizar(
+      90,
+      {
+        descricao: 'so mexi na descricao',
+        letivosPorModalidade: [
+          { modalidadeCodigo: 'EAD', periodoLetivoId: 'MODULO-2026-4' },
+          { modalidadeCodigo: 'SEMI', periodoLetivoId: 'MODULO-2026-4' },
+          { modalidadeCodigo: 'MODULAR', periodoLetivoId: 'MODULO-2026-4' },
+          {
+            modalidadeCodigo: 'PRESENCIAL',
+            periodoLetivoId: 'SEMESTRE-2026-2',
+          },
+        ],
+      },
+      'admin@ucb.br',
+    );
+
+    expect(periodos[0].descricao).toBe('so mexi na descricao');
+  });
+
+  /**
+   * A contagem da tela soma os DOIS org units. Contar so o principal faria o
+   * admin ler "1 agendamento" numa janela com 2 — os presenciais ficariam
+   * invisiveis.
+   */
+  it('o total da janela soma as reservas das duas grades', async () => {
+    const { service } = montar(
+      [JANELA_DUAS_GRADES],
+      [
+        {
+          periodoLetivoId: 'MODULO-2026-4',
+          rodada: 'N2',
+          status: 'CONFIRMADO',
+        },
+        {
+          periodoLetivoId: 'SEMESTRE-2026-2',
+          rodada: 'N2',
+          status: 'CONFIRMADO',
+        },
+      ],
+    );
+
+    const [janela] = await service.listar();
+
+    expect(janela.totalAgendamentos).toBe(2);
+  });
+
+  /** Apagar uma janela cheia continua recusado quando a reserva e da outra grade. */
+  it('recusa apagar a janela por causa de uma reserva do presencial', async () => {
+    const { service } = montar(
+      [JANELA_DUAS_GRADES],
+      [
+        {
+          periodoLetivoId: 'SEMESTRE-2026-2',
+          rodada: 'N2',
+          status: 'CONFIRMADO',
+        },
+      ],
+    );
+
+    await expect(service.remover(90, 'admin@ucb.br')).rejects.toThrow(
+      /nao pode ser apagado/,
+    );
+  });
+
+  /** A tela precisa ver TODAS as modalidades, inclusive as que herdam. */
+  it('a listagem mostra a modalidade que herdou o principal', async () => {
+    const { service } = montar([
+      {
+        ...JANELA_DUAS_GRADES,
+        letivosPorModalidade: [
+          { modalidadeId: 4, periodoLetivoId: 'SEMESTRE-2026-2' },
+        ],
+      },
+    ]);
+
+    const [janela] = await service.listar();
+
+    expect(janela.letivosPorModalidade).toHaveLength(4);
+
+    const ead = janela.letivosPorModalidade.find(
+      (l) => l.modalidadeCodigo === 'EAD',
+    );
+
+    expect(ead).toMatchObject({
+      periodoLetivoId: 'MODULO-2026-4',
+      herdadoDoPrincipal: true,
+    });
+
+    const presencial = janela.letivosPorModalidade.find(
+      (l) => l.modalidadeCodigo === 'PRESENCIAL',
+    );
+
+    expect(presencial).toMatchObject({
+      periodoLetivoId: 'SEMESTRE-2026-2',
+      herdadoDoPrincipal: false,
+    });
   });
 });

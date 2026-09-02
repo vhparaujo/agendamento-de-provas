@@ -169,11 +169,16 @@ export class AgendamentoService {
    * sentidos: uma faixa a menos deixa o aluno descobrir o problema no clique de
    * confirmar, e uma faixa a mais esconde dele um horario que ele podia ter.
    *
-   * Por isso o recorte e `matricula + periodoLetivoId` e **nao filtra por
-   * rodada** — igual ao lock, e pela mesma razao: quem fez a N2 as 08:30 nao faz
-   * a SUB as 08:30, sao duas provas e ninguem esta em dois lugares ao mesmo
-   * tempo. Filtrar por rodada aqui faria a tela oferecer o horario que a
-   * confirmacao recusa.
+   * Por isso o recorte e `matricula + os periodos letivos da JANELA` e **nao
+   * filtra por rodada** — igual ao lock, e pela mesma razao: quem fez a N2 as
+   * 08:30 nao faz a SUB as 08:30, sao duas provas e ninguem esta em dois lugares
+   * ao mesmo tempo. Filtrar por rodada aqui faria a tela oferecer o horario que
+   * a confirmacao recusa.
+   *
+   * Os periodos letivos vao no PLURAL pelo mesmo motivo que no lock: a outra
+   * prova do mesmo RA pode estar num vinculo de outra modalidade, gravada sob o
+   * outro org unit. Recortar por um so faria a tela oferecer um horario que a
+   * confirmacao recusa — a metade errada do espelho.
    *
    * A UNICA exclusao e a reserva do proprio vinculo NA RODADA VIGENTE: e a que
    * esta sendo trocada, e ela nao pode conflitar consigo mesma (trocar para o
@@ -185,15 +190,15 @@ export class AgendamentoService {
     id: number;
     matricula: string;
   }): Promise<Set<number>> {
-    const vigente = await this.periodo.periodoLetivoVigente();
+    const janela = await this.periodo.janelaVigente();
 
-    if (!vigente) return new Set();
+    if (!janela) return new Set();
 
     const outras = await this.prisma.agendamento.findMany({
       where: {
         matricula: vinculo.matricula,
-        periodoLetivoId: vigente.periodoLetivoId,
-        NOT: { alunoId: vinculo.id, rodada: vigente.rodada },
+        periodoLetivoId: { in: janela.periodoLetivoIds },
+        NOT: { alunoId: vinculo.id, rodada: janela.rodada },
         ...CONFIRMADO,
       },
       select: { salaFaixa: { select: { faixaId: true } } },
@@ -209,7 +214,13 @@ export class AgendamentoService {
   ): Promise<DisciplinasDoVinculo> {
     const vinculo = await this.exigirVinculo(aluno, alunoId);
 
-    const { agendaveis, motivo } = await this.disciplinasDoAluno.cruzar(aluno);
+    // A lista e do VINCULO, e nao do RA: a modalidade dele escolhe o periodo
+    // letivo do Brightspace. Um aluno com um vinculo EaD e um Presencial ve
+    // listas diferentes em cada um, como deve ser — sao duas grades.
+    const { agendaveis, motivo } = await this.disciplinasDoAluno.cruzar(
+      aluno,
+      vinculo.modalidade.codigo,
+    );
 
     return {
       alunoId: vinculo.id,
@@ -264,9 +275,15 @@ export class AgendamentoService {
       );
     }
 
-    const periodo = await this.periodo.exigirAberto();
+    // A modalidade do vinculo decide QUAL periodo letivo do Brightspace vale
+    // para este aluno: EaD/Semi/Modular andam por modulo, Presencial por
+    // semestre, e os dois org units estao vivos ao mesmo tempo.
+    const periodo = await this.periodo.exigirAberto(vinculo.modalidade.codigo);
 
-    const cruzamento = await this.disciplinasDoAluno.cruzar(aluno);
+    const cruzamento = await this.disciplinasDoAluno.cruzar(
+      aluno,
+      vinculo.modalidade.codigo,
+    );
     const disciplinas = cruzamento.agendaveis;
 
     if (disciplinas.length === 0) {
@@ -287,6 +304,7 @@ export class AgendamentoService {
       faixaId: faixa.id,
       userIdD2L: aluno.userIdD2L,
       periodoLetivoId: periodo.periodoLetivoId,
+      periodoLetivoIds: periodo.periodoLetivoIds,
       rodada: periodo.rodada,
       disciplinas,
     });
@@ -320,7 +338,7 @@ export class AgendamentoService {
 
     // A troca e um agendamento novo aos olhos da regra: fora do prazo, nao ha
     // troca. Quem perdeu o prazo procura a secretaria, que remaneja.
-    await this.periodo.exigirAberto();
+    const periodo = await this.periodo.exigirAberto(vinculo.modalidade.codigo);
 
     const faixa = await this.exigirFaixaValida(faixaId, vinculo);
 
@@ -335,10 +353,13 @@ export class AgendamentoService {
 
       // A troca e um agendamento novo aos olhos da regra: trocar nao pode ser a
       // porta para cair no horario da outra prova do mesmo RA.
+      // A janela inteira, e nao `atual.periodoLetivoId`: a outra prova do mesmo
+      // RA pode estar num vinculo de outra modalidade, gravada sob o outro org
+      // unit. Ver a nota em `exigirUmaProvaPorFaixa`.
       await exigirUmaProvaPorFaixa(tx, {
         matricula: vinculo.matricula,
         faixaId: faixa.id,
-        periodoLetivoId: atual.periodoLetivoId,
+        periodoLetivoIds: periodo.periodoLetivoIds,
         exceto: agendamentoId,
       });
 
@@ -411,16 +432,20 @@ export class AgendamentoService {
   async meusAgendamentos(
     aluno: AlunoJwtPayload,
   ): Promise<AgendamentoConfirmado[]> {
-    const vigente = await this.periodo.periodoLetivoVigente();
+    // A JANELA inteira, e nao o periodo de uma modalidade: quem tem um vinculo
+    // EaD e um Presencial tem duas provas nesta mesma janela, gravadas sob org
+    // units diferentes. Filtrar por um so esconderia dele metade das provas —
+    // e ele iria embora sem saber de uma delas.
+    const janela = await this.periodo.janelaVigente();
 
-    if (!vigente) return [];
+    if (!janela) return [];
 
     const agendamentos = await this.prisma.agendamento.findMany({
       where: {
         matricula: aluno.sub,
         alunoId: { in: aluno.vinculos.map((v) => v.alunoId) },
-        periodoLetivoId: vigente.periodoLetivoId,
-        rodada: vigente.rodada,
+        periodoLetivoId: { in: janela.periodoLetivoIds },
+        rodada: janela.rodada,
         ...CONFIRMADO,
       },
       include: INCLUDE_COMPLETO,
@@ -468,7 +493,17 @@ export class AgendamentoService {
     poloId: number;
     faixaId: number;
     userIdD2L: string;
+    /**
+     * O periodo letivo DESTE vinculo, resolvido pela modalidade dele. E o que
+     * vai gravado na reserva como fotografia.
+     */
     periodoLetivoId: string;
+    /**
+     * Os periodos letivos da JANELA. So a trava por PESSOA usa — ela precisa
+     * enxergar a prova que o mesmo RA marcou por um vinculo de outra
+     * modalidade, gravada sob outro org unit.
+     */
+    periodoLetivoIds: string[];
     /** Do periodo VIGENTE. Vai gravada na reserva como fotografia — ver o schema. */
     rodada: string;
     disciplinas: DisciplinaComNota[];
@@ -502,11 +537,12 @@ export class AgendamentoService {
       // prova do semestre"); este e por PESSOA ("uma prova por horario"), e de
       // proposito NAO olha a rodada: quem fez a N2 as 08:30 nao faz a SUB as
       // 08:30 tambem. Um RA com dois cursos passa pelo primeiro e precisa parar
-      // no segundo.
+      // no segundo — inclusive quando os dois cursos sao de MODALIDADES
+      // diferentes, e por isso aqui vao os ids da janela e nao o do vinculo.
       await exigirUmaProvaPorFaixa(tx, {
         matricula: dados.matricula,
         faixaId: dados.faixaId,
-        periodoLetivoId: dados.periodoLetivoId,
+        periodoLetivoIds: dados.periodoLetivoIds,
       });
 
       const escolhida = await escolherOfertaComLock(
@@ -652,15 +688,23 @@ export class AgendamentoService {
     // ao aluno a chance de cancelar uma prova que ele JA FEZ — apagando-a da
     // lista do relatorio como se nunca tivesse existido.
     //
-    // A comparacao e do PAR `periodoLetivoId + rodada`, e a rodada nao e
+    // A comparacao e "esta prova pertence a JANELA vigente?", e a rodada nao e
     // detalhe: aberta a janela da substitutiva, a prova da N2 do MESMO semestre
     // ja aconteceu e cai no mesmo caso — comparar so o semestre a deixaria
     // alteravel, que e o que esta trava existe para impedir.
-    const vigente = await this.periodo.periodoLetivoVigente();
+    //
+    // O periodo letivo entra como PERTENCIMENTO (`includes`), e nao como
+    // igualdade: a mesma janela cobre a grade modular e a semestral, e a prova
+    // do presencial esta gravada sob o org unit dele. Comparar com um id so
+    // congelaria as provas de metade da universidade — elas passariam a
+    // responder "prova anterior" e o aluno nao conseguiria mais trocar de
+    // horario dentro do prazo.
+    const janela = await this.periodo.janelaVigente();
 
     if (
-      agendamento.periodoLetivoId !== vigente?.periodoLetivoId ||
-      agendamento.rodada !== vigente.rodada
+      !janela ||
+      !janela.periodoLetivoIds.includes(agendamento.periodoLetivoId) ||
+      agendamento.rodada !== janela.rodada
     ) {
       throw new NotFoundException(
         'Este agendamento e de uma prova anterior e nao pode mais ser alterado.',

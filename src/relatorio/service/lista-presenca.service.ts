@@ -124,7 +124,7 @@ export class ListaPresencaService {
     ondeSalaFaixa: Prisma.SalaFaixaWhereInput,
     filtro: FiltroRelatorio,
   ): Promise<SalaComPagina[]> {
-    const periodoLetivoId = await this.periodoDoRecorte(filtro);
+    const periodoLetivoId = await this.periodosDoRecorte(filtro);
 
     const agendamentos = await this.prisma.agendamento.findMany({
       where: {
@@ -231,15 +231,24 @@ export class ListaPresencaService {
     return { faixa: { poloId: filtro.poloId, data: janelaDeDatas(filtro) } };
   }
 
-  private periodoDoRecorte(
+  /**
+   * O recorte por periodo letivo: o da URL, ou a JANELA VIGENTE INTEIRA.
+   *
+   * Devolve um filtro (`{ in: [...] }`) e nao uma string porque a janela cobre
+   * mais de um org unit ao mesmo tempo — a grade modular e a semestral correm em
+   * paralelo. Um id so deixaria de fora as provas dos presenciais, e o relatorio
+   * sairia com metade da sala.
+   *
+   * `undefined` = sem recorte (nenhum periodo cadastrado), como antes.
+   */
+  private async periodosDoRecorte(
     filtro: FiltroRelatorio,
-  ): Promise<string | undefined> | string {
-    return (
-      filtro.periodoLetivoId ??
-      this.periodo
-        .periodoLetivoVigente()
-        .then((vigente) => vigente?.periodoLetivoId)
-    );
+  ): Promise<{ in: string[] } | undefined> {
+    if (filtro.periodoLetivoId?.length) return { in: filtro.periodoLetivoId };
+
+    const janela = await this.periodo.janelaVigente();
+
+    return janela ? { in: janela.periodoLetivoIds } : undefined;
   }
 }
 

@@ -70,7 +70,7 @@ turmas, abre/fecha o período de agendamento, acompanha a ocupação de cada sal
 |---|---|
 | **Polo** | Unidade física onde as provas ocorrem. São 27, populados por seed. |
 | **Sala** | Espaço físico dentro de um polo, com capacidade. **É neutra** — não tem modalidade fixa. |
-| **Modalidade** | Formato do curso, define a **duração da prova**: EaD 3h · Semipresencial 1h30 · Modular/Híbrido 1h30 · Presencial 2h. |
+| **Modalidade** | Formato do curso. Define a **duração da prova** (EaD 3h · Semipresencial 1h30 · Modular/Híbrido 1h30 · Presencial 2h) **e qual período letivo do Brightspace vale para o aluno** — ver *duas grades no mesmo ano*. |
 | **Vínculo** | Aluno + curso. **É a unidade real do sistema.** Um mesmo RA pode ter dois vínculos (dois cursos, modalidades diferentes) e agenda uma prova para cada. |
 | **Faixa** | Horário de prova que o admin abre para um polo (data + hora início + hora fim). **Também é neutra** — não tem modalidade fixa. |
 | **SalaFaixa** | **O núcleo do modelo.** Associação `Sala + Faixa + Modalidade + vagas + ordem`. É aqui que modalidade e vagas existem de fato. |
@@ -453,6 +453,58 @@ datas das provas**, que são as faixas. São duas linhas do tempo independentes.
 Fecha **só por data/hora**. Vaga esgotando é problema de capacidade (o admin abre
 mais salas), nunca motivo para encerrar o agendamento de quem ainda não escolheu.
 
+#### Duas grades no mesmo ano: o período letivo por modalidade
+
+A UCB divide o ano de **duas formas ao mesmo tempo**:
+
+| Modalidade | Divisão | Períodos por ano |
+|---|---|---|
+| EaD, Semipresencial, Modular | **módulo** | 4 — `2026/1` a `2026/4` |
+| Presencial | **semestre** | 2 — `2026/1` e `2026/2` |
+
+No Brightspace isso são **dois org units de Período Letivo diferentes e vivos ao
+mesmo tempo**: em novembro de 2026 o aluno EaD está sob `2026/4` e o presencial
+sob `2026/2`. Como as disciplinas agendáveis saem dos descendentes desse org
+unit, uma janela com um `periodoLetivoId` único obrigaria a escolher uma das
+grades — e a outra metade da universidade ficaria sem disciplina nenhuma, **sem
+erro nenhum**: o id que não bate responde 200 com lista vazia.
+
+Por isso uma janela guarda um **mapa `modalidade → periodoLetivoId`**:
+
+```jsonc
+POST /periodos
+{
+  "periodoLetivoId": "8811",          // o PRINCIPAL: rótulo da janela e fallback
+  "rodada": "N2",
+  "dataFechamento": "2026-11-20T23:59:00-03:00",
+  "letivosPorModalidade": [
+    { "modalidadeCodigo": "EAD",        "periodoLetivoId": "8811" },  // 2026/4
+    { "modalidadeCodigo": "SEMI",       "periodoLetivoId": "8811" },
+    { "modalidadeCodigo": "MODULAR",    "periodoLetivoId": "8811" },
+    { "modalidadeCodigo": "PRESENCIAL", "periodoLetivoId": "8790" }   // 2026/2
+  ]
+}
+```
+
+- **O prazo continua único.** Datas, `rodada` e faixa de nota valem para todas as
+  modalidades — é UMA janela. O que varia é só qual árvore do Brightspace
+  consultar.
+- **O mapa tem de cobrir TODAS as modalidades** (400 nomeando as que faltam).
+  Cobrir pela metade é pior que não cobrir: a esquecida cairia no principal em
+  silêncio. **Omitir o campo inteiro** põe todas no principal — o caso de quem
+  tem uma grade só.
+- **A reserva grava o período letivo da grade do aluno**, resolvido pela
+  modalidade do vínculo. Um RA com um vínculo EaD e um Presencial tem duas provas
+  nessa mesma janela, sob org units diferentes — e **continua valendo uma prova
+  por pessoa em cada horário**, atravessando as duas grades.
+- **O mapa só é editável com a janela vazia**, como a `rodada` e pelo mesmo
+  motivo (o `periodoLetivoId` da reserva é fotografia). Reenviar o mapa igual não
+  dispara a trava, então editar datas de uma janela cheia continua funcionando.
+- **O filtro `periodoLetivoId` das rotas de admin aceita uma lista** separada por
+  vírgula. As telas mandam a janela inteira; um id sozinho recorta aquela grade.
+- **A migration fez o backfill** (toda janela × toda modalidade, apontando para o
+  id que ela já tinha). Nada a fazer à mão.
+
 #### `rodada`: duas provas no mesmo semestre
 
 O Brightspace tem **um** `periodoLetivoId` por semestre, e existe mais de uma
@@ -473,8 +525,9 @@ prova nele — a regular e a **substitutiva**. O campo `rodada` (`"N2"` por padr
 - `rodada` só é editável **enquanto a janela não tiver prova nenhuma** (o `PATCH`
   responde 409 depois disso; cancelados contam). A rodada gravada na reserva é
   fotografia — trocar a da janela não renomearia nenhuma delas, e as provas
-  sumiriam do portal do aluno como se ninguém tivesse agendado. `periodoLetivoId`
-  nunca muda.
+  sumiriam do portal do aluno como se ninguém tivesse agendado. O
+  `periodoLetivoId` **principal** nunca muda; o mapa por modalidade segue a mesma
+  regra da rodada (só com a janela vazia).
 - **Os períodos que já existiam ganharam `rodada = "N2"` na migration**, junto com
   os agendamentos deles. Nada a fazer à mão.
 
@@ -529,6 +582,10 @@ perder o histórico, é o `PATCH` — não este.
 Exigem JWT de admin. Todas aceitam os mesmos filtros: `poloId`, `faixaId`,
 `salaId`, `modalidadeId`, `periodoLetivoId`, `rodada`, `de`, `ate` (data da
 **prova**).
+
+`periodoLetivoId` aceita uma **lista separada por vírgula** — uma janela cobre
+mais de um período letivo ao mesmo tempo (o do módulo e o do semestre), e as
+telas mandam a janela inteira. Sem ele, o recorte é a janela vigente completa.
 
 | Método | Rota | Descrição |
 |---|---|---|
@@ -1128,7 +1185,11 @@ Polo ──┬── Sala ─────┐
 AlunoImportado (matrícula + curso) ──────────────────┘
    └── Modalidade, Polo, ImportacaoCsv
 
-TurmaImportada ── ImportacaoCsv      Admin      PeriodoAgendamento
+TurmaImportada ── ImportacaoCsv      Admin
+
+PeriodoAgendamento ── PeriodoLetivoModalidade ── Modalidade
+   (a janela: prazo,           (qual periodo letivo do
+    rodada, faixa de nota)      Brightspace vale para cada uma)
 ```
 
 **Tabelas e o que cada uma guarda**
@@ -1148,7 +1209,8 @@ TurmaImportada ── ImportacaoCsv      Admin      PeriodoAgendamento
 | `AgendamentoDisciplina` | As N disciplinas cobertas pela reserva |
 | `SyncD2L` | Fila de gravação do *special access* (PENDENTE/CONCLUIDO/FALHOU/NAO_MATRICULADO) |
 | `HistoricoAgendamento` | Quem alterou o agendamento: evento, autor (aluno/admin), de → para |
-| `PeriodoAgendamento` | Janela de agendamento; fecha por `dataFechamento`. Identidade = `periodoLetivoId` + `rodada` |
+| `PeriodoAgendamento` | Janela de agendamento; fecha por `dataFechamento`. Identidade = `periodoLetivoId` (o **principal**) + `rodada` |
+| `PeriodoLetivoModalidade` | O mapa `modalidade → periodoLetivoId` de uma janela. Existe porque módulos e semestres correm em paralelo — ver *duas grades no mesmo ano* |
 | `SenhaDeProva` | Uma célula da grade `(data, turno)` → senha da prova. **Única coluna do banco com a senha em texto claro** |
 | `ConfiguracaoSenhaQuiz` | Linha única (`id=1`): o que o admin configura — questionário-alvo e os horários do cron |
 | `ExecucaoSenhaQuiz` | Uma rodada do lote de troca de senhas. Guarda contadores e a `versaoAplicada`; **nunca a senha** |

@@ -22,7 +22,7 @@ describe('ModalidadeDaTurmaService', () => {
 
   it('uma modalidade so: resolve', async () => {
     const { servico } = montar([linha('7001', 1, 'EAD', 42)]);
-    const mapa = await servico.resolver('103', 'N2');
+    const mapa = await servico.resolver(['103'], 'N2');
 
     expect(mapa.de('7001')).toEqual({
       situacao: 'ENCONTRADA',
@@ -44,7 +44,7 @@ describe('ModalidadeDaTurmaService', () => {
       linha('7003', 2, 'SEMI', 7),
     ]);
     const decisao = await servico
-      .resolver('103', 'N2')
+      .resolver(['103'], 'N2')
       .then((m) => m.de('7003'));
 
     expect(decisao.situacao).toBe('SEM_MODALIDADE');
@@ -61,7 +61,7 @@ describe('ModalidadeDaTurmaService', () => {
   it('turma sem agendamento nenhum: SEM_AGENDAMENTO', async () => {
     const { servico } = montar([]);
     const decisao = await servico
-      .resolver('103', 'N2')
+      .resolver(['103'], 'N2')
       .then((m) => m.de('7999'));
 
     expect(decisao.situacao).toBe('SEM_MODALIDADE');
@@ -79,7 +79,7 @@ describe('ModalidadeDaTurmaService', () => {
       linha('7003', 2, 'SEMI', 5),
     ]);
     const decisao = await servico
-      .resolver('103', 'N2')
+      .resolver(['103'], 'N2')
       .then((m) => m.de('7003'));
 
     if (decisao.situacao !== 'SEM_MODALIDADE')
@@ -98,7 +98,7 @@ describe('ModalidadeDaTurmaService', () => {
   it('converte o BigInt do COUNT para number', async () => {
     const { servico } = montar([linha('7001', 1, 'EAD', BigInt(42))]);
     const decisao = await servico
-      .resolver('103', 'N2')
+      .resolver(['103'], 'N2')
       .then((m) => m.de('7001'));
 
     if (decisao.situacao !== 'ENCONTRADA')
@@ -115,7 +115,7 @@ describe('ModalidadeDaTurmaService', () => {
       linha('7003', 2, 'SEMI', 1),
     ]);
 
-    expect((await servico.resolver('103', 'N2')).totalComAgendamento).toBe(3);
+    expect((await servico.resolver(['103'], 'N2')).totalComAgendamento).toBe(3);
   });
 
   /**
@@ -125,11 +125,55 @@ describe('ModalidadeDaTurmaService', () => {
    */
   it('o recorte leva periodo E rodada para a consulta', async () => {
     const { servico, queryRaw } = montar([]);
-    await servico.resolver('103', 'SUB');
+    await servico.resolver(['103'], 'SUB');
 
     const parametros = queryRaw.mock.calls[0].slice(1) as unknown[];
-    expect(parametros).toContain('103');
+    expect(valoresDe(parametros)).toContain('103');
     expect(parametros).toContain('SUB');
     expect(parametros).toContain('CONFIRMADO');
   });
+
+  /**
+   * Os DOIS periodos letivos da janela vao para o `IN`.
+   *
+   * A janela cobre as duas grades ao mesmo tempo (modulo e semestre), e uma
+   * turma presencial so tem reserva sob o org unit do semestre. Consultar so um
+   * a devolveria como SEM_AGENDAMENTO — turma sem modalidade fica de fora do
+   * lote de datas, e a prova nao abre no dia.
+   */
+  it('leva TODOS os periodos letivos da janela para o IN', async () => {
+    const { servico, queryRaw } = montar([]);
+    await servico.resolver(['8811', '8790'], 'N2');
+
+    const valores = valoresDe(queryRaw.mock.calls[0].slice(1) as unknown[]);
+
+    expect(valores).toContain('8811');
+    expect(valores).toContain('8790');
+  });
+
+  /** Lista vazia e sempre falso num `IN`: responde mapa vazio sem ir ao banco. */
+  it('sem periodo letivo nenhum, nao consulta o banco', async () => {
+    const { servico, queryRaw } = montar([]);
+
+    const mapa = await servico.resolver([], 'N2');
+
+    expect(queryRaw).not.toHaveBeenCalled();
+    expect(mapa.totalComAgendamento).toBe(0);
+    expect(mapa.de('qualquer').situacao).toBe('SEM_MODALIDADE');
+  });
 });
+
+/**
+ * Achata os parametros da consulta crua.
+ *
+ * `Prisma.join()` entrega um fragmento (`{ strings, values }`) em vez de um
+ * valor solto, entao os ids do `IN` ficam um nivel abaixo dos demais
+ * parametros.
+ */
+function valoresDe(parametros: unknown[]): unknown[] {
+  return parametros.flatMap((p) =>
+    p && typeof p === 'object' && 'values' in p
+      ? ((p as { values: unknown[] }).values ?? [])
+      : [p],
+  );
+}

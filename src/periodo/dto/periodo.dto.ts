@@ -1,5 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
   IsISO8601,
   IsNotEmpty,
@@ -9,9 +12,11 @@ import {
   Max,
   MaxLength,
   Min,
+  ValidateNested,
 } from 'class-validator';
 import type {
   FiltroDeNota,
+  LetivoDaModalidade,
   PeriodoAdmin,
   RemocaoPeriodo,
   VigenteDepoisDaRemocao,
@@ -30,6 +35,61 @@ const AJUDA_NOTA =
   'Ler a nota exige o escopo `grades:gradevalues:read` no consentimento da ' +
   'Valence — acrescenta-lo ao `.env` nao basta, e preciso refazer ' +
   '`npm run d2l:autorizar`.';
+
+const AJUDA_MAPA =
+  'O PERIODO LETIVO DE CADA MODALIDADE. A UCB corre duas grades ao mesmo ' +
+  'tempo: EaD, Semipresencial e Modular andam por MODULO (quatro por ano — ' +
+  '2026/1 a 2026/4) e Presencial anda por SEMESTRE (dois — 2026/1 e 2026/2). ' +
+  'Em novembro de 2026 o aluno EaD esta sob 2026/4 e o presencial sob 2026/2, ' +
+  'que sao org units DIFERENTES e vivos ao mesmo tempo no Brightspace.\n\n' +
+  'OMITIR = todas as modalidades ficam no `periodoLetivoId` principal, que e o ' +
+  'comportamento de quem tem uma grade so.\n\n' +
+  'INFORMAR = tem de cobrir TODAS as modalidades cadastradas; faltar uma ' +
+  'responde 400 nomeando quais. Cobrir parcialmente seria pior que nao cobrir: ' +
+  'a esquecida cairia no principal em silencio, e um `periodoLetivoId` que nao ' +
+  'bate NAO da erro — a busca responde 200 com lista vazia e a modalidade ' +
+  'inteira recebe "nenhuma disciplina sua aparece no periodo letivo vigente".';
+
+export class LetivoDaModalidadeDto {
+  @ApiProperty({
+    example: 'PRESENCIAL',
+    description: 'Codigo da modalidade: EAD, SEMI, MODULAR ou PRESENCIAL.',
+  })
+  @IsString()
+  @IsNotEmpty({ message: 'modalidadeCodigo e obrigatorio' })
+  @MaxLength(50)
+  modalidadeCodigo!: string;
+
+  @ApiProperty({
+    example: '8790',
+    description: 'Id do periodo letivo no Brightspace para esta modalidade.',
+  })
+  @IsString()
+  @IsNotEmpty({ message: 'periodoLetivoId e obrigatorio' })
+  @MaxLength(191)
+  periodoLetivoId!: string;
+}
+
+export class LetivoDaModalidadeResponseDto
+  extends LetivoDaModalidadeDto
+  implements LetivoDaModalidade
+{
+  @ApiProperty({ example: 4 })
+  modalidadeId!: number;
+
+  @ApiProperty({ example: 'Presencial' })
+  modalidadeNome!: string;
+
+  @ApiProperty({
+    example: false,
+    description:
+      'true quando esta modalidade NAO tem entrada propria e caiu no periodo ' +
+      'letivo principal da janela. Acontece com modalidade cadastrada depois da ' +
+      'janela. Nao e erro, mas e o que a tela precisa destacar: se ela nao segue ' +
+      'a mesma grade, os alunos dela ficam sem disciplina agendavel.',
+  })
+  herdadoDoPrincipal!: boolean;
+}
 
 export class CriarPeriodoDto {
   @ApiProperty({
@@ -58,6 +118,17 @@ export class CriarPeriodoDto {
   @IsString()
   @MaxLength(20)
   rodada?: string;
+
+  @ApiPropertyOptional({
+    type: [LetivoDaModalidadeDto],
+    description: AJUDA_MAPA,
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => LetivoDaModalidadeDto)
+  letivosPorModalidade?: LetivoDaModalidadeDto[];
 
   @ApiPropertyOptional({
     example: 1.5,
@@ -118,6 +189,25 @@ export class CriarPeriodoDto {
 }
 
 export class AtualizarPeriodoDto {
+  @ApiPropertyOptional({
+    type: [LetivoDaModalidadeDto],
+    description:
+      'Corrige o mapa por modalidade — **so enquanto a janela nao tiver ' +
+      'agendamento nenhum** (cancelados contam), pela mesma razao da `rodada`: ' +
+      'o `periodoLetivoId` gravado na reserva e fotografia, e trocar o da janela ' +
+      'deixaria as provas orfas. Reenviar o mapa IGUAL ao que ja esta gravado ' +
+      'nao dispara a trava, entao editar so as datas de uma janela cheia ' +
+      'continua funcionando.\n\n' +
+      'O mapa vai INTEIRO: nao ha edicao de uma linha so, porque ele e validado ' +
+      'como conjunto (toda modalidade coberta).',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => LetivoDaModalidadeDto)
+  letivosPorModalidade?: LetivoDaModalidadeDto[];
+
   @ApiPropertyOptional({
     example: 'SUB',
     maxLength: 20,
@@ -208,8 +298,23 @@ export class PeriodoAdminDto implements PeriodoAdmin {
   @ApiProperty({ example: 3 })
   id!: number;
 
-  @ApiProperty({ example: '103' })
+  @ApiProperty({
+    example: '103',
+    description:
+      'O periodo letivo PRINCIPAL da janela — o rotulo dela, e o fallback de uma ' +
+      'modalidade sem entrada no mapa. Qual vale para cada aluno esta em ' +
+      '`letivosPorModalidade`.',
+  })
   periodoLetivoId!: string;
+
+  @ApiProperty({
+    type: [LetivoDaModalidadeResponseDto],
+    description:
+      'O mapa `modalidade -> periodo letivo` desta janela, com uma linha por ' +
+      'modalidade cadastrada (inclusive as que herdam o principal). ' +
+      'Ver POST /periodos.',
+  })
+  letivosPorModalidade!: LetivoDaModalidade[];
 
   @ApiProperty({
     example: 'SUB',

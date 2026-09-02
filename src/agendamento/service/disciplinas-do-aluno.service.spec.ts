@@ -90,7 +90,7 @@ describe('DisciplinasDoAlunoService', () => {
     } as unknown as D2lEnrollmentsService;
 
     const periodo = {
-      periodoLetivoVigente: jest.fn().mockResolvedValue(
+      periodoLetivoDaModalidade: jest.fn().mockResolvedValue(
         // `undefined` continua sendo "nenhum periodo cadastrado"; o resto vira o
         // par que o service passou a devolver.
         (() => {
@@ -154,7 +154,10 @@ describe('DisciplinasDoAlunoService', () => {
         cruzamento: [cruzada(HISTORIA), cruzada(NUTRICAO)],
       });
 
-      const disciplinas = await service.agendaveis(aluno(['EDUCACAO FISICA']));
+      const disciplinas = await service.agendaveis(
+        aluno(['EDUCACAO FISICA']),
+        'EAD',
+      );
 
       expect(ofertasDoPeriodo).toHaveBeenCalledWith('76629', '103');
       expect(filtrarAgendaveis).toHaveBeenCalledWith([HISTORIA, NUTRICAO]);
@@ -168,7 +171,7 @@ describe('DisciplinasDoAlunoService', () => {
         periodoLetivoId: undefined,
       });
 
-      const r = await service.cruzar(aluno(['EDUCACAO FISICA']));
+      const r = await service.cruzar(aluno(['EDUCACAO FISICA']), 'EAD');
 
       expect(ofertasDoPeriodo).not.toHaveBeenCalled();
       expect(r.motivo).toMatch(/periodo letivo ainda nao foi configurado/);
@@ -181,7 +184,7 @@ describe('DisciplinasDoAlunoService', () => {
         cruzamento: [],
       });
 
-      const r = await service.cruzar(aluno(['EDUCACAO FISICA']));
+      const r = await service.cruzar(aluno(['EDUCACAO FISICA']), 'EAD');
 
       expect(r.motivo).toMatch(/Nenhuma disciplina sua aparece/);
     });
@@ -194,7 +197,7 @@ describe('DisciplinasDoAlunoService', () => {
         cruzamento: [cruzada(HISTORIA)],
       });
 
-      await service.agendaveis(aluno(['EDUCACAO FISICA']));
+      await service.agendaveis(aluno(['EDUCACAO FISICA']), 'EAD');
 
       expect(filtrarAgendaveis).toHaveBeenCalledWith([HISTORIA]);
     });
@@ -205,10 +208,13 @@ describe('DisciplinasDoAlunoService', () => {
         cruzamento: [],
       });
 
-      await service.agendaveis({
-        ...aluno(['EDUCACAO FISICA']),
-        contexto: undefined,
-      });
+      await service.agendaveis(
+        {
+          ...aluno(['EDUCACAO FISICA']),
+          contexto: undefined,
+        },
+        'EAD',
+      );
 
       expect(filtrarAgendaveis).toHaveBeenCalledWith([]);
     });
@@ -231,7 +237,7 @@ describe('DisciplinasDoAlunoService', () => {
         cruzamento: [cruzada(HISTORIA)],
       });
 
-      const r = await service.cruzar(aluno(['EDUCACAO FISICA']));
+      const r = await service.cruzar(aluno(['EDUCACAO FISICA']), 'EAD');
 
       expect(filtrarAgendaveis).toHaveBeenCalledWith([HISTORIA]);
       expect(r.agendaveis).toHaveLength(1);
@@ -251,10 +257,13 @@ describe('DisciplinasDoAlunoService', () => {
         cruzamento: [],
       });
 
-      const r = await service.cruzar({
-        ...aluno(['EDUCACAO FISICA']),
-        contexto: undefined,
-      });
+      const r = await service.cruzar(
+        {
+          ...aluno(['EDUCACAO FISICA']),
+          contexto: undefined,
+        },
+        'EAD',
+      );
 
       expect(r.agendaveis).toEqual([]);
       expect(r.motivo).toMatch(/Brightspace/);
@@ -273,7 +282,9 @@ describe('DisciplinasDoAlunoService', () => {
         cruzamento: [],
       });
 
-      await expect(service.cruzarPorUserId('76629')).rejects.toThrow(FORA);
+      await expect(service.cruzarPorUserId('76629', 'EAD')).rejects.toThrow(
+        FORA,
+      );
     });
   });
 
@@ -296,7 +307,7 @@ describe('DisciplinasDoAlunoService', () => {
         cruzamento: [cruzada(HISTORIA), cruzada(NUTRICAO)],
       });
 
-      const disciplinas = await service.agendaveis(aluno(DOIS));
+      const disciplinas = await service.agendaveis(aluno(DOIS), 'EAD');
 
       expect(disciplinas.map((d) => d.orgUnitId)).toEqual(['6606', '6610']);
     });
@@ -307,7 +318,7 @@ describe('DisciplinasDoAlunoService', () => {
         cruzamento: [cruzada(HISTORIA)],
       });
 
-      const disciplinas = await service.agendaveis(aluno(DOIS));
+      const disciplinas = await service.agendaveis(aluno(DOIS), 'EAD');
 
       expect(disciplinas.map((d) => d.orgUnitId)).toEqual(['6606']);
     });
@@ -332,7 +343,10 @@ describe('DisciplinasDoAlunoService', () => {
         notas: { '6606': 4.25, '6610': 8.5 },
       });
 
-      const disciplinas = await service.agendaveis(aluno(['EDUCACAO FISICA']));
+      const disciplinas = await service.agendaveis(
+        aluno(['EDUCACAO FISICA']),
+        'EAD',
+      );
 
       expect(disciplinas).toEqual([{ ...cruzada(HISTORIA), notaFinal: 4.25 }]);
     });
@@ -348,6 +362,7 @@ describe('DisciplinasDoAlunoService', () => {
 
       const { agendaveis, motivo, causa } = await service.cruzar(
         aluno(['EDUCACAO FISICA']),
+        'EAD',
       );
 
       expect(agendaveis).toHaveLength(0);
@@ -372,6 +387,7 @@ describe('DisciplinasDoAlunoService', () => {
 
       const { agendaveis, motivo } = await service.cruzar(
         aluno(['EDUCACAO FISICA']),
+        'EAD',
       );
 
       expect(agendaveis).toHaveLength(0);
@@ -389,6 +405,7 @@ describe('DisciplinasDoAlunoService', () => {
 
       const { agendaveis, motivo } = await service.cruzar(
         aluno(['EDUCACAO FISICA']),
+        'EAD',
       );
 
       expect(agendaveis).toHaveLength(0);
@@ -409,7 +426,9 @@ describe('DisciplinasDoAlunoService', () => {
         erroDasNotas: new Error('403 sem escopo'),
       });
 
-      await expect(service.cruzarPorUserId('76629')).rejects.toThrow(/notas/);
+      await expect(service.cruzarPorUserId('76629', 'EAD')).rejects.toThrow(
+        /notas/,
+      );
     });
 
     /** Sem integracao nao ha nota, e sem nota a substitutiva nao pode abrir. */
@@ -422,6 +441,7 @@ describe('DisciplinasDoAlunoService', () => {
 
       const { agendaveis, motivo } = await service.cruzar(
         aluno(['EDUCACAO FISICA']),
+        'EAD',
       );
 
       expect(agendaveis).toHaveLength(0);
@@ -439,6 +459,7 @@ describe('DisciplinasDoAlunoService', () => {
 
       const { agendaveis, motivo } = await service.cruzar(
         aluno(['EDUCACAO FISICA']),
+        'EAD',
       );
 
       expect(agendaveis).toHaveLength(0);
@@ -456,7 +477,10 @@ describe('DisciplinasDoAlunoService', () => {
         cruzamento: [cruzada(HISTORIA), cruzada(NUTRICAO)],
       });
 
-      const disciplinas = await service.agendaveis(aluno(['EDUCACAO FISICA']));
+      const disciplinas = await service.agendaveis(
+        aluno(['EDUCACAO FISICA']),
+        'EAD',
+      );
 
       expect(notaFinal).not.toHaveBeenCalled();
       expect(disciplinas.every((d) => d.notaFinal === null)).toBe(true);

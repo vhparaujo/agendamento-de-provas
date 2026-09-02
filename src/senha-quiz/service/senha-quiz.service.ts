@@ -215,10 +215,16 @@ export class SenhaQuizService {
       );
     }
 
-    const { periodoLetivoId, rodada } =
-      (await this.periodo.periodoLetivoVigente()) ?? {};
+    // A janela inteira: as turmas dos presenciais vivem sob o org unit do
+    // semestre e as dos modulares sob o do modulo. O lote de senhas cobre as
+    // duas — uma turma que ficasse de fora fica com a prova trancada no dia.
+    const {
+      periodoLetivoIds,
+      principal: periodoLetivoId,
+      rodada,
+    } = (await this.periodo.janelaVigente()) ?? {};
 
-    if (!periodoLetivoId || !rodada) {
+    if (!periodoLetivoIds || !periodoLetivoId || !rodada) {
       throw new BadRequestException(
         'Nenhum periodo letivo cadastrado. Sem ele nao ha como separar as ' +
           'turmas deste semestre das dos semestres passados.',
@@ -291,7 +297,7 @@ export class SenhaQuizService {
       }
     }
 
-    const resolvidas = await this.resolucao.resolver(periodoLetivoId);
+    const resolvidas = await this.resolucao.resolver(periodoLetivoIds);
 
     // No lote de datas o conjunto encolhe: so as turmas DA MODALIDADE da janela.
     // As demais nao sao erro — cada uma tem a sua janela, no horario dela.
@@ -299,7 +305,7 @@ export class SenhaQuizService {
       ? await this.recortarPelaModalidade(
           resolvidas,
           janela.modalidadeId,
-          periodoLetivoId,
+          periodoLetivoIds,
           rodada,
         )
       : {
@@ -823,7 +829,7 @@ export class SenhaQuizService {
   private async recortarPelaModalidade(
     resolvidas: ResultadoResolucao,
     modalidadeId: number,
-    periodoLetivoId: string,
+    periodoLetivoIds: string[],
     rodada: string,
   ): Promise<{
     turmas: TurmaResolvida[];
@@ -832,7 +838,7 @@ export class SenhaQuizService {
     modalidadeAmbigua: number;
     codigoDaModalidade: string | null;
   }> {
-    const mapa = await this.modalidades.resolver(periodoLetivoId, rodada);
+    const mapa = await this.modalidades.resolver(periodoLetivoIds, rodada);
 
     const turmas: TurmaResolvida[] = [];
     const foraDaModalidade: ItemParaGravar[] = [];

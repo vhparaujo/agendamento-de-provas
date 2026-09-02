@@ -28,7 +28,8 @@ regra de negócio ou estrutura, atualize os dois.
 - **Sala**: espaço físico dentro de um polo, com capacidade. **É neutra** — não
   tem modalidade fixa.
 - **Modalidade**: formato do curso do aluno — EaD (3h), Modular/Semipresencial
-  (1h30) ou Presencial (2h). Define a duração da prova. **Uma por vínculo.**
+  (1h30) ou Presencial (2h). Define a duração da prova **e qual período letivo do
+  Brightspace vale para o aluno** (ver *Mapa por modalidade*). **Uma por vínculo.**
   Abas do CSV: EaD→`EAD`, Semi→`SEMI`, **Híbrido→`MODULAR`** (são a mesma coisa).
 - **Vínculo**: aluno + curso. É a unidade real do sistema — um mesmo RA pode ter
   dois vínculos (dois cursos, modalidades diferentes) e agenda uma prova para cada.
@@ -38,6 +39,13 @@ regra de negócio ou estrutura, atualize os dois.
   É AQUI que modalidade e vagas existem de fato. A mesma sala física pode ser
   Presencial numa faixa e EaD em outra; dentro de uma faixa fica travada numa
   modalidade. O admin monta isso ao criar a faixa.
+- **Mapa por modalidade**: a UCB corre **duas grades ao mesmo tempo**.
+  EaD/Semi/Modular andam por **módulo** (quatro por ano — 2026/1 a 2026/4);
+  Presencial anda por **semestre** (dois — 2026/1 e 2026/2). São dois org units
+  de Período Letivo **diferentes e vivos ao mesmo tempo** no Brightspace. Por
+  isso uma janela não tem *um* `periodoLetivoId`, e sim um mapa
+  `modalidade → periodoLetivoId` (`PeriodoLetivoModalidade`). O que continua
+  único na janela é o PRAZO: datas, `rodada` e faixa de nota valem para todos.
 - **Rodada**: QUAL prova do semestre é aquela — `"N2"` (regular), `"SUB"`
   (substitutiva), `"N1"`… Vive em `PeriodoAgendamento.rodada` e é copiada para
   `Agendamento.rodada` como fotografia. **A identidade de um período é o par
@@ -1124,10 +1132,14 @@ ela entra e onde **não** entra:
 | `disciplinas-do-aluno`, importação, relatórios, senhas | ❌ (só usam `periodoLetivoId`) | O que define quais ofertas contam é o SEMESTRE; as duas rodadas cobrem as mesmas matérias |
 | **A faixa de nota** (`filtrarPorNota`) | ❌ — usa `notaMinima/notaMaxima` | O que separa a SUB da N2 é a faixa cadastrada, e não o TEXTO da rodada, que é livre. Ver "Quem pode fazer a substitutiva" |
 
-⚠️ **`periodoLetivoVigente()` devolve `{ periodoLetivoId, rodada }`, não uma
-string.** É de propósito: obriga cada chamador a dizer, na desestruturação, se a
-rodada importa para ele — a alternativa (voltar só o id) deixaria o filtro por
-rodada ser esquecido em silêncio, e o sintoma seria a N2 e a SUB se misturando.
+⚠️ **`periodoLetivoVigente()` NÃO EXISTE MAIS** (01/09/2026). A tabela acima
+continua valendo para a `rodada`, mas o `periodoLetivoId` virou um MAPA por
+modalidade — ver *Duas grades no mesmo ano*. No lugar dele há dois métodos:
+`periodoLetivoDaModalidade(modalidade)` para quem age sobre um aluno e
+`janelaVigente()` para quem conta, lista ou trava por PESSOA. São dois nomes, e
+não um parâmetro opcional, pela mesma razão que o antigo devolvia o par em vez da
+string: a escolha tem de ser explícita em cada chamada, senão é esquecida em
+silêncio.
 
 **`rodada` só é editável enquanto a janela estiver VAZIA** (`PATCH /periodos/:id`;
 `periodoLetivoId` nunca é). `Agendamento.rodada` é fotografia: trocar a da janela
@@ -1145,6 +1157,90 @@ recentemente, então recriar embaralha essa ordem — é justamente o problema q
 **A migration deu `rodada = "N2"` a tudo que já existia** — períodos e
 agendamentos. Quem tinha um semestre cadastrado antes desta mudança continua
 consistente, sem nenhuma ação manual.
+
+### Duas grades no mesmo ano: o mapa por modalidade (01/09/2026)
+
+A `rodada` resolveu "duas provas no mesmo período letivo". Esta é a irmã dela, e
+resolve o inverso: **dois períodos letivos na mesma prova.**
+
+A UCB divide o ano de duas formas simultâneas. EaD, Semipresencial e Modular
+andam por **módulo** — quatro por ano, `2026/1` a `2026/4`. Presencial anda por
+**semestre** — dois, `2026/1` e `2026/2`. Em novembro de 2026 o aluno EaD está
+sob `2026/4` e o presencial sob `2026/2`: **dois org units diferentes e vivos ao
+mesmo tempo** no Brightspace.
+
+Como as disciplinas agendáveis saem dos descendentes desse org unit
+(`ofertasDoPeriodo`), a janela com um `periodoLetivoId` único obrigava a escolher
+uma das grades — e a outra metade da universidade ficava sem disciplina nenhuma.
+**Sem erro nenhum:** o id que não bate responde 200 com lista vazia, e todo aluno
+daquela modalidade recebe a mesma frase genérica. É o mesmo modo de falhar que
+transformou o campo em dropdown fechado, e por isso a mensagem de lista vazia
+agora **nomeia** o período letivo e a modalidade que o escolheu.
+
+`PeriodoAgendamento.periodoLetivoId` continua existindo como o **principal** (o
+rótulo da janela, a chave da duplicata em `criar`, e o fallback de uma modalidade
+sem linha no mapa). Quem responde "qual org unit vale para ESTE aluno" é
+`PeriodoLetivoModalidade`.
+
+**As duas leituras, e a escolha entre elas é sempre explícita.**
+`periodoLetivoVigente()` foi APAGADO de propósito — dois métodos com nomes
+diferentes obrigam cada chamador a dizer o que quer, e a lista de erros do `tsc`
+foi o checklist da migração:
+
+| Pergunta | Método |
+|---|---|
+| o período DESTE aluno (disciplinas, agendar, trocar, importar) | `periodoLetivoDaModalidade(modalidade)` |
+| todos os períodos DESTA janela (contar, listar, exportar, relatar) | `janelaVigente()` + `{ in: periodoLetivoIds }` |
+| **trava por PESSOA** (uma prova por matrícula em cada faixa) | `janelaVigente()` — **obrigatoriamente** |
+
+⚠️ **A última linha é a que não pode errar.** Um mesmo RA pode ter um vínculo EaD
+e um Presencial, e as duas reservas dele ficam sob org units DIFERENTES na mesma
+janela. Recortar pelo período de um vínculo faria a trava não enxergar a reserva
+do outro — e a pessoa sairia com **duas provas no mesmo horário, em duas salas**.
+São três lugares, e os três usam a janela inteira: `exigirUmaProvaPorFaixa`
+(`lock-de-vagas.ts`), `faixasBloqueadasParaOVinculo` (o espelho na tela, que tem
+de bater exatamente) e `exigirAgendamentoDoAluno` (a trava de prova anterior, que
+virou `includes` em vez de igualdade).
+
+**A regra "uma prova por vínculo em cada rodada" (`alocar`) NÃO mudou**: ela
+trava por `alunoId`, que *é* o vínculo — e um vínculo tem uma modalidade só.
+
+**Onde o recorte é de propósito ESTREITO**, e não a janela inteira:
+
+- **`reservaAnterior`** (balcão) — copiar a reserva do outro vínculo atravessaria
+  as duas grades e marcaria a prova cobrindo as disciplinas ERRADAS, em silêncio,
+  porque a lista viria cheia e plausível. Dois vínculos da MESMA modalidade
+  continuam emprestando um para o outro, que é o caso que o método serve.
+- **O cache do compulsório** (`resolverEmLotes`) — a chave virou
+  `matricula + modalidade`. Era só a matrícula, e com as duas grades o segundo
+  vínculo receberia a lista do primeiro.
+
+**`recusarSeAmbosTemProva`** (mesclagem) passou a colapsar os períodos da janela
+vigente numa chave só: mesclar vínculos de modalidades diferentes é permitido
+(`conferirHeranca` avisa e não bloqueia), e comparar o id cru deixaria passar
+exatamente o estado que a trava existe para impedir.
+
+**O mapa só é editável com a janela VAZIA**, como a `rodada` e pelo mesmo motivo:
+`Agendamento.periodoLetivoId` é fotografia. Reenviar o mapa IGUAL não dispara a
+trava — editar a data de fechamento de uma janela cheia é a operação mais comum
+da tela, e ela manda o formulário inteiro.
+
+**O mapa tem de cobrir TODAS as modalidades** (400 nomeando as que faltam).
+Cobrir parcialmente seria pior que não cobrir: a esquecida cairia no principal em
+silêncio, que é exatamente o erro que o mapa existe para impedir. Omitir o campo
+inteiro põe todas no principal — o caso legítimo de quem tem uma grade só.
+
+**O filtro `periodoLetivoId` das telas de admin virou LISTA** (separada por
+vírgula, em `/agendamentos`, `/agendamentos/exportacao` e nos relatórios). A tela
+manda a janela inteira; um id sozinho continua valendo e recorta aquela grade.
+Sem isso, escolher a janela vigente no dropdown esconderia todos os presenciais —
+e na lista de presença o sintoma só apareceria no dia da prova, com a sala cheia
+e a folha em branco na mão do fiscal.
+
+**A migration fez o backfill do produto cartesiano** (toda janela × toda
+modalidade, apontando para o `periodoLetivoId` que ela já tinha), como a da
+`rodada` deu `"N2"` a tudo. Quem tinha janela cadastrada antes desta mudança
+continua idêntico, sem nenhuma ação manual.
 
 ### Quem pode fazer a substitutiva: a faixa de nota (20/08/2026)
 

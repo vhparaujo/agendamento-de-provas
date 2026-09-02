@@ -349,7 +349,13 @@ export class RelatorioController {
 
     return {
       poloId: inteiro(query.poloId),
-      periodoLetivoId: query.periodoLetivoId || undefined,
+      // Lista separada por virgula: uma janela cobre mais de um periodo letivo
+      // ao mesmo tempo (o do modulo e o do semestre), e a tela manda a janela
+      // inteira. Um id sozinho vira uma lista de um elemento.
+      periodoLetivoId: (query.periodoLetivoId ?? '')
+        .split(',')
+        .map((v) => v.trim())
+        .filter(Boolean),
       de: query.de || undefined,
       ate: query.ate || undefined,
     };

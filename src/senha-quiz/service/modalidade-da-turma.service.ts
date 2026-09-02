@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
-import { StatusAgendamento } from '../../generated/prisma/client';
+import { Prisma, StatusAgendamento } from '../../generated/prisma/client';
 
 /**
  * ============================================================================
@@ -95,6 +95,19 @@ export class ModalidadeDaTurmaService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
+   * Mapa sem nenhuma turma — toda consulta responde `SEM_AGENDAMENTO`.
+   *
+   * Reusa `decidir(undefined)` para nao existir uma segunda versao da frase que
+   * o relatorio mostra: duas acabariam divergindo.
+   */
+  private vazio(): MapaDeModalidades {
+    return {
+      de: () => this.decidir(undefined),
+      totalComAgendamento: 0,
+    };
+  }
+
+  /**
    * Resolve a modalidade de TODAS as turmas de uma vez.
    *
    * Uma consulta agregada, e nao uma por turma: sao ~300 turmas por semestre, e
@@ -107,14 +120,25 @@ export class ModalidadeDaTurmaService {
    * `periodoLetivoId` no Brightspace, que e a armadilha que a `rodada` existe
    * para desfazer.
    *
+   * Os periodos letivos vao no plural (`IN`) porque a janela cobre as duas
+   * grades: uma turma presencial so tem reserva sob o org unit do semestre, e
+   * consultar so o do modulo a devolveria como SEM_AGENDAMENTO — turma sem
+   * modalidade fica de fora do lote de datas, e a prova nao abre.
+   *
    * `status = CONFIRMADO` pelo mesmo motivo de toda contagem do projeto: quem
    * cancelou devolveu a vaga e nao vai fazer a prova, entao a modalidade dele
    * nao diz nada sobre esta turma.
    */
   async resolver(
-    periodoLetivoId: string,
+    periodoLetivoIds: string[],
     rodada: string,
   ): Promise<MapaDeModalidades> {
+    // `IN` com lista vazia e sempre falso no MySQL e devolveria mapa vazio —
+    // toda turma sairia como SEM_AGENDAMENTO. Nao acontece hoje (a janela
+    // sempre tem ao menos o principal), mas a consulta e crua e nao tem tipo
+    // que segure isso.
+    if (periodoLetivoIds.length === 0) return this.vazio();
+
     const linhas = await this.prisma.$queryRaw<LinhaAgregada[]>`
       SELECT ad.orgUnitId    AS orgUnitId,
              a.modalidadeId  AS modalidadeId,
@@ -125,7 +149,7 @@ export class ModalidadeDaTurmaService {
         JOIN agendamento_disciplina ad ON ad.agendamentoId = a.id
         JOIN modalidade m              ON m.id = a.modalidadeId
        WHERE a.status          = ${StatusAgendamento.CONFIRMADO}
-         AND a.periodoLetivoId = ${periodoLetivoId}
+         AND a.periodoLetivoId IN (${Prisma.join(periodoLetivoIds)})
          AND a.rodada          = ${rodada}
        GROUP BY ad.orgUnitId, a.modalidadeId, m.codigo, m.nome
     `;
@@ -158,7 +182,8 @@ export class ModalidadeDaTurmaService {
 
     this.logger.log(
       `Modalidade por turma: ${porTurma.size} turma(s) com agendamento confirmado ` +
-        `em ${periodoLetivoId}/${rodada}; ${ambiguas} com mais de uma modalidade.`,
+        `em ${periodoLetivoIds.join('+')}/${rodada}; ${ambiguas} com mais de ` +
+        'uma modalidade.',
     );
 
     return {

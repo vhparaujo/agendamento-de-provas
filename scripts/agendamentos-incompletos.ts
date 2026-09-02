@@ -153,7 +153,7 @@ async function main(): Promise<void> {
       );
     }
 
-    const vigente = await periodo.periodoLetivoVigente();
+    const vigente = await periodo.janelaVigente();
 
     if (!vigente) {
       throw new Error(
@@ -162,16 +162,19 @@ async function main(): Promise<void> {
     }
 
     console.log(
-      `\nJanela: periodo letivo ${vigente.periodoLetivoId}, rodada ${vigente.rodada}` +
+      `\nJanela: periodos letivos ${vigente.periodoLetivoIds.join(', ')}, ` +
+        `rodada ${vigente.rodada}` +
         (vigente.filtroDeNota
           ? ` (faixa de nota [${vigente.filtroDeNota.minima}; ${vigente.filtroDeNota.maxima}))`
           : ' (sem filtro de nota)'),
     );
 
+    // A janela inteira: as reservas dos presenciais estao sob o outro org unit,
+    // e conferir so uma grade daria um relatorio pela metade sem dizer que era.
     const agendamentos = await prisma.agendamento.findMany({
       where: {
         status: 'CONFIRMADO',
-        periodoLetivoId: vigente.periodoLetivoId,
+        periodoLetivoId: { in: vigente.periodoLetivoIds },
         rodada: vigente.rodada,
       },
       orderBy: { id: 'asc' },
@@ -180,6 +183,10 @@ async function main(): Promise<void> {
         id: true,
         matricula: true,
         userIdD2L: true,
+        // A modalidade do AGENDAMENTO (fotografia): e ela que diz de qual grade
+        // as disciplinas daquela reserva sairam, e reconferir pela modalidade
+        // de hoje compararia a lista contra a arvore errada.
+        modalidade: { select: { codigo: true } },
         aluno: { select: { nome: true, curso: true } },
         disciplinas: { select: { orgUnitId: true, nomeDisciplina: true } },
       },
@@ -201,7 +208,10 @@ async function main(): Promise<void> {
       }
 
       try {
-        const { agendaveis } = await disciplinas.cruzarPorUserId(ag.userIdD2L);
+        const { agendaveis } = await disciplinas.cruzarPorUserId(
+          ag.userIdD2L,
+          ag.modalidade.codigo,
+        );
 
         const gravadas = new Set(ag.disciplinas.map((d) => d.orgUnitId));
 

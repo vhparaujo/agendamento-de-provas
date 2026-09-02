@@ -136,18 +136,20 @@ export class GradeSenhasController {
       'Integracao D2L desligada, ou nenhum periodo letivo cadastrado',
   })
   async turmas(): Promise<TurmasDoLoteDto> {
-    const { periodoLetivoId, rodada } =
-      (await this.periodo.periodoLetivoVigente()) ?? {};
+    // Os dois periodos letivos da janela: a lista precisa mostrar as turmas das
+    // DUAS grades, senao as presenciais somem da tela do admin.
+    const { periodoLetivoIds, rodada } =
+      (await this.periodo.janelaVigente()) ?? {};
 
-    if (!periodoLetivoId || !rodada) {
+    if (!periodoLetivoIds || !rodada) {
       throw new BadRequestException(
         'Nenhum periodo letivo cadastrado. Sem ele nao ha como separar as turmas ' +
           'deste semestre das dos semestres passados.',
       );
     }
 
-    const resolucao = await this.resolucao.resolver(periodoLetivoId);
-    const mapa = await this.modalidades.resolver(periodoLetivoId, rodada);
+    const resolucao = await this.resolucao.resolver(periodoLetivoIds);
+    const mapa = await this.modalidades.resolver(periodoLetivoIds, rodada);
 
     return {
       ...resolucao,

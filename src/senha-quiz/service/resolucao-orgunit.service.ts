@@ -80,11 +80,17 @@ export class ResolucaoOrgUnitService {
   /**
    * Resolve o `orgUnitId` de cada turma do CSV contra as ofertas do semestre.
    *
-   * Roda no inicio de cada execucao do lote: e barato (uma chamada, cacheada 10
-   * min no `D2lEnrollmentsService`) e e o que faz uma turma nova no CSV entrar
-   * no lote seguinte sem ninguem precisar fazer nada.
+   * Roda no inicio de cada execucao do lote: e barato (uma chamada por periodo
+   * letivo, cacheada 10 min no `D2lEnrollmentsService`) e e o que faz uma turma
+   * nova no CSV entrar no lote seguinte sem ninguem precisar fazer nada.
+   *
+   * Recebe os periodos letivos da JANELA, no plural: o CSV de turmas nao separa
+   * modalidade, e as turmas dos presenciais vivem sob o org unit do semestre
+   * enquanto as dos modulares vivem sob o do modulo. Resolver contra um so
+   * deixaria metade das turmas em `naoResolvidas` — e elas ficariam de fora do
+   * lote de senhas, com a prova trancada no dia.
    */
-  async resolver(periodoLetivoId: string): Promise<ResultadoResolucao> {
+  async resolver(periodoLetivoIds: string[]): Promise<ResultadoResolucao> {
     const doCsv = await this.turmasDoCsv();
 
     if (doCsv.length === 0) {
@@ -98,7 +104,13 @@ export class ResolucaoOrgUnitService {
       };
     }
 
-    const ofertas = await this.enrollments.ofertasDoSemestre(periodoLetivoId);
+    const ofertas = (
+      await Promise.all(
+        periodoLetivoIds.map((letivo) =>
+          this.enrollments.ofertasDoSemestre(letivo),
+        ),
+      )
+    ).flat();
 
     /** turmaId -> orgUnitIds que casaram com ela. Mais de um = ambigua. */
     const casamentos = new Map<number, Set<string>>();

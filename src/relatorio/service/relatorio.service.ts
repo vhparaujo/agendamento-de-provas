@@ -16,7 +16,16 @@ export interface FiltroRelatorio {
   /** Data da prova (AAAA-MM-DD). */
   de?: string;
   ate?: string;
-  periodoLetivoId?: string;
+  /**
+   * O(s) periodo(s) letivo(s) do recorte. Vazio = a janela vigente inteira.
+   *
+   * PLURAL porque uma janela cobre mais de um org unit ao mesmo tempo: os
+   * modulares sob o periodo do modulo e os presenciais sob o do semestre.
+   * Filtrar por um so faria a lista de presenca de uma sala presencial sair
+   * VAZIA — e ninguem descobriria antes do dia da prova. A tela manda a janela
+   * inteira; um id sozinho continua valendo, e recorta aquela grade.
+   */
+  periodoLetivoId?: string[];
 }
 
 export interface GrupoExportavel {
@@ -243,7 +252,7 @@ export class RelatorioService {
     selecao: Prisma.FaixaWhereInput,
     filtro: FiltroRelatorio,
   ): Promise<GrupoComMatriculas[]> {
-    const periodoLetivoId = await this.periodoDoRecorte(filtro);
+    const periodoLetivoId = await this.periodosDoRecorte(filtro);
 
     // Sao poucas dezenas de linhas — uma faixa por polo, por dia, por horario.
     const janelas = await this.prisma.faixa.findMany({
@@ -335,7 +344,7 @@ export class RelatorioService {
    */
   private inscricoesDasJanelas(
     janelas: Janela[],
-    periodoLetivoId: string | undefined,
+    periodoLetivoId: { in: string[] } | undefined,
   ) {
     return this.prisma.agendamentoDisciplina.findMany({
       where: {
@@ -404,15 +413,24 @@ export class RelatorioService {
     return { poloId: filtro.poloId, data: janelaDeDatas(filtro) };
   }
 
-  private periodoDoRecorte(
+  /**
+   * O recorte por periodo letivo: o da URL, ou a JANELA VIGENTE INTEIRA.
+   *
+   * Devolve um filtro (`{ in: [...] }`) e nao uma string porque a janela cobre
+   * mais de um org unit ao mesmo tempo — a grade modular e a semestral correm em
+   * paralelo. Um id so deixaria de fora as provas dos presenciais, e o relatorio
+   * sairia com metade da sala.
+   *
+   * `undefined` = sem recorte (nenhum periodo cadastrado), como antes.
+   */
+  private async periodosDoRecorte(
     filtro: FiltroRelatorio,
-  ): Promise<string | undefined> | string {
-    return (
-      filtro.periodoLetivoId ??
-      this.periodo
-        .periodoLetivoVigente()
-        .then((vigente) => vigente?.periodoLetivoId)
-    );
+  ): Promise<{ in: string[] } | undefined> {
+    if (filtro.periodoLetivoId?.length) return { in: filtro.periodoLetivoId };
+
+    const janela = await this.periodo.janelaVigente();
+
+    return janela ? { in: janela.periodoLetivoIds } : undefined;
   }
 }
 

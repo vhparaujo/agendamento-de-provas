@@ -32,7 +32,16 @@ export interface FiltroAgendamentos {
   faixaId?: number;
   salaId?: number;
   modalidadeId?: number;
-  periodoLetivoId?: string;
+  /**
+   * O(s) periodo(s) letivo(s) do recorte. Vazio = a janela vigente inteira.
+   *
+   * PLURAL porque uma janela cobre mais de um org unit ao mesmo tempo: os
+   * modulares sob o periodo do modulo e os presenciais sob o do semestre.
+   * Filtrar por um so faria a outra metade sair como "Nao Agendado" e entrar na
+   * cobranca depois de ja ter feito a prova. A tela manda a janela inteira; um
+   * id sozinho continua valendo, e recorta exatamente aquela grade.
+   */
+  periodoLetivoId?: string[];
   /** Qual prova do semestre ("N2", "SUB"...). Sem ele, vem as duas juntas. */
   rodada?: string;
   /** Data da prova (AAAA-MM-DD). */
@@ -184,9 +193,16 @@ export class AgendamentoAdminService {
       throw new NotFoundException(`Vinculo ${dados.alunoId} nao encontrado`);
     }
 
-    const vigente = await this.periodo.periodoLetivoVigente();
+    // Duas leituras porque sao duas perguntas: o periodo letivo DESTE vinculo
+    // (pela modalidade dele, e o que vai gravado na reserva) e a janela inteira
+    // (que a trava por pessoa usa — a outra prova do mesmo RA pode estar num
+    // vinculo de outra modalidade, sob outro org unit).
+    const vigente = await this.periodo.periodoLetivoDaModalidade(
+      vinculo.modalidade.codigo,
+    );
+    const janela = await this.periodo.janelaVigente();
 
-    if (!vigente) {
+    if (!vigente || !janela) {
       throw new BadRequestException(
         'Nenhum periodo de agendamento cadastrado: sem periodo letivo nao ha ' +
           'como saber de qual semestre e esta prova. Cadastre em /periodos.',
@@ -241,6 +257,7 @@ export class AgendamentoAdminService {
     const fonte = await this.disciplinasParaOAdmin(
       { id: vinculo.id, matricula: vinculo.matricula },
       periodoLetivoId,
+      vinculo.modalidade.codigo,
     );
 
     avisos.push(...fonte.avisos);
@@ -268,7 +285,7 @@ export class AgendamentoAdminService {
       await exigirUmaProvaPorFaixa(tx, {
         matricula: vinculo.matricula,
         faixaId: alvo.faixaId,
-        periodoLetivoId,
+        periodoLetivoIds: janela.periodoLetivoIds,
       });
 
       const salaFaixaId =
@@ -369,7 +386,9 @@ export class AgendamentoAdminService {
    */
   private async disciplinasParaOAdmin(
     vinculo: { id: number; matricula: string },
+    /** O periodo letivo JA resolvido pela modalidade — ver `agendarPeloAdmin`. */
     periodoLetivoId: string,
+    modalidadeCodigo: string,
   ): Promise<{
     userIdD2L: string;
     disciplinas: DisciplinaComNota[];
@@ -379,9 +398,11 @@ export class AgendamentoAdminService {
     const anterior = await this.reservaAnterior(vinculo, periodoLetivoId);
 
     // A janela filtra por nota? Muda o que o fallback significa — ver o aviso
-    // montado em `semBrightspace`.
-    const vigente = await this.periodo.periodoLetivoVigente();
-    const filtroDeNota = vigente?.filtroDeNota ?? null;
+    // montado em `semBrightspace`. A faixa de nota e da JANELA, igual para
+    // todas as modalidades, entao `janelaVigente()` responde e evita uma
+    // segunda resolucao por modalidade que nao mudaria nada.
+    const janela = await this.periodo.janelaVigente();
+    const filtroDeNota = janela?.filtroDeNota ?? null;
 
     /** Cai para a reserva anterior, ou recusa dizendo o porque de cada uma. */
     const semBrightspace = (motivo: string) => {
@@ -455,6 +476,7 @@ export class AgendamentoAdminService {
 
       const cruzamento = await this.disciplinasDoAluno.cruzarPorUserId(
         identidade.userIdD2L,
+        modalidadeCodigo,
       );
 
       if (cruzamento.agendaveis.length === 0) {
@@ -510,6 +532,15 @@ export class AgendamentoAdminService {
    * mesmo launch. Filtrar por rodada deixaria a substitutiva sem fonte nenhuma
    * justamente na primeira vez que ela abrisse — que e quando o balcao mais
    * precisa dela, com a integracao desligada.
+   *
+   * ⚠️ **Mas filtra por UM `periodoLetivoId` — o do vinculo que esta sendo
+   * atendido —, e nao pela janela inteira.** Aqui a decisao e o OPOSTO da das
+   * travas por pessoa, e de proposito: as disciplinas de um vinculo EaD saem da
+   * arvore do modulo e as de um Presencial saem da arvore do semestre. Copiar a
+   * reserva do outro vinculo atravessaria as duas grades e marcaria a prova
+   * cobrindo as disciplinas ERRADAS — em silencio, porque a lista viria cheia e
+   * plausivel. Quem tem dois vinculos na MESMA modalidade continua emprestando
+   * um para o outro, que e o caso que este metodo existe para servir.
    */
   private async reservaAnterior(
     vinculo: { id: number; matricula: string },
@@ -644,6 +675,15 @@ export class AgendamentoAdminService {
       throw new ConflictException('O agendamento ja esta nesta sala.');
     }
 
+    // Sem janela cadastrada nao ha o que remanejar contra: cai no periodo
+    // letivo da propria reserva, que e o recorte de antes do mapa. E o unico
+    // caminho em que a trava por pessoa nao enxerga a grade vizinha, e ele so
+    // acontece com o cadastro apagado — estado que `remover` ja recusa quando
+    // ha reserva.
+    const janela = (await this.periodo.janelaVigente()) ?? {
+      periodoLetivoIds: [atual.periodoLetivoId],
+    };
+
     await this.prisma.$transaction(async (tx) => {
       await travarAluno(tx, atual.matricula);
 
@@ -654,7 +694,10 @@ export class AgendamentoAdminService {
       await exigirUmaProvaPorFaixa(tx, {
         matricula: atual.matricula,
         faixaId: alvo.faixaId,
-        periodoLetivoId: atual.periodoLetivoId,
+        // A janela inteira, e nao o periodo desta reserva: a outra prova do
+        // mesmo RA pode estar num vinculo de outra modalidade, gravada sob
+        // outro org unit. Ver a nota em `exigirUmaProvaPorFaixa`.
+        periodoLetivoIds: janela.periodoLetivoIds,
         exceto: id,
       });
 
@@ -969,14 +1012,24 @@ export class AgendamentoAdminService {
    *   apareceria como "agendado"; sem a rodada, quem fez a N2 apareceria como
    *   "agendado" durante a substitutiva. Os dois casos tiram da cobranca gente
    *   que precisa ser cobrada.
+   * - **Sem `periodoLetivoId` na URL, o recorte e a JANELA INTEIRA** — os dois
+   *   org units que ela cobre. A cobranca e uma lista so, e ela mistura EaD e
+   *   Presencial: filtrar por um periodo letivo faria os presenciais, gravados
+   *   sob o outro org unit, sairem TODOS como "Não Agendado" e entrarem na
+   *   cobranca depois de ja terem feito a prova.
    *
    * Sem paginacao de proposito — quem exporta quer o arquivo inteiro. Sao ~7.500
    * vinculos, um arquivo de planilha, nao um dump.
    */
   async exportarCsv(filtro: FiltroAgendamentos): Promise<string> {
-    const vigente = await this.periodo.periodoLetivoVigente();
+    const janela = await this.periodo.janelaVigente();
 
-    const periodoLetivoId = filtro.periodoLetivoId ?? vigente?.periodoLetivoId;
+    // Os ids fixados na URL, ou a janela vigente inteira.
+    const periodoLetivoId = filtro.periodoLetivoId?.length
+      ? { in: filtro.periodoLetivoId }
+      : janela
+        ? { in: janela.periodoLetivoIds }
+        : undefined;
 
     /**
      * A rodada entra no recorte pela MESMA razao que o periodo letivo: sem ela,
@@ -989,7 +1042,8 @@ export class AgendamentoAdminService {
      * nao pediu esconderia metade da resposta.
      */
     const rodada =
-      filtro.rodada ?? (filtro.periodoLetivoId ? undefined : vigente?.rodada);
+      filtro.rodada ??
+      (filtro.periodoLetivoId?.length ? undefined : janela?.rodada);
 
     const daProva: Prisma.AgendamentoWhereInput = {
       status: StatusAgendamento.CONFIRMADO,
@@ -1143,7 +1197,13 @@ export class AgendamentoAdminService {
       // Sem filtro explicito, mostra so os CONFIRMADOS: um cancelado na lista
       // do dia da prova faria alguem procurar um aluno que nao vem.
       status: filtro.status ?? StatusAgendamento.CONFIRMADO,
-      periodoLetivoId: filtro.periodoLetivoId,
+      // Sem periodo na URL a listagem NAO recorta por periodo letivo — e o
+      // comportamento de sempre ("tudo que existe", filtrado pelo resto). Com
+      // ele, recorta pelos ids pedidos, que podem ser as duas grades de uma
+      // janela so.
+      periodoLetivoId: filtro.periodoLetivoId?.length
+        ? { in: filtro.periodoLetivoId }
+        : undefined,
       rodada: filtro.rodada,
       salaFaixa: {
         salaId: filtro.salaId,
