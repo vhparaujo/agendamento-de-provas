@@ -2,6 +2,7 @@ import {
   D2lGradesService,
   NotaFinalD2L,
 } from '../../d2l/service/d2l-grades.service';
+import { RecusaDoBrightspace } from '../../d2l/service/d2l-http.service';
 import type { FiltroDeNota } from '../../periodo/service/periodo.service';
 import type { DisciplinaAgendavel } from '../../turma/service/turma.service';
 import {
@@ -439,6 +440,69 @@ describe('ElegibilidadeDeNotaService', () => {
     });
 
     /**
+     * ⚠️ CONFIRMADO NO TENANT DA UCB (08/09/2026): ler uma CATEGORIA pela rota
+     * da turma inteira responde 400, enquanto a leitura de um aluno na mesma
+     * categoria funciona. O lote precisa continuar correto — so mais lento — e,
+     * sobretudo, precisa parar de tentar: 300 turmas seriam 300 chamadas
+     * condenadas e 300 avisos iguais, enterrando as falhas de rede no log.
+     */
+    it('tenant que recusa a N1 por turma: nao e falha, e o lote para de tentar', async () => {
+      const notasDeGradeObjectDaTurma = jest
+        .fn()
+        .mockRejectedValue(
+          new RecusaDoBrightspace('O Brightspace recusou (HTTP 400).', 400),
+        );
+
+      const notaDeGradeObject = jest.fn().mockResolvedValue(achou(3.0));
+
+      const service = new ElegibilidadeDeNotaService({
+        notaFinal: jest.fn(),
+        notaDeGradeObject,
+        notasFinaisDaTurma: daTurma({ '76629': achou(4.25) }),
+        notasDeGradeObjectDaTurma,
+        categoriaPorNome: jest.fn().mockResolvedValue(CATEGORIA_N1),
+        nomeDaCategoriaN1: () => 'N1',
+        habilitado: () => true,
+      } as unknown as D2lGradesService);
+
+      const resumo = await service.preAquecer(['6606', '6610', '6611']);
+
+      // Uma tentativa, nao tres — e nenhuma turma marcada como falha.
+      expect(notasDeGradeObjectDaTurma).toHaveBeenCalledTimes(1);
+      expect(resumo).toEqual({ turmas: 3, falhas: 0, semN1: 0 });
+
+      // E o lote continua CORRETO: a N1 vem da leitura individual.
+      const { elegiveis } = await service.filtrar('76629', [HISTORIA], REGRA);
+
+      expect(notaDeGradeObject).toHaveBeenCalledTimes(1);
+      expect(elegiveis).toHaveLength(1);
+    });
+
+    /**
+     * O oposto: 5xx e timeout NAO desligam a otimizacao. Aquela turma pode ter
+     * sido azar, e desistir do lote inteiro por um blip sairia caro.
+     */
+    it('falha transitoria na N1 nao desliga a otimizacao do resto do lote', async () => {
+      const notasDeGradeObjectDaTurma = jest
+        .fn()
+        .mockRejectedValue(new Error('timeout'));
+
+      const service = new ElegibilidadeDeNotaService({
+        notaFinal: jest.fn(),
+        notaDeGradeObject: jest.fn().mockResolvedValue(achou(3.0)),
+        notasFinaisDaTurma: daTurma({ '76629': achou(4.25) }),
+        notasDeGradeObjectDaTurma,
+        categoriaPorNome: jest.fn().mockResolvedValue(CATEGORIA_N1),
+        nomeDaCategoriaN1: () => 'N1',
+        habilitado: () => true,
+      } as unknown as D2lGradesService);
+
+      await service.preAquecer(['6606', '6610']);
+
+      expect(notasDeGradeObjectDaTurma).toHaveBeenCalledTimes(2);
+    });
+
+    /**
      * Turma sem N1 nao e falha de rede, e conta-la como tal esconderia as
      * falhas de verdade. Ela e contada a parte, e a nota final dela continua
      * pre-carregada — o aluno e recusado por `SEM_CATEGORIA_N1`, e nao por uma
@@ -468,14 +532,15 @@ describe('ElegibilidadeDeNotaService', () => {
 });
 
 /**
- * O texto da recusa NAO pode mandar o aluno para o lugar errado: "sem nota
- * lancada" e caso de secretaria (a turma pode nao ter fechado notas), "turma sem
- * N1" e defeito de montagem, e nao ter passado nos criterios e simplesmente a
- * regra. As tres pedem coisas diferentes de quem le.
+ * Duas coisas ao mesmo tempo:
+ *
+ * 1. **Os numeros da regra NAO aparecem** (decisao do cliente, 08/09/2026). Nem
+ *    os limites, nem a nota que o aluno tirou.
+ * 2. **A causa continua distinta**, porque ela roteia o atendimento: nota por
+ *    lancar e uma coisa, turma mal configurada e outra, e nao ter direito e a
+ *    terceira. Todas terminam no formulario de suporte.
  */
 describe('motivoDeNenhumaElegivel', () => {
-  const REGRA: FiltroDeNota = { minimaN1: 1.5, maximaFinal: 7 };
-
   const recusa = (
     motivo: Parameters<typeof motivoDeNenhumaElegivel>[0][number]['motivo'],
     notas: { notaFinal?: number | null; notaN1?: number | null } = {},
@@ -487,43 +552,67 @@ describe('motivoDeNenhumaElegivel', () => {
     motivo,
   });
 
-  it('so criterio nao atendido: diz os dois numeros, em formato de aluno', () => {
-    const texto = motivoDeNenhumaElegivel(
+  /**
+   * ⚠️ O teste que guarda a decisao de 08/09/2026: os LIMITES nao aparecem para
+   * o aluno. Ele foi escrito ao contrario de proposito — verifica a AUSENCIA dos
+   * numeros, porque a regressao aqui e alguem "melhorar" a frase explicando o
+   * criterio, e nada mais no sistema reclamaria disso.
+   */
+  it.each([
+    [
+      'criterio nao atendido',
       [recusa('FINAL_ATINGIU_A_MEDIA', { notaFinal: 8 })],
-      REGRA,
-    );
-
-    expect(texto).toContain('1,50');
-    expect(texto).toContain('7,00');
-    expect(texto).not.toContain('sem nota lancada');
-  });
-
-  it('todas sem nota: manda a secretaria, sem falar em criterio', () => {
-    const texto = motivoDeNenhumaElegivel([recusa('SEM_NOTA_FINAL')], REGRA);
-
-    expect(texto).toContain('secretaria');
-    expect(texto).not.toContain('1,50');
-  });
-
-  /** A N1 que falta e a da TURMA: a frase nao pode culpar o aluno por isso. */
-  it('todas sem categoria N1: fala da configuracao, nao da nota do aluno', () => {
-    const texto = motivoDeNenhumaElegivel([recusa('SEM_CATEGORIA_N1')], REGRA);
-
-    expect(texto).toContain('secretaria');
-    expect(texto).toContain('N1');
-    expect(texto).not.toContain('1,50');
-  });
-
-  it('misturado: fala da regra E avisa que parte esta sem nota', () => {
-    const texto = motivoDeNenhumaElegivel(
+    ],
+    ['sem nota final', [recusa('SEM_NOTA_FINAL')]],
+    ['sem nota na N1', [recusa('SEM_NOTA_N1', { notaFinal: 4 })]],
+    ['turma sem categoria N1', [recusa('SEM_CATEGORIA_N1')]],
+    [
+      'misturado',
       [
         recusa('FINAL_ATINGIU_A_MEDIA', { notaFinal: 8 }),
         recusa('SEM_NOTA_N1', { notaFinal: 4 }),
       ],
-      REGRA,
-    );
+    ],
+  ] as const)('%s: nenhum numero da regra na frase', (_caso, recusadas) => {
+    const texto = motivoDeNenhumaElegivel([...recusadas]);
 
-    expect(texto).toContain('1,50');
+    // Nem os limites (1,50 / 7,00) nem a nota que o aluno tirou (8 / 4).
+    expect(texto).not.toMatch(/\d/);
+    expect(texto).toContain('formulario de suporte');
+  });
+
+  it('criterio nao atendido: nao insinua nota faltando', () => {
+    const texto = motivoDeNenhumaElegivel([
+      recusa('FINAL_ATINGIU_A_MEDIA', { notaFinal: 8 }),
+    ]);
+
+    expect(texto).toContain('tem direito a prova substitutiva');
+    expect(texto).not.toContain('sem nota lancada');
+  });
+
+  /** A CAUSA continua distinta, porque e ela que roteia o atendimento. */
+  it('todas sem nota: aponta o lancamento, nao o direito do aluno', () => {
+    const texto = motivoDeNenhumaElegivel([recusa('SEM_NOTA_FINAL')]);
+
+    expect(texto).toContain('sem nota lancada');
+    expect(texto).not.toContain('tem direito');
+  });
+
+  /** A N1 que falta e a da TURMA: a frase nao pode culpar o aluno por isso. */
+  it('todas sem categoria N1: fala das notas incompletas, nao do direito', () => {
+    const texto = motivoDeNenhumaElegivel([recusa('SEM_CATEGORIA_N1')]);
+
+    expect(texto).toContain('Nao foi possivel conferir suas notas');
+    expect(texto).not.toContain('tem direito');
+  });
+
+  it('misturado: mantem a regra E avisa que parte esta sem nota', () => {
+    const texto = motivoDeNenhumaElegivel([
+      recusa('FINAL_ATINGIU_A_MEDIA', { notaFinal: 8 }),
+      recusa('SEM_NOTA_N1', { notaFinal: 4 }),
+    ]);
+
+    expect(texto).toContain('tem direito a prova substitutiva');
     expect(texto).toContain('sem nota lancada');
   });
 });

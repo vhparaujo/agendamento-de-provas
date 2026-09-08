@@ -214,9 +214,41 @@ async function aTurmaInteira(
   console.log(`Denominadores encontrados: ${[...denominadores].join(', ')}`);
   console.log(`Origens encontradas: ${[...origens].join(', ')}\n`);
 
-  // Quantos tem N1 importa tanto quanto quantos tem nota final: os dois
-  // criterios sao obrigatorios, e quem falta em um nao agenda.
+  // As tres primeiras bastam para ver o formato; a turma inteira seriam
+  // centenas de linhas de dado pessoal rolando no terminal. Vem ANTES da N1
+  // porque a leitura da N1 pode falhar, e e daqui que sai o userId com que se
+  // investiga a falha.
+  console.log('Amostra (3 primeiras):');
+  for (const [userId, nota] of [...notas].slice(0, 3)) {
+    console.log(`  ${userId}: ${JSON.stringify(nota)}`);
+  }
+  console.log('');
+
   if (categoriaN1 !== null) {
+    await aN1DaTurma(grades, orgUnitId, categoriaN1, [...notas.keys()][0]);
+  }
+}
+
+/**
+ * A N1 da turma inteira — e o que fazer quando o tenant recusa essa leitura.
+ *
+ * Quantos têm N1 importa tanto quanto quantos têm nota final: os dois critérios
+ * são obrigatórios, e quem falta em um não agenda.
+ *
+ * ⚠️ **A falha aqui NAO derruba o script**, e a razao e a mesma do
+ * `preAquecer`: a leitura por turma e uma OTIMIZACAO do lote, e nao a regra. Se
+ * ela nao funcionar, o portal e o compulsorio continuam corretos lendo aluno a
+ * aluno — mais lento, e so. Deixar o erro subir aqui esconderia justamente a
+ * pergunta seguinte, que e a que importa: *a leitura de UM aluno funciona?*
+ * Por isso, ao falhar, o script a responde sozinho.
+ */
+async function aN1DaTurma(
+  grades: D2lGradesService,
+  orgUnitId: string,
+  categoriaN1: string,
+  primeiroUserId: string | undefined,
+): Promise<void> {
+  try {
     const n1 = await grades.notasDeGradeObjectDaTurma(orgUnitId, categoriaN1, {
       atrasoMs: 200,
     });
@@ -229,15 +261,42 @@ async function aTurmaInteira(
     console.log(
       '  (sem N1 lancada o aluno NAO agenda, mesmo com a final na faixa)\n',
     );
+
+    return;
+  } catch (erro) {
+    console.log(
+      `⚠️  O tenant recusou a leitura da N1 da TURMA INTEIRA:\n` +
+        `   ${erro instanceof Error ? erro.message : String(erro)}\n`,
+    );
   }
 
-  // As tres primeiras bastam para ver o formato; a turma inteira seriam
-  // centenas de linhas de dado pessoal rolando no terminal.
-  console.log('Amostra (3 primeiras):');
-  for (const [userId, nota] of [...notas].slice(0, 3)) {
-    console.log(`  ${userId}: ${JSON.stringify(nota)}`);
+  if (!primeiroUserId) return;
+
+  // A pergunta que decide se isto e um problema ou so lentidao no lote.
+  console.log(
+    `Testando a leitura de UM aluno (${primeiroUserId}) na mesma categoria...`,
+  );
+
+  try {
+    const n1 = await grades.notaDeGradeObject(
+      orgUnitId,
+      categoriaN1,
+      primeiroUserId,
+    );
+
+    console.log(`  OK: ${JSON.stringify(n1)}\n`);
+    console.log(
+      '   ⇒ O PORTAL FUNCIONA: ele le aluno a aluno. O que nao funciona e a\n' +
+        '     leitura por turma, que so o compulsorio usa para ir mais rapido —\n' +
+        '     e ele ja cai sozinho para a leitura individual quando ela falha.\n',
+    );
+  } catch (erro) {
+    console.log(
+      `  FALHOU TAMBEM: ${erro instanceof Error ? erro.message : String(erro)}\n` +
+        '   ⇒ NINGUEM agenda a substitutiva nesta turma. A leitura da N1 esta\n' +
+        '     quebrada nos dois caminhos, e nao ha fallback.\n',
+    );
   }
-  console.log('');
 }
 
 main().catch((erro: unknown) => {

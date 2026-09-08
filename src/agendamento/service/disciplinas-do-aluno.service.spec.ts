@@ -380,8 +380,10 @@ describe('DisciplinasDoAlunoService', () => {
 
       expect(agendaveis).toHaveLength(0);
       expect(causa).toBe('FILTRO_DE_NOTA');
-      expect(motivo).toContain('1,50');
+      expect(motivo).toContain('prova substitutiva');
       expect(motivo).not.toMatch(/turma|CSV/i);
+      // Os limites nao sao ditos ao aluno (decisao do cliente, 08/09/2026).
+      expect(motivo).not.toMatch(/\d/);
     });
 
     /**
@@ -461,7 +463,7 @@ describe('DisciplinasDoAlunoService', () => {
       expect(motivo).toContain('notas');
     });
 
-    it('sem nota lancada nao agenda, e o texto manda a secretaria', async () => {
+    it('sem nota lancada nao agenda, e o texto manda ao suporte', async () => {
       const { service } = montar({
         habilitado: true,
         ofertas: [HISTORIA],
@@ -476,7 +478,8 @@ describe('DisciplinasDoAlunoService', () => {
       );
 
       expect(agendaveis).toHaveLength(0);
-      expect(motivo).toContain('secretaria');
+      expect(motivo).toContain('sem nota lancada');
+      expect(motivo).toContain('formulario de suporte');
     });
 
     /**

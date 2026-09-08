@@ -1321,10 +1321,31 @@ Num lote de substitutiva o motivo novo tende a ser a **maioria** das linhas.
 
 **Os motivos de recusa são cinco, e cada um pede uma ação diferente**
 (`MotivoDaRecusa`): `FINAL_ATINGIU_A_MEDIA` e `N1_ABAIXO_DO_MINIMO` são a regra
-funcionando; `SEM_NOTA_FINAL` e `SEM_NOTA_N1` são pendência de lançamento (caso
-de secretaria); `SEM_CATEGORIA_N1` é **defeito de montagem da turma** e atinge a
-turma inteira. Misturar os três grupos numa frase só faria o aluno desistir de
-perguntar — ou cobrar uma nota que ninguém tem como lançar.
+funcionando; `SEM_NOTA_FINAL` e `SEM_NOTA_N1` são pendência de lançamento;
+`SEM_CATEGORIA_N1` é **defeito de montagem da turma** e atinge a turma inteira.
+Misturar os três grupos numa frase só faria o aluno desistir de perguntar — ou
+cobrar uma nota que ninguém tem como lançar.
+
+⚠️ **O aluno NÃO vê os números da regra** (decisão do cliente, 08/09/2026). Nem
+os limites, nem a nota que ele tirou — nas duas mensagens que ele lê:
+
+| Mensagem | Onde | Quando aparece |
+|---|---|---|
+| "a lista traz apenas as disciplinas em que você tem direito" | `PortalView.vue` | ele tem alguma elegível e a lista sai curta |
+| `motivo` (`motivoDeNenhumaElegivel`) | `elegibilidade-de-nota.service.ts` | **nenhuma** disciplina passou |
+
+As duas terminam no **formulário de suporte** — e não em "procure a secretaria":
+a disciplina que falta pode ser nota não lançada, categoria N1 mal configurada ou
+erro de cadastro, casos que precisam ser registrados e roteados, não resolvidos
+no balcão. A causa continua distinta entre as três frases do backend, porque é
+ela que roteia o atendimento.
+
+É por isso que `motivoDeNenhumaElegivel` **não recebe mais o `FiltroDeNota`**:
+sem o filtro em mãos, ninguém volta a formatá-lo ali por distração. O
+`filtroDeNota` que `GET /portal/periodo` devolve é um **sinalizador** ("esta
+janela é a substitutiva"), e a tela não imprime os valores. Há teste em cada
+camada verificando a AUSÊNCIA de dígitos na frase — a regressão aqui é alguém
+"melhorar" o texto explicando o critério, e nada mais no sistema reclamaria.
 
 **O compulsório lê as notas por TURMA antes de começar** (fase 0,
 `preCarregarNotas`). Aluno a aluno seriam ~10 chamadas por pessoa — perto de 70

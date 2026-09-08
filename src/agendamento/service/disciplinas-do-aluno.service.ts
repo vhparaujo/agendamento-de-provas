@@ -294,7 +294,7 @@ export class DisciplinasDoAlunoService {
 
       return {
         agendaveis: [],
-        motivo: motivoDeNenhumaElegivel(recusadas, filtro),
+        motivo: motivoDeNenhumaElegivel(recusadas),
         causa: 'FILTRO_DE_NOTA',
       };
     } catch (erro) {

@@ -3,6 +3,7 @@ import {
   D2lGradesService,
   NotaFinalD2L,
 } from '../../d2l/service/d2l-grades.service';
+import { recusaDefinitiva } from '../../d2l/service/d2l-http.service';
 import type { FiltroDeNota } from '../../periodo/service/periodo.service';
 import type { DisciplinaAgendavel } from '../../turma/service/turma.service';
 
@@ -27,6 +28,14 @@ import type { DisciplinaAgendavel } from '../../turma/service/turma.service';
  * comparavam a MESMA nota (a final, em `[1,5 ; 6,75)`); hoje o piso mudou de
  * nota. Ler `minimaN1` como piso da final volta a liberar quem tem final 2,0 com
  * N1 zerada — e o resultado continua "parecendo certo" na tela.
+ *
+ * ⚠️ **A comparacao e em PONTOS BRUTOS, e as duas notas tem escalas DIFERENTES.**
+ * Medido no tenant da UCB (turma 146313, 08/09/2026): a N1 vale **4,5 pontos** e
+ * a nota final, 10. Entao `minimaN1 = 1,5` significa 1,5 dos 4,5 da N1 — cerca
+ * de um terco dela —, e nao 1,5 numa escala de 0 a 10. **Isso foi confirmado com
+ * o cliente e esta correto**: nao normalize a N1 pelo `PointsDenominator`
+ * "consertando" uma inconsistencia aparente. Fazer isso baixaria o piso efetivo
+ * para 0,675 ponto e deixaria entrar quem a regra exclui — sem nada quebrar.
  *
  * A regra e **por DISCIPLINA, nao por aluno**: um aluno com tres materias pode
  * ter uma elegivel e duas nao, e a prova dele cobre so a elegivel. Isso NAO
@@ -117,6 +126,16 @@ export class ElegibilidadeDeNotaService {
 
   /** Nota por `orgUnitId + userId + alvo`. Ver `CACHE_MS` e `chaveDaNota`. */
   private cache = new Map<string, { nota: NotaFinalD2L; expiraEmMs: number }>();
+
+  /**
+   * O tenant recusou ler a N1 da turma inteira — ver `preAquecer`.
+   *
+   * Vive no servico, e nao numa variavel local do lote, porque a resposta vale
+   * para TODAS as turmas: e uma caracteristica do tenant, nao daquela turma.
+   * `esquecer()` o zera junto com o cache, para um lote nao herdar do outro uma
+   * conclusao que pode ter mudado (o tenant pode ter sido atualizado).
+   */
+  private turmaInteiraDaN1Recusada = false;
 
   constructor(private readonly grades: D2lGradesService) {}
 
@@ -258,23 +277,14 @@ export class ElegibilidadeDeNotaService {
           ritmo,
         );
 
+        turmas += 1;
+
         if (categoriaN1 === null) {
           semN1 += 1;
-          turmas += 1;
           continue;
         }
 
-        const notasN1 = await this.grades.notasDeGradeObjectDaTurma(
-          orgUnitId,
-          categoriaN1,
-          ritmo,
-        );
-
-        for (const [userId, nota] of notasN1) {
-          this.guardar(orgUnitId, userId, categoriaN1, nota);
-        }
-
-        turmas += 1;
+        await this.preAquecerN1(orgUnitId, categoriaN1, ritmo);
       } catch (erro) {
         falhas += 1;
 
@@ -288,15 +298,70 @@ export class ElegibilidadeDeNotaService {
 
     this.logger.log(
       `Notas pre-carregadas: ${turmas} turma(s), ${falhas} falha(s), ` +
-        `${semN1} sem categoria N1.`,
+        `${semN1} sem categoria N1` +
+        (this.turmaInteiraDaN1Recusada ? '; N1 lida aluno a aluno' : '') +
+        '.',
     );
 
     return { turmas, falhas, semN1 };
   }
 
+  /**
+   * ==========================================================================
+   * A N1 DA TURMA INTEIRA — a otimizacao que o tenant pode nao aceitar
+   * ==========================================================================
+   * ⚠️ **Confirmado no tenant da UCB (08/09/2026): `GET grades/(id)/values/` com
+   * o id de uma CATEGORIA responde `400 Bad Request`.** A leitura de UM aluno
+   * (`.../values/(userId)`) na mesma categoria funciona — e e ela que o portal
+   * usa, entao o aluno nao e afetado. O que nao existe e a leitura em lote.
+   *
+   * Por isso a falha aqui **nao conta como `falhas`** e **nao sobe**: nao e uma
+   * turma com problema, e sim uma otimizacao que aquele tenant nao oferece. O
+   * lote continua correto lendo a N1 aluno a aluno — mais lento, e so.
+   *
+   * E por isso ela **desliga a tentativa para o resto do lote** quando a recusa
+   * e determinística (4xx, ver `recusaDefinitiva`): sem esse freio, um lote de
+   * 300 turmas gastaria 300 chamadas condenadas e escreveria 300 avisos iguais,
+   * enterrando no log as falhas de verdade — que sao as de rede. Um 5xx ou um
+   * timeout NAO desligam nada: aquela turma pode ter sido azar, e desistir da
+   * otimizacao inteira por um blip seria caro demais.
+   */
+  private async preAquecerN1(
+    orgUnitId: string,
+    categoriaN1: string,
+    ritmo: { atrasoMs?: number; timeoutMs?: number },
+  ): Promise<void> {
+    if (this.turmaInteiraDaN1Recusada) return;
+
+    try {
+      const notasN1 = await this.grades.notasDeGradeObjectDaTurma(
+        orgUnitId,
+        categoriaN1,
+        ritmo,
+      );
+
+      for (const [userId, nota] of notasN1) {
+        this.guardar(orgUnitId, userId, categoriaN1, nota);
+      }
+    } catch (erro) {
+      const definitiva = recusaDefinitiva(erro);
+
+      if (definitiva) this.turmaInteiraDaN1Recusada = true;
+
+      this.logger.warn(
+        `Nao foi possivel ler a N1 da turma ${orgUnitId} de uma vez; ela sera ` +
+          'lida aluno a aluno' +
+          (definitiva ? ', e o mesmo vale para o resto do lote' : '') +
+          '. Causa: ' +
+          (erro instanceof Error ? erro.message : String(erro)),
+      );
+    }
+  }
+
   /** Esvazia o cache. Existe para um lote nao herdar notas de outra execucao. */
   esquecer(): void {
     this.cache.clear();
+    this.turmaInteiraDaN1Recusada = false;
   }
 
   /** Enquanto `false`, nenhuma janela deveria ter filtro de nota configurado. */
@@ -401,14 +466,19 @@ function chaveDaNota(
  * na maioria destes casos nao ha nada para conferir: o aluno passou de ano, ou
  * ja reprovou pela N1.
  *
- * A frase escolhida e a do motivo que EXPLICA o caso todo; havendo mistura, a
- * regra fica visivel e o resto vira um "parte delas". Nota nenhuma aparece na
- * tela de agendamento — quem quiser o numero pede na secretaria, que o tem no
- * relatorio.
+ * ⚠️ **Nenhuma frase daqui diz os NUMEROS da regra** (decisao do cliente,
+ * 08/09/2026), e essa e a razao de este arquivo nao receber mais o
+ * `FiltroDeNota`: sem o filtro em maos, ninguem volta a formata-lo aqui por
+ * distracao. A nota do aluno e o criterio sao assunto entre ele e a secretaria;
+ * publicar o limite na tela de agendamento so produz discussao sobre o numero,
+ * no lugar errado e com quem nao decide nada.
+ *
+ * O que muda entre as tres frases e a CAUSA, porque ela roteia o atendimento —
+ * nota por lancar, turma mal configurada, ou a regra funcionando. Todas terminam
+ * no formulario de suporte, que e onde o caso vira registro.
  */
 export function motivoDeNenhumaElegivel(
   recusadas: DisciplinaRecusada[],
-  filtro: FiltroDeNota,
 ): string {
   const quantos = (motivo: MotivoDaRecusa) =>
     recusadas.filter((r) => r.motivo === motivo).length;
@@ -417,45 +487,49 @@ export function motivoDeNenhumaElegivel(
   const semCategoria = quantos('SEM_CATEGORIA_N1');
 
   // Turma sem categoria N1 e defeito de montagem, e nao "voce nao tem direito":
-  // dizer ao aluno que ele nao esta na faixa seria mentir, e ele nao tem como
-  // descobrir sozinho que o problema esta na turma.
+  // dizer ao aluno que ele nao atende aos criterios seria mentir, e ele nao tem
+  // como descobrir sozinho que o problema esta na turma.
   if (semCategoria > 0 && semCategoria === recusadas.length) {
     return (
-      'Suas disciplinas estao sem a nota N1 configurada no Brightspace, e a ' +
-      'prova substitutiva depende dela. Procure a secretaria academica.'
+      'Nao foi possivel conferir suas notas para a prova substitutiva: as ' +
+      'notas das suas disciplinas ainda nao estao completas no Brightspace. ' +
+      `${PROCURE_O_SUPORTE}`
     );
   }
 
-  // Sem nota lancada tambem e caso de secretaria: a turma pode simplesmente nao
-  // ter fechado as notas ainda. Misturar com a frase da regra faria o aluno
-  // desistir de perguntar.
+  // Sem nota lancada tambem nao e "voce nao tem direito": a turma pode
+  // simplesmente nao ter fechado as notas ainda.
   if (semNota > 0 && semNota === recusadas.length) {
     return (
-      'Suas disciplinas ainda estao sem nota lancada no Brightspace (a N1 ou a ' +
-      'nota final), e a prova substitutiva depende delas. Procure a secretaria ' +
-      'academica.'
+      'Suas disciplinas ainda estao sem nota lancada no Brightspace, e a prova ' +
+      `substitutiva depende dela. ${PROCURE_O_SUPORTE}`
     );
   }
 
   const base =
-    'Nenhuma das suas disciplinas atende aos criterios da prova substitutiva: ' +
-    `e preciso ter N1 de pelo menos ${formatarNota(filtro.minimaN1)} e nota ` +
-    `final abaixo de ${formatarNota(filtro.maximaFinal)}.`;
+    'Nenhuma das suas disciplinas tem direito a prova substitutiva neste ' +
+    'periodo.';
 
   if (semNota > 0 || semCategoria > 0) {
     return (
-      `${base} Parte delas ainda esta sem nota lancada — se for o seu caso, ` +
-      'procure a secretaria academica.'
+      `${base} Parte delas ainda esta sem nota lancada no Brightspace. ` +
+      `${PROCURE_O_SUPORTE}`
     );
   }
 
-  return `${base} Se voce discorda das notas, procure a secretaria academica.`;
+  return `${base} ${PROCURE_O_SUPORTE}`;
 }
 
-/** "1.5" vira "1,50" — e a tela do aluno, nao um log. */
-function formatarNota(valor: number): string {
-  return valor.toFixed(2).replace('.', ',');
-}
+/**
+ * O caminho unico do aluno que discorda da lista.
+ *
+ * Formulario, e nao "procure a secretaria": a disciplina que falta pode ser nota
+ * nao lancada, categoria N1 mal configurada na turma ou erro de cadastro — casos
+ * que precisam ser registrados e roteados, nao resolvidos no balcao.
+ */
+const PROCURE_O_SUPORTE =
+  'Se voce deveria agendar a prova substitutiva de alguma disciplina, responda ' +
+  'o formulario de suporte para que possamos verificar.';
 
 /** Ver `NOTAS_INDISPONIVEIS`: a Valence caiu e a janela depende dela. */
 export function notasIndisponiveis(erro: unknown): BadGatewayException {

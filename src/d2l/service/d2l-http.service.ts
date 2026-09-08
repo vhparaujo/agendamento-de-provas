@@ -62,6 +62,36 @@ export interface OpcoesChamadaD2L {
   timeoutMs?: number;
 }
 
+/**
+ * O tenant respondeu, e recusou.
+ *
+ * Existe para separar **"esta leitura nao vai funcionar nunca"** de **"a rede
+ * falhou agora"** — duas coisas que a mensagem de erro conta e nenhum `catch`
+ * conseguia distinguir sem comparar string. Um 4xx e determinístico: repetir a
+ * mesma chamada da mesma forma da o mesmo resultado, e quem depende dela pode
+ * parar de tenta-la. Um 5xx ou um timeout, nao.
+ *
+ * Continua sendo `BadGatewayException`: para quem so quer devolver o erro ao
+ * cliente, nada mudou. O `statusHttp` e para quem precisa DECIDIR.
+ */
+export class RecusaDoBrightspace extends BadGatewayException {
+  constructor(
+    mensagem: string,
+    readonly statusHttp: number,
+  ) {
+    super(mensagem);
+  }
+}
+
+/** O tenant recusou de forma determinística: repetir nao muda o resultado. */
+export function recusaDefinitiva(erro: unknown): boolean {
+  return (
+    erro instanceof RecusaDoBrightspace &&
+    erro.statusHttp >= 400 &&
+    erro.statusHttp < 500
+  );
+}
+
 @Injectable()
 export class D2lHttpService {
   private readonly logger = new Logger(D2lHttpService.name);
@@ -200,9 +230,10 @@ export class D2lHttpService {
         );
       }
 
-      throw new BadGatewayException(
+      throw new RecusaDoBrightspace(
         `O Brightspace recusou a ${this.substantivo(metodo)} de ${opcoes.oQue} ` +
           `(HTTP ${resposta.status}). ${corpo}`.trim(),
+        resposta.status,
       );
     }
 

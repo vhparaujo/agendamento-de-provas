@@ -255,6 +255,34 @@ ela tem).
 | Cache de 5 min do `CategoryId`, **inclusive do "não achei"** | Sem o cache negativo, cada aluno de uma turma mal nomeada custaria uma listagem inteira de categorias |
 | **404 → `null`** (turma sem categorias), **403 SOBE** | São opostos: 404 é uma turma; 403 é o consentimento sem `grades:gradecategories:read`, e atinge TODAS — traduzi-lo para "turma sem N1" mandaria o curso inteiro à secretaria por um `npm run d2l:autorizar` que falta |
 | Só **leitura** | Categorias (tipo 9) e a nota final calculada não aceitam `PUT`: o `IncomingGradeValue` só vale para os tipos 1–4 (Numérico, Aprovado/Reprovado, Caixa de Seleção, Texto). Elas são sempre recalculadas a partir dos itens que as compõem — o que não nos afeta, aqui só se lê |
+
+#### 🔴 A leitura por TURMA não vale para categorias (medido, 08/09/2026)
+
+```
+GET .../grades/490746/values/          →  400 Bad Request   ← a turma inteira
+GET .../grades/490746/values/171128    →  200 OK            ← um aluno
+```
+
+Medido na turma `146313` do `ava.catolica.edu.br`, com o escopo já consentido —
+não é 403 (escopo) nem 404 (id errado). A rota da turma inteira aceita grade
+objects normais e **recusa uma categoria**; a leitura individual, que é a
+documentada pelo suporte da D2L, funciona.
+
+| Consequência | Onde |
+|---|---|
+| **Nenhuma** para o aluno | O portal lê aluno a aluno, sempre |
+| O lote perde a otimização da N1 | `preAquecer` cai para leitura individual: volta a ~1 chamada por (aluno × disciplina) só para a N1 |
+
+`ElegibilidadeDeNotaService.preAquecer` trata isso como **característica do
+tenant, não como falha**: a recusa não entra no contador de `falhas` e
+**desliga a tentativa para o resto do lote** quando é determinística (4xx, ver
+`recusaDefinitiva`). Sem esse freio, 300 turmas seriam 300 chamadas condenadas e
+300 avisos idênticos, enterrando no log as falhas de rede — que são as que pedem
+ação. Um 5xx ou um timeout **não** desligam nada: aquela turma pode ter sido
+azar. A nota **final** continua sendo pré-carregada por turma normalmente.
+
+Se um dia o tenant passar a aceitar, nada precisa mudar: o freio é por execução
+(`esquecer()` o zera) e a otimização volta sozinha.
 | A conferência de escala (`PointsDenominator ≠ 10`) **não** roda na N1 | O aviso fala de semestre com notas por lançar, e o denominador de uma N1 só diz quanto ela vale naquela turma |
 
 Resposta de um aluno (campos que importam):
@@ -271,6 +299,7 @@ Resposta de um aluno (campos que importam):
 | Decisão | Por quê |
 |---|---|
 | Compara **`PointsNumerator`** (pontos), não o percentual | Decisão do cliente. Os limites (N1 ≥ 1,5 e final < 7) são em pontos, na mesma escala da nota que o aluno vê |
+| ⚠️ As duas notas têm **escalas diferentes**, e isso está correto | Medido na turma `146313`: a **N1 vale 4,5 pontos** e a final, 10. `1,5` é 1,5 dos 4,5 da N1 — cerca de um terço dela. Confirmado com o cliente em 08/09/2026: **não normalize a N1 pelo `PointsDenominator`** "consertando" a inconsistência aparente; isso baixaria o piso efetivo para 0,675 e deixaria entrar quem a regra exclui |
 | **404 = `SEM_NOTA`**, não erro | Turma sem notas fechadas e aluno que saiu da turma respondem 404. É o segundo ponto do projeto a usar `nuloEm404`, junto de `users/?orgDefinedId=` |
 | **`PointsNumerator` nulo = `SEM_NOTA`**, nunca 0,00 | Zero poria o curso inteiro abaixo do piso, e ninguém reclama de uma prova que não lhe foi oferecida |
 | A listagem por turma **segue a paginação até o fim**, e **estoura** se não terminar | Meia turma lida é pior que erro: os alunos que faltaram viram "sem nota", e sem nota ninguém agenda. Vale igual para a N1 — é o mesmo código |

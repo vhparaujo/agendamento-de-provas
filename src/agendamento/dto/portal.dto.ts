@@ -252,9 +252,15 @@ export class SituacaoPeriodoDto implements SituacaoPeriodo {
     description:
       'OS CRITERIOS DE NOTA desta janela, quando ela filtra por nota (a ' +
       'substitutiva). Presente = a lista de disciplinas do aluno traz **so** as ' +
-      'materias em que ele tem N1 >= minimaN1 E nota final < maximaFinal; a ' +
-      'tela precisa dizer isso, senao quem tem tres disciplinas e ve uma acha ' +
-      'que o sistema errou. `null` = a prova cobre todas as disciplinas (a N2).',
+      'materias em que ele tem direito a substitutiva; a tela precisa avisar ' +
+      'que a lista e curta de proposito, senao quem tem tres disciplinas e ve ' +
+      'uma acha que o sistema errou. `null` = a prova cobre todas as ' +
+      'disciplinas (a N2).\n\n' +
+      'ATENCAO: a tela usa este campo como SINALIZADOR ("esta janela e a ' +
+      'substitutiva"), e **nao** imprime os numeros. Por decisao do cliente ' +
+      '(08/09/2026) os limites nao sao ditos ao aluno: a nota dele e o criterio ' +
+      'sao assunto com a secretaria, e a tela de agendamento so produziria ' +
+      'discussao sobre o numero com quem nao decide nada.',
   })
   filtroDeNota?: FiltroDeNota | null;
 

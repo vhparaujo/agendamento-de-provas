@@ -588,6 +588,12 @@ pode ver só uma na tela.
 - As notas que decidiram ficam gravadas em `AgendamentoDisciplina.notaFinal` e
   `.notaN1` — é a resposta para "por que ele agendou substitutiva desta matéria?"
   meses depois. A `notaN1` é nula nas reservas anteriores a 08/09/2026.
+- ⚠️ **O aluno não vê os números.** Nem os limites, nem a nota dele: a tela só
+  diz que a lista traz as disciplinas em que ele tem direito, e que ele deve
+  **responder o formulário de suporte** se faltar alguma. A nota e o critério são
+  assunto dele com a secretaria — a tela de agendamento só produziria discussão
+  sobre o número com quem não decide nada. Vale para as duas mensagens: a do
+  portal e a do backend (quando nenhuma disciplina passa).
 - No compulsório, quem fica de fora por nota aparece no relatório como
   `NAO_ELEGIVEL_PELA_NOTA` — o único motivo que **não pede ação** da secretaria,
   e o mais numeroso num lote de substitutiva.
