@@ -317,9 +317,12 @@ export class AgendamentoAdminService {
             create: fonte.disciplinas.map((d) => ({
               orgUnitId: d.orgUnitId,
               nomeDisciplina: d.nomeDisciplina,
-              // Ver o schema: fotografia da nota, nula quando a janela nao
-              // filtrou por nota.
+              // Ver o schema: fotografia das notas, nulas quando a janela nao
+              // filtrou por nota. Vem da Valence ou recopiadas da reserva
+              // anterior — e `notaN1` fica nula tambem quando a reserva copiada
+              // e anterior a 08/09/2026, decidida por uma regra que nao a olhava.
               notaFinal: d.notaFinal,
+              notaN1: d.notaN1,
             })),
           },
           // A fila de liberacao nasce na MESMA transacao, como no portal: um
@@ -398,7 +401,7 @@ export class AgendamentoAdminService {
     const anterior = await this.reservaAnterior(vinculo, periodoLetivoId);
 
     // A janela filtra por nota? Muda o que o fallback significa — ver o aviso
-    // montado em `semBrightspace`. A faixa de nota e da JANELA, igual para
+    // montado em `semBrightspace`. O criterio de nota e da JANELA, igual para
     // todas as modalidades, entao `janelaVigente()` responde e evita uma
     // segunda resolucao por modalidade que nao mudaria nada.
     const janela = await this.periodo.janelaVigente();
@@ -420,18 +423,19 @@ export class AgendamentoAdminService {
           'de liberar a prova no Brightspace.',
       ];
 
-      // ⚠️ A reserva copiada NAO passou pela faixa de nota desta janela — em
+      // ⚠️ A reserva copiada NAO passou pelos criterios desta janela — em
       // geral ela e da prova regular, marcada quando nota nenhuma era
       // consultada. O portal recusaria este aluno em vez de degradar; aqui nao
       // ha como recusar sem travar o balcao com o aluno na frente, entao a
       // saida e dizer em voz alta o que a lista NAO garante.
       if (filtroDeNota) {
         avisos.push(
-          'ATENCAO: esta janela so admite disciplina com nota final entre ' +
-            `${filtroDeNota.minima} e ${filtroDeNota.maxima} (este ultimo ` +
-            'excluido), e a lista copiada NAO foi conferida contra a nota — ' +
-            'ela veio de outra reserva, nao do Brightspace. Confira as notas ' +
-            'antes de confirmar, ou refaca quando a integracao voltar.',
+          'ATENCAO: esta janela so admite disciplina com N1 de pelo menos ' +
+            `${filtroDeNota.minimaN1} e nota final abaixo de ` +
+            `${filtroDeNota.maximaFinal}, e a lista copiada NAO foi conferida ` +
+            'contra as notas — ela veio de outra reserva, nao do Brightspace. ' +
+            'Confira as notas antes de confirmar, ou refaca quando a ' +
+            'integracao voltar.',
         );
       }
 
@@ -557,7 +561,12 @@ export class AgendamentoAdminService {
         alunoId: true,
         userIdD2L: true,
         disciplinas: {
-          select: { orgUnitId: true, nomeDisciplina: true, notaFinal: true },
+          select: {
+            orgUnitId: true,
+            nomeDisciplina: true,
+            notaFinal: true,
+            notaN1: true,
+          },
         },
       },
     });
@@ -572,14 +581,17 @@ export class AgendamentoAdminService {
       id: escolhida.id,
       dados: {
         userIdD2L: escolhida.userIdD2L,
-        // A nota da reserva antiga vem junto e e RECOPIADA como esta: e a nota
-        // que decidiu AQUELA reserva, e nao a de agora. Copiar sem ela apagaria
-        // a unica explicacao existente; inventar uma nova exigiria consultar a
-        // Valence — que e justamente o que nao respondeu quando se cai aqui.
+        // As notas da reserva antiga vem junto e sao RECOPIADAS como estao: sao
+        // as que decidiram AQUELA reserva, e nao as de agora. Copiar sem elas
+        // apagaria a unica explicacao existente; inventar novas exigiria
+        // consultar a Valence — que e justamente o que nao respondeu quando se
+        // cai aqui. `notaN1` vem nula das reservas anteriores a 08/09/2026,
+        // decididas por uma regra que nao olhava a N1.
         disciplinas: escolhida.disciplinas.map((d) => ({
           orgUnitId: d.orgUnitId,
           nomeDisciplina: d.nomeDisciplina,
           notaFinal: d.notaFinal === null ? null : Number(d.notaFinal),
+          notaN1: d.notaN1 === null ? null : Number(d.notaN1),
         })),
       },
     };

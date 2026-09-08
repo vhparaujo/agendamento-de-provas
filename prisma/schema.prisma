@@ -445,16 +445,24 @@ model AgendamentoDisciplina {
   agendamentoId  Int
   orgUnitId      String // disciplina (course offering) no D2L
   nomeDisciplina String?
-  /// A nota final do aluno NESTA disciplina no momento da reserva — fotografia,
-  /// como `rodada` e `poloId` no agendamento.
+  /// AS DUAS NOTAS que decidiram a reserva NESTA disciplina — fotografia, como
+  /// `rodada` e `poloId` no agendamento.
   ///
-  /// So e preenchida quando a janela tinha filtro de nota (a substitutiva); na
-  /// N2 fica nula, porque nota nenhuma foi consultada. Existe para responder a
-  /// pergunta que a secretaria recebe com o aluno na frente — "por que ele
-  /// agendou substitutiva desta materia?" —, e a nota no Brightspace pode ter
-  /// mudado depois. Sem a coluna, a unica resposta seria consultar a Valence de
-  /// novo e ver um numero que talvez ja nao seja o que decidiu a reserva.
+  /// So sao preenchidas quando a janela tinha filtro de nota (a substitutiva);
+  /// na N2 ficam nulas, porque nota nenhuma foi consultada. Existem para
+  /// responder a pergunta que a secretaria recebe com o aluno na frente — "por
+  /// que ele agendou substitutiva desta materia?" —, e a nota no Brightspace
+  /// pode ter mudado depois. Sem as colunas, a unica resposta seria consultar a
+  /// Valence de novo e ver numeros que talvez ja nao sejam os que decidiram.
+  ///
+  /// Sao DUAS desde 08/09/2026 porque a regra passou a olhar duas notas: com so
+  /// a final gravada, "ele tinha N1 suficiente?" ficaria sem resposta — e e
+  /// justamente o criterio novo, o que a secretaria ainda nao conhece de cor.
+  /// `notaN1` fica nula tambem nas reservas gravadas ANTES desta data: elas
+  /// foram decididas pela regra antiga, e inventar um valor seria mentir sobre
+  /// o que aconteceu.
   notaFinal      Decimal? @db.Decimal(5, 2)
+  notaN1         Decimal? @db.Decimal(5, 2)
 
   agendamento Agendamento @relation(fields: [agendamentoId], references: [id], onDelete: Cascade)
 
@@ -556,21 +564,27 @@ model PeriodoAgendamento {
   /// migration a cada nome novo. O default mantem os semestres ja cadastrados,
   /// que sao todos da prova regular.
   rodada          String    @default("N2")
-  /// FAIXA DE NOTA QUE HABILITA ESTA RODADA — os dois campos andam juntos.
+  /// OS CRITERIOS DE NOTA QUE HABILITAM ESTA RODADA — os dois andam juntos.
   ///
   /// NULOS = sem filtro: e o caso da N2 e o de toda janela ja cadastrada, em que
   /// a prova cobre as disciplinas do semestre sem olhar nota nenhuma.
   ///
-  /// PREENCHIDOS = so entra na prova a disciplina em que a nota final do aluno
-  /// esta em [notaMinima, notaMaxima) — `>=` na minima e `<` na maxima. E a
-  /// regra da SUBSTITUTIVA: quem tirou menos que o piso ja reprovou por nota, e
-  /// quem alcancou o teto ja passou.
+  /// PREENCHIDOS = so entra na prova a disciplina em que o aluno passa nos DOIS:
+  /// `N1 >= notaMinimaN1` E `nota final calculada < notaMaximaFinal`. E a regra
+  /// da SUBSTITUTIVA (08/09/2026): quem nao tirou o minimo na N1 ja reprovou, e
+  /// quem alcancou a media na final ja passou.
+  ///
+  /// ⚠️ ELES NAO SAO UM INTERVALO. Ate 08/09/2026 eram (`notaMinima`/
+  /// `notaMaxima`, os dois sobre a nota FINAL), e as colunas foram renomeadas
+  /// junto com a regra justamente para que ninguem continue lendo o piso como
+  /// piso da final — o que liberaria de novo quem tem final 2,0 com a N1 zerada.
+  /// Nao ha piso na nota final, nem teto na N1.
   ///
   /// ⚠️ O gatilho e ESTE PAR, e nunca `rodada == "SUB"`: `rodada` e texto livre
   /// (quem a nomeia e a secretaria), entao comparar a string faria a regra parar
   /// de valer no dia em que alguem cadastrasse "Substitutiva" ou "sub".
-  notaMinima      Decimal?  @db.Decimal(5, 2)
-  notaMaxima      Decimal?  @db.Decimal(5, 2)
+  notaMinimaN1    Decimal?  @db.Decimal(5, 2)
+  notaMaximaFinal Decimal?  @db.Decimal(5, 2)
   descricao       String?
   aberto          Boolean   @default(false)
   dataAbertura    DateTime?

@@ -11,26 +11,32 @@ import { AuditoriaService } from '../src/seguranca/service/auditoria.service';
 
 /**
  * ============================================================================
- * A NOTA FINAL DE UM ALUNO NUMA TURMA — SOMENTE DESENVOLVIMENTO
+ * AS NOTAS DE UM ALUNO NUMA TURMA — SOMENTE DESENVOLVIMENTO
  * ============================================================================
  *   npm run d2l:notas -- <orgUnitId> [userId]
  *
  * Sem o `userId`, le a TURMA INTEIRA (o caminho que o compulsorio usa) e imprime
  * um resumo em vez da lista — que numa turma real tem centenas de linhas.
  *
- * POR QUE ELE EXISTE: a faixa de nota da rodada decide quem faz a substitutiva,
- * e a decisao e tomada sobre campos que so o tenant sabe responder — se
- * `PointsDenominator` vem 10 (a nota ja fechou) ou menos (o semestre ainda esta
- * correndo), e se a rota devolve a nota AJUSTADA quando o professor a lancou ou
- * sempre a calculada. Conferir isso com um aluno de nota conhecida, antes de
- * abrir a janela, e o que separa "a regra esta certa" de "a regra parece certa".
+ * POR QUE ELE EXISTE: os criterios de nota da rodada decidem quem faz a
+ * substitutiva, e a decisao e tomada sobre coisas que so o tenant sabe
+ * responder — se `PointsDenominator` vem 10 (a nota ja fechou) ou menos (o
+ * semestre ainda corre), se a rota devolve a AJUSTADA quando o professor a
+ * lancou, e **se a turma tem mesmo uma categoria chamada "N1"**. Conferir isso
+ * com um aluno de nota conhecida, antes de abrir a janela, e o que separa "a
+ * regra esta certa" de "a regra parece certa".
+ *
+ * ⚠️ **A pendencia que este script existe para achar hoje e a categoria N1.** A
+ * turma que chamou a categoria de "Nota 1" recusa TODOS os seus alunos, e o
+ * unico sinal em producao e uma linha de WARN no log — descoberta quando o aluno
+ * ligar dizendo que a prova nao aparece.
  *
  * O JSON CRU tambem e impresso: e nele que se ve o `GradeObjectName`, o unico
  * campo que diz de qual nota final o valor veio.
  *
- * Escopo: **`grades:gradevalues:read`**. Ele vive no CONSENTIMENTO, e nao no
- * `.env` — acrescenta-lo a `D2L_SCOPES` sem refazer `npm run d2l:autorizar`
- * deixa este script respondendo 403.
+ * Escopos: **`grades:gradevalues:read`** e **`grades:gradecategories:read`**.
+ * Eles vivem no CONSENTIMENTO, e nao no `.env` — acrescenta-los a `D2L_SCOPES`
+ * sem refazer `npm run d2l:autorizar` deixa este script respondendo 403.
  *
  * As dependencias sao montadas A MAO, sem subir o Nest, pelo mesmo motivo do
  * `d2l:token`: o `tsx` compila com esbuild, que nao emite
@@ -74,24 +80,79 @@ async function main(): Promise<void> {
   try {
     console.log(`\nAPI LE ${grades.versaoDaApi()} · turma ${orgUnitId}\n`);
 
+    const categoriaN1 = await aCategoriaN1(grades, orgUnitId);
+
     if (userId) {
-      await umAluno(grades, orgUnitId, userId);
+      await umAluno(grades, orgUnitId, userId, categoriaN1);
     } else {
-      await aTurmaInteira(grades, orgUnitId);
+      await aTurmaInteira(grades, orgUnitId, categoriaN1);
     }
   } finally {
     await prisma.$disconnect();
   }
 }
 
+/**
+ * Resolve — e explica — a categoria de notas que vale como N1.
+ *
+ * Roda ANTES da leitura das notas de proposito: sem ela, nenhum aluno da turma
+ * agenda, e saber isso primeiro poupa a leitura da turma inteira.
+ */
+async function aCategoriaN1(
+  grades: D2lGradesService,
+  orgUnitId: string,
+): Promise<string | null> {
+  const nome = grades.nomeDaCategoriaN1();
+  const id = await grades.categoriaPorNome(orgUnitId, nome);
+
+  if (id === null) {
+    console.log(
+      `❌ Esta turma NAO tem categoria de notas chamada "${nome}".\n` +
+        '   Na substitutiva isso recusa TODOS os alunos dela (motivo ' +
+        'SEM_CATEGORIA_N1).\n' +
+        '   Conserto: renomear a categoria no Brightspace, ou ajustar ' +
+        'D2L_CATEGORIA_N1 no .env.\n' +
+        '   (O log da aplicacao lista os nomes que a turma tem.)\n',
+    );
+    return null;
+  }
+
+  console.log(`Categoria "${nome}": CategoryId ${id}`);
+  console.log(
+    '  (o id muda de turma para turma — por isso a busca e pelo NOME)\n',
+  );
+
+  return id;
+}
+
 async function umAluno(
   grades: D2lGradesService,
   orgUnitId: string,
   userId: string,
+  categoriaN1: string | null,
 ): Promise<void> {
   const nota = await grades.notaFinal(orgUnitId, userId);
 
-  console.log(`Normalizado: ${JSON.stringify(nota, null, 2)}\n`);
+  console.log(`Nota final normalizada: ${JSON.stringify(nota, null, 2)}\n`);
+
+  if (categoriaN1 !== null) {
+    const n1 = await grades.notaDeGradeObject(orgUnitId, categoriaN1, userId);
+
+    console.log(`N1 normalizada: ${JSON.stringify(n1, null, 2)}\n`);
+
+    if (n1.situacao === 'SEM_NOTA') {
+      console.log(
+        'SEM_NOTA na N1: a categoria existe, mas este aluno nao tem valor ' +
+          'nela. Na substitutiva isso e NAO PODE AGENDAR (SEM_NOTA_N1) — ' +
+          'mesmo com a nota final dentro do teto.\n',
+      );
+    } else {
+      console.log(`Pontos da N1 (o piso compara isto): ${n1.pontos}`);
+      console.log(
+        `Denominador da N1: ${n1.denominador ?? '(nao informado)'}\n`,
+      );
+    }
+  }
 
   if (nota.situacao === 'SEM_NOTA') {
     console.log(
@@ -102,7 +163,7 @@ async function umAluno(
     return;
   }
 
-  console.log(`Pontos (o que a faixa compara): ${nota.pontos}`);
+  console.log(`Pontos da final (o teto compara isto): ${nota.pontos}`);
   console.log(`Denominador: ${nota.denominador ?? '(nao informado)'}`);
   console.log(`Origem da nota: ${nota.origem}`);
   console.log(`Como o aluno ve: ${nota.exibida ?? '(vazio)'}\n`);
@@ -110,8 +171,9 @@ async function umAluno(
   if (nota.denominador !== null && nota.denominador !== 10) {
     console.log(
       `⚠️  A nota final desta turma vale no maximo ${nota.denominador}, e nao 10. ` +
-        'A faixa da rodada compara PONTOS: com o semestre ainda correndo, a ' +
-        'turma inteira parece estar abaixo da media.\n',
+        'A regra da rodada compara PONTOS: com o semestre ainda correndo, a ' +
+        'turma inteira parece estar abaixo da media — e o teto da final ' +
+        'deixaria passar quem ja passou.\n',
     );
   }
 
@@ -130,6 +192,7 @@ async function umAluno(
 async function aTurmaInteira(
   grades: D2lGradesService,
   orgUnitId: string,
+  categoriaN1: string | null,
 ): Promise<void> {
   const notas = await grades.notasFinaisDaTurma(orgUnitId, { atrasoMs: 200 });
 
@@ -150,6 +213,23 @@ async function aTurmaInteira(
 
   console.log(`Denominadores encontrados: ${[...denominadores].join(', ')}`);
   console.log(`Origens encontradas: ${[...origens].join(', ')}\n`);
+
+  // Quantos tem N1 importa tanto quanto quantos tem nota final: os dois
+  // criterios sao obrigatorios, e quem falta em um nao agenda.
+  if (categoriaN1 !== null) {
+    const n1 = await grades.notasDeGradeObjectDaTurma(orgUnitId, categoriaN1, {
+      atrasoMs: 200,
+    });
+
+    const comN1 = [...n1.values()].filter((n) => n.situacao === 'ACHOU').length;
+
+    console.log(`N1 (categoria ${categoriaN1}):`);
+    console.log(`  com nota na N1: ${comN1}`);
+    console.log(`  sem nota na N1: ${n1.size - comN1}`);
+    console.log(
+      '  (sem N1 lancada o aluno NAO agenda, mesmo com a final na faixa)\n',
+    );
+  }
 
   // As tres primeiras bastam para ver o formato; a turma inteira seriam
   // centenas de linhas de dado pessoal rolando no terminal.

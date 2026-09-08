@@ -165,7 +165,7 @@ async function main(): Promise<void> {
       `\nJanela: periodos letivos ${vigente.periodoLetivoIds.join(', ')}, ` +
         `rodada ${vigente.rodada}` +
         (vigente.filtroDeNota
-          ? ` (faixa de nota [${vigente.filtroDeNota.minima}; ${vigente.filtroDeNota.maxima}))`
+          ? ` (N1 >= ${vigente.filtroDeNota.minimaN1} e final < ${vigente.filtroDeNota.maximaFinal})`
           : ' (sem filtro de nota)'),
     );
 

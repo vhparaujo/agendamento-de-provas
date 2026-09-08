@@ -1130,7 +1130,7 @@ ela entra e onde **não** entra:
 | **`faixasBloqueadasParaOVinculo`** (`conflitaComOutraProva`) | ❌ | É o espelho exato da linha acima; filtrar aqui faria a tela oferecer o horário que a confirmação recusa |
 | **`reservaAnterior`** (disciplinas para o admin) | ❌ | A reserva da N2 é fonte válida para a SUB: mesmas disciplinas, mesmo `userIdD2L` |
 | `disciplinas-do-aluno`, importação, relatórios, senhas | ❌ (só usam `periodoLetivoId`) | O que define quais ofertas contam é o SEMESTRE; as duas rodadas cobrem as mesmas matérias |
-| **A faixa de nota** (`filtrarPorNota`) | ❌ — usa `notaMinima/notaMaxima` | O que separa a SUB da N2 é a faixa cadastrada, e não o TEXTO da rodada, que é livre. Ver "Quem pode fazer a substitutiva" |
+| **Os critérios de nota** (`filtrarPorNota`) | ❌ — usa `notaMinimaN1/notaMaximaFinal` | O que separa a SUB da N2 são os critérios cadastrados, e não o TEXTO da rodada, que é livre. Ver "Quem pode fazer a substitutiva" |
 
 ⚠️ **`periodoLetivoVigente()` NÃO EXISTE MAIS** (01/09/2026). A tabela acima
 continua valendo para a `rodada`, mas o `periodoLetivoId` virou um MAPA por
@@ -1242,21 +1242,45 @@ modalidade, apontando para o `periodoLetivoId` que ela já tinha), como a da
 `rodada` deu `"N2"` a tudo. Quem tinha janela cadastrada antes desta mudança
 continua idêntico, sem nenhuma ação manual.
 
-### Quem pode fazer a substitutiva: a faixa de nota (20/08/2026)
+### Quem pode fazer a substitutiva: os critérios de nota (20/08/2026, regra nova em 08/09/2026)
 
 A `rodada` deu ao semestre duas janelas, mas as duas ofereciam ao aluno **as
 mesmas** disciplinas — `disciplinas-do-aluno` filtra só pelo `periodoLetivoId`,
 porque "as duas rodadas cobrem as mesmas matérias". Aberta a janela da SUB, a
 substitutiva ficaria liberada para todo mundo, inclusive para quem já passou.
 
-A regra do cliente é **por DISCIPLINA, não por aluno**: ele agenda a
-substitutiva das matérias em que a nota final está em **`[1,5 ; 6,75)`** —
-`>= 1,5` e `< 6,75`. Um aluno com três matérias pode ter uma elegível e duas
-não, e a prova dele cobre só a elegível. Isso **não** quebra a regra 4: a lista
-encolhe antes de chegar a ele, que continua sem escolher disciplina por
-disciplina.
+A regra do cliente são **DOIS critérios sobre notas DIFERENTES**, e a disciplina
+só entra quando passa nos dois:
 
-⚠️ **O gatilho é `PeriodoAgendamento.notaMinima/notaMaxima`, NUNCA
+| Critério | Nota olhada | Comparação | Por quê |
+|---|---|---|---|
+| piso | **N1** | `>= notaMinimaN1` (1,50) | quem nem isso fez já reprovou |
+| teto | **nota final calculada** | `< notaMaximaFinal` (7,00) | quem alcançou a média já passou |
+
+⚠️ **Isto MUDOU em 08/09/2026, e a mudança é fácil de desfazer sem perceber.**
+Até então os dois limites comparavam a **mesma** nota — a final, em
+`[1,5 ; 6,75)`. Hoje o piso mudou de nota, e **não há mais piso na nota final nem
+teto na N1**. As colunas foram renomeadas junto (`notaMinima`→`notaMinimaN1`,
+`notaMaxima`→`notaMaximaFinal`) exatamente por isso: `minima`/`maxima`
+continuariam compilando e continuariam parecendo um intervalo, e quem lesse o
+piso como piso da final voltaria a liberar quem tem final 2,0 com a N1 zerada —
+sem erro nenhum aparecendo. Pelo mesmo motivo a validação de
+`minima >= maxima` **saiu**: ordem entre notas diferentes não significa nada.
+
+⚠️ **A N1 não tem rota própria na Valence.** Ela é uma *categoria de notas*
+(`GradeObjectType: 9`), lida pelo mesmo `grades/(gradeObjectId)/values/` de
+qualquer item — só que o `CategoryId` dela é **diferente em cada turma**. Então a
+leitura é em duas etapas: `grades/categories/` acha o id pelo NOME, e o nome vem
+de `D2L_CATEGORIA_N1` (default `"N1"`). Turma que chamar a categoria de "Nota 1"
+recusa **todos** os seus alunos (`SEM_CATEGORIA_N1`), com um aviso por turma no
+log. Ver §4.5 da referência da API.
+
+A regra é **por DISCIPLINA, não por aluno**: um aluno com três matérias pode ter
+uma elegível e duas não, e a prova dele cobre só a elegível. Isso **não** quebra
+a regra 4: a lista encolhe antes de chegar a ele, que continua sem escolher
+disciplina por disciplina.
+
+⚠️ **O gatilho é `PeriodoAgendamento.notaMinimaN1/notaMaximaFinal`, NUNCA
 `rodada === 'SUB'`.** `rodada` é texto livre — quem a nomeia é a secretaria —,
 então comparar a string faria a regra parar de valer em silêncio no dia em que
 alguém cadastrasse "Substitutiva" ou "sub". Colunas nulas (todo período
@@ -1265,10 +1289,15 @@ continua custando zero.
 
 | Peça | Onde | O que faz |
 |---|---|---|
-| Cliente REST | `src/d2l/service/d2l-grades.service.ts` | Lê a nota, um aluno ou a turma inteira. Nenhuma regra |
-| A regra | `src/agendamento/service/elegibilidade-de-nota.service.ts` | Aplica a faixa, cacheia 5 min, pré-aquece por turma |
+| Cliente REST | `src/d2l/service/d2l-grades.service.ts` | Lê a nota final e a N1, um aluno ou a turma inteira; resolve a categoria N1 pelo nome. Nenhuma regra |
+| A regra | `src/agendamento/service/elegibilidade-de-nota.service.ts` | Aplica os dois critérios, cacheia 5 min (por turma+aluno+**alvo**), pré-aquece por turma |
 | A costura | `disciplinas-do-aluno.service.ts` (`filtrarPorNota`) | Entra depois do CSV, nas DUAS portas — cobre portal, compulsório e balcão de uma vez |
-| A configuração | `PeriodoAgendamento` + `periodo.service.ts` (`FiltroDeNota`) | O admin cadastra a faixa na tela de Períodos |
+| A configuração | `PeriodoAgendamento` + `periodo.service.ts` (`FiltroDeNota`) | O admin cadastra os dois números na tela de Períodos |
+
+**A ordem das leituras é deliberada: nota final primeiro, N1 depois.** A maioria
+dos alunos de uma turma passou de ano, e esses saem no primeiro critério — checar
+a N1 antes faria o portal pagar DUAS chamadas por disciplina para todo mundo.
+Inverter não muda resultado nenhum, e é por isso que ninguém perceberia.
 
 **Fail-closed, e é a diferença que mais importa.** Com a Valence fora, a N2
 degrada para a turma do launch ("agendar uma prova é melhor que agendar
@@ -1290,30 +1319,49 @@ de ano" quando a causa foi a rede — e ninguém a reprocessaria. Subindo, vira
 manda conferir o CSV de turmas, e quem passou de ano não tem nada para conferir.
 Num lote de substitutiva o motivo novo tende a ser a **maioria** das linhas.
 
+**Os motivos de recusa são cinco, e cada um pede uma ação diferente**
+(`MotivoDaRecusa`): `FINAL_ATINGIU_A_MEDIA` e `N1_ABAIXO_DO_MINIMO` são a regra
+funcionando; `SEM_NOTA_FINAL` e `SEM_NOTA_N1` são pendência de lançamento (caso
+de secretaria); `SEM_CATEGORIA_N1` é **defeito de montagem da turma** e atinge a
+turma inteira. Misturar os três grupos numa frase só faria o aluno desistir de
+perguntar — ou cobrar uma nota que ninguém tem como lançar.
+
 **O compulsório lê as notas por TURMA antes de começar** (fase 0,
-`preCarregarNotas`). Aluno a aluno seriam ~5 chamadas por pessoa — perto de 35
-mil num lote de 7 mil, somadas às 2 que já existem. Por turma são algumas
-centenas, uma vez. Falha de uma turma não para nada: ela volta a ser consultada
-aluno a aluno.
+`preCarregarNotas`). Aluno a aluno seriam ~10 chamadas por pessoa — perto de 70
+mil num lote de 7 mil, somadas às 2 que já existem. Por turma são **duas** (a
+final e a N1), uma vez. Falha de uma turma não para nada: ela volta a ser
+consultada aluno a aluno. Turma sem categoria N1 **não** conta como falha —
+contá-la esconderia as falhas de verdade, que são as de rede.
 
-**A faixa é editável com a janela CHEIA**, ao contrário da `rodada`. A rodada é
-fotografia gravada em cada reserva e trocá-la desalinha toda consulta; a faixa
-não é gravada em lugar nenhum, e mexer nela só muda quem agenda daqui para a
-frente. Vai para a auditoria (`PERIODO_FILTRO_DE_NOTA_ALTERADO`) e para o log
-quando já há reservas — as provas existentes **não** são revistas.
+**Os critérios são editáveis com a janela CHEIA**, ao contrário da `rodada`. A
+rodada é fotografia gravada em cada reserva e trocá-la desalinha toda consulta;
+os critérios não são gravados em lugar nenhum, e mexer neles só muda quem agenda
+daqui para a frente. Vai para a auditoria (`PERIODO_FILTRO_DE_NOTA_ALTERADO`) e
+para o log quando já há reservas — as provas existentes **não** são revistas.
 
-**`AgendamentoDisciplina.notaFinal` é fotografia da nota que decidiu.** Nula na
-N2. Existe para responder "por que ele agendou substitutiva desta matéria?" com
-o aluno na frente, meses depois, quando a nota no Brightspace já mudou. O
-fallback `RESERVA_ANTERIOR` do balcão **recopia** a nota antiga e avisa em
-`avisos` que a lista não foi conferida contra a faixa.
+**`AgendamentoDisciplina.notaFinal` e `.notaN1` são fotografia das notas que
+decidiram.** Nulas na N2; a `notaN1` é nula também nas reservas anteriores a
+08/09/2026, decididas por uma regra que não olhava a N1 (não há backfill:
+inventar um valor seria mentir sobre o que aconteceu). Existem para responder
+"por que ele agendou substitutiva desta matéria?" com o aluno na frente, meses
+depois, quando a nota no Brightspace já mudou. O fallback `RESERVA_ANTERIOR` do
+balcão **recopia** as notas antigas e avisa em `avisos` que a lista não foi
+conferida contra os critérios.
 
-**Escopo novo: `grades:gradevalues:read`.** Como todo escopo, ele vive no
-consentimento — acrescentá-lo a `D2L_SCOPES` sem `npm run d2l:autorizar` deixa
-todo GET de nota em 403, e aí *ninguém* agenda a substitutiva. Confira o formato
-real da resposta com `npm run d2l:notas -- <orgUnitId> <userId>` antes de abrir a
-janela: é ele que mostra se `PointsDenominator` já vem 10 (nota fechada) e se a
-rota devolve a **ajustada** quando o professor a lançou. Ver §4.5 da referência.
+**Escopos: `grades:gradevalues:read` e `grades:gradecategories:read`.** O segundo
+entrou em 08/09/2026, com a N1. Como todo escopo, eles vivem no consentimento —
+acrescentá-los a `D2L_SCOPES` sem `npm run d2l:autorizar` deixa o GET
+correspondente em 403, e aí *ninguém* agenda a substitutiva. Confira o formato
+real com `npm run d2l:notas -- <orgUnitId> <userId>` antes de abrir a janela: ele
+resolve o `CategoryId` da N1 (ou avisa que a turma não tem a categoria), mostra
+se `PointsDenominator` já vem 10 (nota fechada) e se a rota devolve a **ajustada**
+quando o professor a lançou. Ver §4.5 da referência.
+
+**⚠️ Ao migrar: as janelas já cadastradas mudam de significado.** O `1,50`
+gravado era piso da nota final e passa a ser piso da N1; o `6,75` continua teto da
+final. A migration renomeia as colunas e **não converte os números** — reescrever
+o teto para 7,00 seria tomar no lugar da secretaria uma decisão que é dela.
+Confira a janela da substitutiva na tela de Períodos antes de abri-la.
 
 ### `DELETE /periodos/:id` — vigente é derivado, e por isso se erra fácil
 

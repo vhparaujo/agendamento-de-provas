@@ -225,11 +225,11 @@ export class AgendamentoService {
     return {
       alunoId: vinculo.id,
       curso: vinculo.curso,
-      // A `notaFinal` que veio do cruzamento NAO sai daqui: nota e assunto do
+      // As notas que vieram do cruzamento NAO saem daqui: nota e assunto do
       // Brightspace e da secretaria, e o portal so precisa dizer QUAIS
-      // disciplinas a prova cobre. Devolve-la poria a nota de cada materia numa
-      // resposta que a tela nem usa — superficie de suporte que ninguem pediu.
-      // Ela continua indo para o banco em `AgendamentoDisciplina.notaFinal`.
+      // disciplinas a prova cobre. Devolve-las poria as notas de cada materia
+      // numa resposta que a tela nem usa — superficie de suporte que ninguem
+      // pediu. Elas continuam indo para o banco, em `AgendamentoDisciplina`.
       disciplinas: agendaveis.map((d) => ({
         orgUnitId: d.orgUnitId,
         nomeDisciplina: d.nomeDisciplina,
@@ -572,9 +572,11 @@ export class AgendamentoService {
             create: dados.disciplinas.map((d) => ({
               orgUnitId: d.orgUnitId,
               nomeDisciplina: d.nomeDisciplina,
-              // A nota que decidiu a elegibilidade, quando a janela filtrou por
-              // nota. Nula na N2, em que nenhuma foi consultada. Ver o schema.
+              // As notas que decidiram a elegibilidade, quando a janela
+              // filtrou por nota. Nulas na N2, em que nenhuma foi consultada.
+              // Ver o schema.
               notaFinal: d.notaFinal,
+              notaN1: d.notaN1,
             })),
           },
           // A fila de liberacao nasce junto, na MESMA transacao: um agendamento

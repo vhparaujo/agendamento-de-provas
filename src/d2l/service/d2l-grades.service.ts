@@ -17,12 +17,25 @@ import { OpcoesDeRitmo } from './d2l-quizzes.service';
  *
  * | Rota | Para que |
  * |---|---|
- * | `GET (orgUnitId)/grades/final/values/(userId)` | a nota de UM aluno numa turma — o portal |
- * | `GET (orgUnitId)/grades/final/values/` | a turma INTEIRA de uma vez — o lote |
+ * | `GET (orgUnitId)/grades/final/values/(userId)` | a nota final de UM aluno — o portal |
+ * | `GET (orgUnitId)/grades/final/values/` | a nota final da turma INTEIRA — o lote |
+ * | `GET (orgUnitId)/grades/categories/` | descobre o `CategoryId` da N1 na turma |
+ * | `GET (orgUnitId)/grades/(gradeObjectId)/values/(userId)` | a N1 de UM aluno |
+ * | `GET (orgUnitId)/grades/(gradeObjectId)/values/` | a N1 da turma INTEIRA |
  *
- * Escopo OAuth: **`grades:gradevalues:read`**. Como todo escopo, ele vive no
- * CONSENTIMENTO e nao no `.env`: acrescenta-lo a `D2L_SCOPES` nao muda nada sem
- * refazer `npm run d2l:autorizar`, e ate la todo GET daqui volta **403**.
+ * ⚠️ **A N1 nao tem rota propria.** Uma categoria de notas e um grade object
+ * como qualquer outro (`GradeObjectType: 9`, "Category"), endereçavel pelo mesmo
+ * `/grades/(gradeObjectId)/values/` que ja le itens numericos — o que muda e so
+ * o id, e o id da N1 e DIFERENTE em cada turma. Dai as duas etapas: descobrir a
+ * categoria pelo nome, depois ler o valor dela. Categorias sao SOMENTE LEITURA
+ * nessa rota (o `IncomingGradeValue` do PUT so vale para os tipos 1–4), o que
+ * nao nos afeta: aqui so se le.
+ *
+ * Escopos OAuth: **`grades:gradevalues:read`** (os valores) e
+ * **`grades:gradecategories:read`** (a listagem de categorias). Como todo
+ * escopo, eles vivem no CONSENTIMENTO e nao no `.env`: acrescenta-los a
+ * `D2L_SCOPES` nao muda nada sem refazer `npm run d2l:autorizar`, e ate la todo
+ * GET daqui volta **403**.
  */
 
 /** Um `GradeValue` como a Valence o devolve. Campos em PascalCase, como na API. */
@@ -43,6 +56,14 @@ interface ValorDeNotaD2L {
 interface NotaDeUmUsuarioD2L {
   User?: { Identifier?: string | number | null };
   GradeValue?: ValorDeNotaD2L | null;
+}
+
+/** Uma categoria de notas como a Valence a devolve em `grades/categories/`. */
+interface CategoriaDeNotaD2L {
+  Id?: number | string | null;
+  /** Algumas versoes devolvem `Id`, outras `CategoryId`. Aceitamos os dois. */
+  CategoryId?: number | string | null;
+  Name?: string | null;
 }
 
 /** Uma pagina de `ObjectListPage`. */
@@ -107,12 +128,34 @@ const MAX_PAGINAS_PADRAO = 50;
  */
 const DENOMINADOR_ESPERADO = 10;
 
+/**
+ * Por quanto tempo o `CategoryId` da N1 de uma turma fica em memoria.
+ *
+ * O id de uma categoria nao muda sozinho, mas o NOME dela muda: a turma que
+ * chamou a categoria de "Nota 1" recusa todos os seus alunos ate alguem
+ * renomear no Brightspace, e esse alguem precisa ver o efeito no mesmo
+ * atendimento — nao no proximo restart do processo. Por isso ha TTL, e por isso
+ * ele e curto; o mesmo vale para a resposta NEGATIVA, que tambem e cacheada
+ * (sem isso, cada aluno de uma turma mal nomeada custaria uma listagem inteira
+ * de categorias).
+ */
+const CATEGORIA_CACHE_MS = 5 * 60_000;
+
 @Injectable()
 export class D2lGradesService {
   private readonly logger = new Logger(D2lGradesService.name);
 
   /** Ver `conferirDenominador`: um aviso por turma, nao um por aluno. */
   private avisadasDoDenominador = new Set<string>();
+
+  /** Ver `avisarSemCategoria`: um aviso por turma, nao um por aluno. */
+  private avisadasDaCategoria = new Set<string>();
+
+  /** `orgUnitId|nome normalizado` -> `CategoryId`. Ver `CATEGORIA_CACHE_MS`. */
+  private categorias = new Map<
+    string,
+    { id: string | null; expiraEmMs: number }
+  >();
 
   constructor(
     private readonly config: ConfigService,
@@ -149,7 +192,7 @@ export class D2lGradesService {
       nuloEm404: true,
     });
 
-    return this.converter(orgUnitId, dados);
+    return this.converter(orgUnitId, dados, { conferirEscala: true });
   }
 
   /**
@@ -158,7 +201,139 @@ export class D2lGradesService {
    * Existe para o lote: com uma chamada por (aluno x disciplina), o compulsorio
    * de uma substitutiva faria dezenas de milhares de requisicoes ao tenant para
    * ler dados que se repetem — a mesma turma aparece para todos os alunos dela.
-   * Aqui e UMA chamada por turma.
+   * Aqui e UMA chamada por turma. A paginacao mora em `notasDaTurmaEm`.
+   */
+  async notasFinaisDaTurma(
+    orgUnitId: string,
+    ritmo: OpcoesDeRitmo = {},
+  ): Promise<Map<string, NotaFinalD2L>> {
+    return this.notasDaTurmaEm(
+      orgUnitId,
+      `${encodeURIComponent(orgUnitId)}/grades/final/values/`,
+      `as notas finais da turma ${orgUnitId}`,
+      { conferirEscala: true },
+      ritmo,
+    );
+  }
+
+  /**
+   * ==========================================================================
+   * A CATEGORIA DE NOTAS PELO NOME — como se chega a N1
+   * ==========================================================================
+   * O `CategoryId` MUDA DE TURMA PARA TURMA: nao ha um numero da "N1" que sirva
+   * para o tenant inteiro, e por isso a descoberta acontece por turma e o nome e
+   * o unico elo estavel com a regra (ver `D2L_CATEGORIA_N1_PADRAO`).
+   *
+   * Devolve `null` quando a turma nao tem categoria com esse nome — estado
+   * ESPERADO, e nao erro: a turma pode ter sido montada sem categorias, ou com
+   * "Nota 1" no lugar de "N1". Quem decide o que fazer com isso e a regra
+   * (`ElegibilidadeDeNotaService`), que recusa a disciplina e manda o aluno a
+   * secretaria em vez de liberar a prova sem conferir a N1.
+   *
+   * ⚠️ **404 aqui vira `null`, mas 403 SOBE.** Sao coisas opostas: 404 e "esta
+   * turma nao tem categorias", 403 e "o consentimento nao tem
+   * `grades:gradecategories:read`" — este ultimo atinge TODA turma, e traduzi-lo
+   * para "turma sem N1" mandaria o curso inteiro para a secretaria enquanto a
+   * correcao e um `npm run d2l:autorizar`.
+   */
+  async categoriaPorNome(
+    orgUnitId: string,
+    nome: string,
+    ritmo: OpcoesDeRitmo = {},
+  ): Promise<string | null> {
+    const chave = `${orgUnitId}|${normalizar(nome)}`;
+    const emCache = this.categorias.get(chave);
+
+    if (emCache && emCache.expiraEmMs > Date.now()) return emCache.id;
+
+    const cfg = this.http.exigirConfigurado();
+
+    const url = this.http.url(
+      cfg,
+      'le',
+      `${encodeURIComponent(orgUnitId)}/grades/categories/`,
+    );
+
+    const dados = await this.http.chamarUrl<CategoriaDeNotaD2L[] | null>(url, {
+      ...this.opcoes(`as categorias de nota da turma ${orgUnitId}`, ritmo),
+      nuloEm404: true,
+    });
+
+    const procurado = normalizar(nome);
+
+    const achada = (dados ?? []).find(
+      (categoria) => normalizar(categoria.Name) === procurado,
+    );
+
+    const bruto = achada?.CategoryId ?? achada?.Id ?? null;
+    const id = bruto === null || bruto === undefined ? null : String(bruto);
+
+    this.categorias.set(chave, {
+      id,
+      expiraEmMs: Date.now() + CATEGORIA_CACHE_MS,
+    });
+
+    if (id === null) this.avisarSemCategoria(orgUnitId, nome, dados ?? []);
+
+    return id;
+  }
+
+  /**
+   * A nota de UM aluno num grade object qualquer — na pratica, a categoria N1.
+   *
+   * Mesmo contrato de `notaFinal`, inclusive o 404 como `SEM_NOTA`: aluno sem
+   * nota na categoria e aluno fora da turma dao a mesma resposta no tenant, e os
+   * dois significam a mesma coisa para a regra.
+   */
+  async notaDeGradeObject(
+    orgUnitId: string,
+    gradeObjectId: string,
+    userIdD2L: string,
+    ritmo: OpcoesDeRitmo = {},
+  ): Promise<NotaFinalD2L> {
+    const cfg = this.http.exigirConfigurado();
+
+    const url = this.http.url(
+      cfg,
+      'le',
+      `${encodeURIComponent(orgUnitId)}/grades/` +
+        `${encodeURIComponent(gradeObjectId)}/values/` +
+        `${encodeURIComponent(userIdD2L)}`,
+    );
+
+    const dados = await this.http.chamarUrl<ValorDeNotaD2L>(url, {
+      ...this.opcoes(
+        `a nota do aluno ${userIdD2L} no item ${gradeObjectId} da turma ${orgUnitId}`,
+        ritmo,
+      ),
+      nuloEm404: true,
+    });
+
+    return this.converter(orgUnitId, dados, { conferirEscala: false });
+  }
+
+  /**
+   * O mesmo grade object para a TURMA inteira. Existe pelo mesmo motivo que
+   * `notasFinaisDaTurma`: no lote, uma chamada por turma em vez de uma por
+   * aluno. A paginacao e identica — e ignora-la teria a mesma consequencia.
+   */
+  async notasDeGradeObjectDaTurma(
+    orgUnitId: string,
+    gradeObjectId: string,
+    ritmo: OpcoesDeRitmo = {},
+  ): Promise<Map<string, NotaFinalD2L>> {
+    return this.notasDaTurmaEm(
+      orgUnitId,
+      `${encodeURIComponent(orgUnitId)}/grades/` +
+        `${encodeURIComponent(gradeObjectId)}/values/`,
+      `as notas do item ${gradeObjectId} da turma ${orgUnitId}`,
+      { conferirEscala: false },
+      ritmo,
+    );
+  }
+
+  /**
+   * A leitura paginada de uma turma inteira, seja qual for o grade object.
    *
    * ⚠️ **Nao simplifique para uma chamada so**: a resposta e paginada, e ignorar
    * o `Next` devolveria a primeira pagina de alunos como se fosse a turma
@@ -166,9 +341,12 @@ export class D2lGradesService {
    * significa NAO PODE AGENDAR. E a mesma armadilha que ja deixou turmas sem
    * senha em `listarQuizzes`, com consequencia pior.
    */
-  async notasFinaisDaTurma(
+  private async notasDaTurmaEm(
     orgUnitId: string,
-    ritmo: OpcoesDeRitmo = {},
+    caminho: string,
+    oQue: string,
+    escala: { conferirEscala: boolean },
+    ritmo: OpcoesDeRitmo,
   ): Promise<Map<string, NotaFinalD2L>> {
     const cfg = this.http.exigirConfigurado();
     const maxPaginas = ritmo.maxPaginas ?? MAX_PAGINAS_PADRAO;
@@ -177,16 +355,11 @@ export class D2lGradesService {
     let queryString = '';
 
     for (let pagina = 0; pagina < maxPaginas; pagina += 1) {
-      const url =
-        this.http.url(
-          cfg,
-          'le',
-          `${encodeURIComponent(orgUnitId)}/grades/final/values/`,
-        ) + queryString;
+      const url = this.http.url(cfg, 'le', caminho) + queryString;
 
       const dados = await this.http.chamarUrl<
         PaginaDeNotas | NotaDeUmUsuarioD2L[] | null
-      >(url, this.opcoes(`as notas finais da turma ${orgUnitId}`, ritmo));
+      >(url, this.opcoes(oQue, ritmo));
 
       // Resposta sem paginacao: algumas versoes devolvem o array direto.
       const itens = Array.isArray(dados) ? dados : (dados?.Objects ?? []);
@@ -200,7 +373,7 @@ export class D2lGradesService {
 
         notas.set(
           String(identificador),
-          this.converter(orgUnitId, item.GradeValue ?? null),
+          this.converter(orgUnitId, item.GradeValue ?? null, escala),
         );
       }
 
@@ -221,7 +394,7 @@ export class D2lGradesService {
     // viram "sem nota", e sem nota ninguem agenda a substitutiva. Melhor o erro,
     // que o portal traduz e o lote registra como reprocessavel.
     throw new Error(
-      `A listagem de notas da turma ${orgUnitId} passou de ${maxPaginas} ` +
+      `A listagem de ${oQue} passou de ${maxPaginas} ` +
         'paginas sem terminar. Os alunos nao lidos apareceriam como "sem nota", ' +
         'e ninguem sem nota agenda a substitutiva.',
     );
@@ -238,6 +411,16 @@ export class D2lGradesService {
   }
 
   /**
+   * O nome da categoria que vale como N1. Ver `D2L_CATEGORIA_N1_PADRAO`.
+   *
+   * Fica AQUI, e nao no `ElegibilidadeDeNotaService`, para a regra continuar
+   * cabendo num teste sem `ConfigService`: quem conhece o tenant e este arquivo.
+   */
+  nomeDaCategoriaN1(): string {
+    return carregarD2lApiConfig(this.config).categoriaN1;
+  }
+
+  /**
    * O `GradeValue` cru virando resultado classificado.
    *
    * `PointsNumerator` ausente ou nao numerico e `SEM_NOTA`, e nao zero: a turma
@@ -249,6 +432,7 @@ export class D2lGradesService {
   private converter(
     orgUnitId: string,
     dados: ValorDeNotaD2L | null,
+    escala: { conferirEscala: boolean },
   ): NotaFinalD2L {
     if (!dados) return { situacao: 'SEM_NOTA' };
 
@@ -261,7 +445,10 @@ export class D2lGradesService {
     const bruto = Number(dados.PointsDenominator);
     const denominador = Number.isFinite(bruto) ? bruto : null;
 
-    this.conferirDenominador(orgUnitId, denominador);
+    // So a nota FINAL passa pela conferencia de escala: o aviso fala de
+    // semestre com notas por lancar, e o denominador de uma categoria N1 nao
+    // diz nada sobre isso — ele so informa quanto a N1 vale naquela turma.
+    if (escala.conferirEscala) this.conferirDenominador(orgUnitId, denominador);
 
     return {
       situacao: 'ACHOU',
@@ -295,9 +482,41 @@ export class D2lGradesService {
 
     this.logger.warn(
       `A nota final da turma ${orgUnitId} vale no maximo ${denominador}, e nao ` +
-        `${DENOMINADOR_ESPERADO}. A faixa de nota da rodada e comparada em ` +
+        `${DENOMINADOR_ESPERADO}. O criterio de nota da rodada e comparado em ` +
         'PONTOS, entao confira se as notas do semestre ja foram todas lancadas ' +
         'antes de abrir a janela.',
+    );
+  }
+
+  /**
+   * Avisa que a turma nao tem a categoria procurada.
+   *
+   * Uma linha por TURMA, como o aviso de escala: a turma inteira compartilha as
+   * categorias, e um aviso por aluno enterraria o log num lote de milhares.
+   *
+   * Lista os nomes que a turma TEM porque o conserto quase sempre e um nome
+   * diferente do esperado ("Nota 1", "N1 - Prova"), e sem a lista quem le o log
+   * precisa abrir a turma no Brightspace para descobrir isso.
+   */
+  private avisarSemCategoria(
+    orgUnitId: string,
+    nome: string,
+    categorias: CategoriaDeNotaD2L[],
+  ): void {
+    if (this.avisadasDaCategoria.has(orgUnitId)) return;
+
+    this.avisadasDaCategoria.add(orgUnitId);
+
+    const nomes = categorias
+      .map((categoria) => categoria.Name)
+      .filter((valor): valor is string => Boolean(valor));
+
+    this.logger.warn(
+      `A turma ${orgUnitId} nao tem categoria de notas chamada "${nome}", e a ` +
+        'substitutiva depende dela: nenhum aluno desta turma vai conseguir ' +
+        'agendar. Categorias encontradas: ' +
+        (nomes.length ? nomes.join(', ') : '(nenhuma)') +
+        '. Renomeie a categoria no Brightspace ou ajuste D2L_CATEGORIA_N1.',
     );
   }
 
@@ -319,6 +538,21 @@ export class D2lGradesService {
         'integracao enxerga as notas dela.',
     };
   }
+}
+
+/**
+ * O nome de uma categoria reduzido ao que da para comparar.
+ *
+ * Sem acento, sem caixa e sem espaco nas pontas: quem cadastra a categoria e uma
+ * pessoa, e " n1 " digitado no Brightspace nao pode significar outra coisa que
+ * "N1". O que NAO se faz e casar por pedaco — "N1" nao pode achar "N10".
+ */
+function normalizar(valor: string | null | undefined): string {
+  return String(valor ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
 }
 
 /**

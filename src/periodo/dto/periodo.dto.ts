@@ -27,14 +27,19 @@ const AJUDA_DATA =
   'como UTC e o prazo fecha 3 horas antes do que voce quis.';
 
 const AJUDA_NOTA =
-  'A FAIXA DE NOTA que habilita esta janela — a regra da substitutiva. Informe ' +
-  'as DUAS ou nenhuma. Com as duas, so entra na prova a disciplina em que a ' +
-  'nota final do aluno esta em [notaMinima, notaMaxima): `>=` na minima e `<` ' +
-  'na maxima. Sem elas (o padrao, e o caso da N2), a prova cobre todas as ' +
-  'disciplinas do semestre e nenhuma nota e consultada no Brightspace.\n\n' +
-  'Ler a nota exige o escopo `grades:gradevalues:read` no consentimento da ' +
-  'Valence — acrescenta-lo ao `.env` nao basta, e preciso refazer ' +
-  '`npm run d2l:autorizar`.';
+  'OS CRITERIOS DE NOTA que habilitam esta janela — a regra da substitutiva. ' +
+  'Informe os DOIS ou nenhum. Com os dois, so entra na prova a disciplina em ' +
+  'que o aluno passa nas duas condicoes: N1 >= notaMinimaN1 E nota final ' +
+  'calculada < notaMaximaFinal. Sem eles (o padrao, e o caso da N2), a prova ' +
+  'cobre todas as disciplinas do semestre e nenhuma nota e consultada no ' +
+  'Brightspace.\n\n' +
+  'ATENCAO: os dois numeros NAO delimitam um intervalo — eles olham notas ' +
+  'DIFERENTES. Nao ha piso na nota final, nem teto na N1.\n\n' +
+  'Ler as notas exige os escopos `grades:gradevalues:read` e ' +
+  '`grades:gradecategories:read` no consentimento da Valence — acrescenta-los ' +
+  'ao `.env` nao basta, e preciso refazer `npm run d2l:autorizar`. A N1 e ' +
+  'encontrada pelo NOME da categoria de notas da turma (`D2L_CATEGORIA_N1`, ' +
+  'default "N1"): turma que a nomear de outro jeito nao libera ninguem.';
 
 const AJUDA_MAPA =
   'O PERIODO LETIVO DE CADA MODALIDADE. A UCB corre duas grades ao mesmo ' +
@@ -134,27 +139,27 @@ export class CriarPeriodoDto {
     example: 1.5,
     minimum: 0,
     maximum: 10,
-    description: `Piso da faixa, INCLUSIVE. ${AJUDA_NOTA}`,
+    description: `Piso da nota da N1, INCLUSIVE. ${AJUDA_NOTA}`,
   })
   @IsOptional()
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   @Max(10)
-  notaMinima?: number;
+  notaMinimaN1?: number;
 
   @ApiPropertyOptional({
-    example: 6.75,
+    example: 7,
     minimum: 0,
     maximum: 10,
     description:
-      'Teto da faixa, EXCLUSIVE — quem alcanca este valor ja passou e nao ' +
-      'aparece na substitutiva.',
+      'Teto da NOTA FINAL CALCULADA, EXCLUSIVE — quem alcanca este valor ja ' +
+      'atingiu a media, passou, e nao aparece na substitutiva.',
   })
   @IsOptional()
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   @Max(10)
-  notaMaxima?: number;
+  notaMaximaFinal?: number;
 
   @ApiPropertyOptional({ example: '2026/2 — provas finais', maxLength: 191 })
   @IsOptional()
@@ -228,31 +233,32 @@ export class AtualizarPeriodoDto {
     minimum: 0,
     maximum: 10,
     description:
-      `Piso da faixa, INCLUSIVE. Envie null nos DOIS campos para desligar o ` +
-      `filtro de nota. ${AJUDA_NOTA}\n\n` +
-      '**Editavel mesmo com a janela cheia**, ao contrario da `rodada`: a faixa ' +
-      'nao e gravada em reserva nenhuma, entao muda-la so afeta quem agendar ' +
-      'daqui para a frente — quem ja marcou continua com o horario, inclusive ' +
-      'quem pela faixa nova nao seria elegivel. A alteracao vai para a auditoria.',
+      `Piso da nota da N1, INCLUSIVE. Envie null nos DOIS campos para desligar ` +
+      `o filtro de nota. ${AJUDA_NOTA}\n\n` +
+      '**Editavel mesmo com a janela cheia**, ao contrario da `rodada`: os ' +
+      'criterios nao sao gravados em reserva nenhuma, entao muda-los so afeta ' +
+      'quem agendar daqui para a frente — quem ja marcou continua com o ' +
+      'horario, inclusive quem pela regra nova nao seria elegivel. A alteracao ' +
+      'vai para a auditoria.',
   })
   @IsOptional()
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   @Max(10)
-  notaMinima?: number | null;
+  notaMinimaN1?: number | null;
 
   @ApiPropertyOptional({
-    example: 6.75,
+    example: 7,
     nullable: true,
     minimum: 0,
     maximum: 10,
-    description: 'Teto da faixa, EXCLUSIVE. Ver `notaMinima`.',
+    description: 'Teto da NOTA FINAL CALCULADA, EXCLUSIVE. Ver `notaMinimaN1`.',
   })
   @IsOptional()
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   @Max(10)
-  notaMaxima?: number | null;
+  notaMaximaFinal?: number | null;
 
   @ApiPropertyOptional({ example: '2026/2 — provas finais', nullable: true })
   @IsOptional()
@@ -287,11 +293,20 @@ export class AtualizarPeriodoDto {
 }
 
 export class FiltroDeNotaDto implements FiltroDeNota {
-  @ApiProperty({ example: 1.5, description: 'Piso da faixa, INCLUSIVE.' })
-  minima!: number;
+  @ApiProperty({
+    example: 1.5,
+    description:
+      'Piso da nota da **N1**, INCLUSIVE — quem tirou exatamente isso entra.',
+  })
+  minimaN1!: number;
 
-  @ApiProperty({ example: 6.75, description: 'Teto da faixa, EXCLUSIVE.' })
-  maxima!: number;
+  @ApiProperty({
+    example: 7,
+    description:
+      'Teto da **nota final calculada**, EXCLUSIVE — quem o alcanca ja passou. ' +
+      'Nao forma intervalo com `minimaN1`: as duas olham notas diferentes.',
+  })
+  maximaFinal!: number;
 }
 
 export class PeriodoAdminDto implements PeriodoAdmin {
@@ -328,8 +343,8 @@ export class PeriodoAdminDto implements PeriodoAdmin {
     nullable: true,
     type: FiltroDeNotaDto,
     description:
-      'A faixa de nota desta janela, ou null quando ela nao filtra por nota ' +
-      '(o caso da N2). Ver `notaMinima` em POST /periodos.',
+      'Os criterios de nota desta janela, ou null quando ela nao filtra ' +
+      '(o caso da N2). Ver `notaMinimaN1` em POST /periodos.',
   })
   filtroDeNota!: FiltroDeNota | null;
 

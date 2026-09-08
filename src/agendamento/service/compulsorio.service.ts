@@ -577,8 +577,8 @@ export class CompulsorioService {
       ).flat();
 
       this.logger.log(
-        `Janela com faixa de nota [${vigente.filtroDeNota.minima}; ` +
-          `${vigente.filtroDeNota.maxima}): carregando as notas de ` +
+        `Janela com criterio de nota (N1 >= ${vigente.filtroDeNota.minimaN1} e ` +
+          `final < ${vigente.filtroDeNota.maximaFinal}): carregando as notas de ` +
           `${ofertas.length} turma(s) dos periodos letivos ${janela.ids.join(', ')}.`,
       );
 
@@ -740,7 +740,7 @@ export class CompulsorioService {
             motivo: MotivoExcecao.NAO_ELEGIVEL_PELA_NOTA,
             detalhe:
               cruzamento.motivo ??
-              'Nenhuma disciplina dele esta na faixa de nota desta janela.',
+              'Nenhuma disciplina dele atende aos criterios de nota desta janela.',
           };
         }
 
@@ -935,9 +935,10 @@ export class CompulsorioService {
                 create: candidato.disciplinas.map((d) => ({
                   orgUnitId: d.orgUnitId,
                   nomeDisciplina: d.nomeDisciplina,
-                  // Fotografia da nota que tornou a disciplina elegivel. Nula
-                  // quando a janela nao filtra por nota. Ver o schema.
+                  // Fotografia das notas que tornaram a disciplina elegivel.
+                  // Nulas quando a janela nao filtra por nota. Ver o schema.
                   notaFinal: d.notaFinal,
+                  notaN1: d.notaN1,
                 })),
               },
               syncs: {

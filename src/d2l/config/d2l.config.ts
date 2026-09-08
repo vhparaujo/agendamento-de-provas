@@ -117,6 +117,23 @@ export const D2L_API_VERSION_LE_PADRAO = '1.82';
 export const D2L_TIPO_OFERTA_PADRAO = 3;
 export const D2L_TIPO_PERIODO_LETIVO_PADRAO = 103;
 
+/**
+ * O NOME da categoria de notas que vale como N1 na substitutiva.
+ *
+ * A regra do cliente pede a N1 do aluno, e a Valence nao tem rota para "a N1":
+ * ela tem grade objects endereçaveis por id, e a N1 e uma CATEGORIA
+ * (`GradeObjectType: 9`) cujo id muda de turma para turma. O unico elo estavel
+ * entre a regra e o tenant e o NOME que a secretaria deu a categoria — por isso
+ * a descoberta e por nome, e por isso o nome e configuravel: renomear a
+ * categoria no Brightspace nao pode exigir deploy.
+ *
+ * A comparacao ignora caixa, acento e espacos nas pontas (ver
+ * `D2lGradesService.categoriaPorNome`), entao "N1", "n1" e " N1 " sao a mesma
+ * coisa. O que ela NAO faz e adivinhar: "Nota 1" nao casa com "N1", e a turma
+ * que nomear assim aparece no log como turma sem N1.
+ */
+export const D2L_CATEGORIA_N1_PADRAO = 'N1';
+
 export interface D2lApiConfig {
   /** `false` = nenhuma chamada de rede sai daqui. O DEFAULT e `true`. */
   habilitado: boolean;
@@ -126,6 +143,8 @@ export interface D2lApiConfig {
   apiVersaoLe: string;
   tipoOferta: number;
   tipoPeriodoLetivo: number;
+  /** Ver `D2L_CATEGORIA_N1_PADRAO`. Nunca vazio: em branco cai no padrao. */
+  categoriaN1: string;
 }
 
 function lerNumero(
@@ -156,6 +175,7 @@ export function carregarD2lApiConfig(config: ConfigService): D2lApiConfig {
       'D2L_TIPO_PERIODO_LETIVO',
       D2L_TIPO_PERIODO_LETIVO_PADRAO,
     ),
+    categoriaN1: ler(config, 'D2L_CATEGORIA_N1', D2L_CATEGORIA_N1_PADRAO),
   };
 }
 

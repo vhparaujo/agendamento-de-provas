@@ -32,7 +32,7 @@ import {
 process.env.D2L_HABILITADO = 'true';
 process.env.D2L_BASE_URL = 'https://e2e.invalido';
 
-describe('Prova substitutiva: a faixa de nota (e2e)', () => {
+describe('Prova substitutiva: os criterios de nota (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
   let auth: AuthService;
@@ -41,11 +41,17 @@ describe('Prova substitutiva: a faixa de nota (e2e)', () => {
   const PREFIXO_RA = 'E2ESUB';
   const PERIODO_LETIVO = 'E2E-SUB-103';
 
-  /** As tres disciplinas do aluno, com o `orgUnitId` que a Valence devolveria. */
-  const NA_FAIXA = {
+  /**
+   * As quatro disciplinas do aluno, com o `orgUnitId` que a Valence devolveria.
+   *
+   * A quarta existe para provar que os criterios sao mesmo DOIS: `N1_BAIXA` tem
+   * nota final de sobra dentro do teto e mesmo assim nao entra. Com uma faixa
+   * sobre a nota final — a regra ate 08/09/2026 — ela seria elegivel.
+   */
+  const ELEGIVEL = {
     orgUnitId: '90001',
     codigo: 'E2ESUB-T1',
-    titulo: 'Na faixa',
+    titulo: 'Passa nos dois criterios',
   };
   const JA_PASSOU = {
     orgUnitId: '90002',
@@ -57,12 +63,21 @@ describe('Prova substitutiva: a faixa de nota (e2e)', () => {
     codigo: 'E2ESUB-T3',
     titulo: 'Sem nota',
   };
+  const N1_BAIXA = {
+    orgUnitId: '90004',
+    codigo: 'E2ESUB-T4',
+    titulo: 'Final baixa, N1 insuficiente',
+  };
+
+  /** O `CategoryId` da N1 — diferente em cada turma no tenant de verdade. */
+  const CATEGORIA_N1 = '4231';
 
   /**
    * As notas do duble, por `orgUnitId`. Sao reescritas dentro dos testes que
-   * precisam de outro cenario — por isso `let`, e nao uma constante.
+   * precisam de outro cenario — por isso `let`, e nao constantes.
    */
   let notasPorTurma: Record<string, NotaFinalD2L> = {};
+  let n1PorTurma: Record<string, NotaFinalD2L> = {};
 
   /** Ligado por um teste so: a Valence responder erro na leitura da nota. */
   let notasFalham = false;
@@ -77,18 +92,28 @@ describe('Prova substitutiva: a faixa de nota (e2e)', () => {
   const enrollments = {
     habilitado: () => true,
     ofertasDoPeriodo: () =>
-      Promise.resolve([NA_FAIXA, JA_PASSOU, SEM_NOTA].map((t) => ({ ...t }))),
+      Promise.resolve(
+        [ELEGIVEL, JA_PASSOU, SEM_NOTA, N1_BAIXA].map((t) => ({ ...t })),
+      ),
     ofertasDoSemestre: () => Promise.resolve([]),
     identidadePorMatricula: () => Promise.resolve({ situacao: 'SEM_CONTA' }),
   };
 
   const grades = {
     habilitado: () => true,
+    nomeDaCategoriaN1: () => 'N1',
+    categoriaPorNome: () => Promise.resolve(CATEGORIA_N1),
     notaFinal: (orgUnitId: string) =>
       notasFalham
         ? Promise.reject(new Error('502 do tenant (e2e)'))
         : Promise.resolve(notasPorTurma[orgUnitId] ?? { situacao: 'SEM_NOTA' }),
+    notaDeGradeObject: (orgUnitId: string) =>
+      notasFalham
+        ? Promise.reject(new Error('502 do tenant (e2e)'))
+        : Promise.resolve(n1PorTurma[orgUnitId] ?? { situacao: 'SEM_NOTA' }),
     notasFinaisDaTurma: () => Promise.resolve(new Map<string, NotaFinalD2L>()),
+    notasDeGradeObjectDaTurma: () =>
+      Promise.resolve(new Map<string, NotaFinalD2L>()),
   };
 
   beforeAll(async () => {
@@ -125,7 +150,7 @@ describe('Prova substitutiva: a faixa de nota (e2e)', () => {
 
     // As tres precisam estar no CSV de turmas: o filtro de nota entra DEPOIS do
     // cruzamento, e disciplina fora do CSV nem chega la.
-    for (const turma of [NA_FAIXA, JA_PASSOU, SEM_NOTA]) {
+    for (const turma of [ELEGIVEL, JA_PASSOU, SEM_NOTA, N1_BAIXA]) {
       await prisma.turmaImportada.create({
         data: { codigoTurma: turma.codigo, nomeDisciplina: turma.titulo },
       });
@@ -159,8 +184,8 @@ describe('Prova substitutiva: a faixa de nota (e2e)', () => {
         data: {
           periodoLetivoId: PERIODO_LETIVO,
           rodada: 'SUB',
-          notaMinima: 1.5,
-          notaMaxima: 6.75,
+          notaMinimaN1: 1.5,
+          notaMaximaFinal: 7,
           descricao: 'e2e substitutiva',
           aberto: true,
           dataFechamento: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
@@ -172,9 +197,18 @@ describe('Prova substitutiva: a faixa de nota (e2e)', () => {
   beforeEach(() => {
     notasFalham = false;
     notasPorTurma = {
-      [NA_FAIXA.orgUnitId]: achou(4.25),
+      [ELEGIVEL.orgUnitId]: achou(4.25),
       [JA_PASSOU.orgUnitId]: achou(8.5),
+      [N1_BAIXA.orgUnitId]: achou(3.0),
       // SEM_NOTA fica de fora do mapa de proposito.
+    };
+
+    n1PorTurma = {
+      [ELEGIVEL.orgUnitId]: achou(3.0),
+      [JA_PASSOU.orgUnitId]: achou(9.0),
+      // A que separa a regra nova da antiga: final 3,00 (dentro do teto) com a
+      // N1 em 0,50. Pela faixa sobre a nota final, ela entraria.
+      [N1_BAIXA.orgUnitId]: achou(0.5),
     };
   });
 
@@ -230,9 +264,9 @@ describe('Prova substitutiva: a faixa de nota (e2e)', () => {
         },
       ],
       contexto: {
-        orgUnitId: NA_FAIXA.orgUnitId,
-        codigo: NA_FAIXA.codigo,
-        titulo: NA_FAIXA.titulo,
+        orgUnitId: ELEGIVEL.orgUnitId,
+        codigo: ELEGIVEL.codigo,
+        titulo: ELEGIVEL.titulo,
       },
     });
 
@@ -267,7 +301,7 @@ describe('Prova substitutiva: a faixa de nota (e2e)', () => {
     });
   }
 
-  it('o portal expoe a faixa, para a tela poder explicar a lista curta', async () => {
+  it('o portal expoe os criterios, para a tela explicar a lista curta', async () => {
     const { token } = await criarAluno('PER');
 
     const res = await comoAluno(api().get('/api/portal/periodo'), token).expect(
@@ -275,10 +309,15 @@ describe('Prova substitutiva: a faixa de nota (e2e)', () => {
     );
 
     expect(res.body.rodada).toBe('SUB');
-    expect(res.body.filtroDeNota).toEqual({ minima: 1.5, maxima: 6.75 });
+    expect(res.body.filtroDeNota).toEqual({ minimaN1: 1.5, maximaFinal: 7 });
   });
 
-  it('lista SO a disciplina dentro da faixa, das tres do aluno', async () => {
+  /**
+   * ⚠️ A quarta disciplina (`N1_BAIXA`) e a que separa esta regra da antiga:
+   * final 3,00 esta dentro do teto, e so a N1 a exclui. Se ela voltar a
+   * aparecer nesta lista, os dois limites voltaram a comparar a mesma nota.
+   */
+  it('lista SO a disciplina que passa nos DOIS criterios, das quatro', async () => {
     const { token } = await criarAluno('LST');
 
     const res = await comoAluno(
@@ -288,15 +327,16 @@ describe('Prova substitutiva: a faixa de nota (e2e)', () => {
 
     expect(res.body.podeAgendar).toBe(true);
     expect(res.body.disciplinas).toHaveLength(1);
-    expect(res.body.disciplinas[0].nomeDisciplina).toBe(NA_FAIXA.titulo);
+    expect(res.body.disciplinas[0].nomeDisciplina).toBe(ELEGIVEL.titulo);
   });
 
   /**
-   * A prova precisa cobrir SO a disciplina elegivel — e a nota que decidiu fica
-   * gravada. Sem a fotografia, "por que ele agendou substitutiva desta materia?"
-   * so teria como resposta a nota de HOJE, que ja pode ser outra.
+   * A prova precisa cobrir SO a disciplina elegivel — e AS DUAS notas que
+   * decidiram ficam gravadas. Sem a fotografia, "por que ele agendou
+   * substitutiva desta materia?" so teria como resposta as notas de HOJE, que
+   * ja podem ser outras.
    */
-  it('agenda cobrindo so a elegivel, e grava a nota que decidiu', async () => {
+  it('agenda cobrindo so a elegivel, e grava as notas que decidiram', async () => {
     const { token, alunoId } = await criarAluno('AGD');
 
     const res = await comoAluno(api().post('/api/portal/agendamentos'), token)
@@ -310,17 +350,19 @@ describe('Prova substitutiva: a faixa de nota (e2e)', () => {
     });
 
     expect(gravadas).toHaveLength(1);
-    expect(gravadas[0].orgUnitId).toBe(NA_FAIXA.orgUnitId);
+    expect(gravadas[0].orgUnitId).toBe(ELEGIVEL.orgUnitId);
     expect(Number(gravadas[0].notaFinal)).toBe(4.25);
+    expect(Number(gravadas[0].notaN1)).toBe(3);
   });
 
-  it('nenhuma na faixa: recusa e explica sem mandar conferir o CSV', async () => {
+  it('nenhuma elegivel: recusa e explica sem mandar conferir o CSV', async () => {
     const { token, alunoId } = await criarAluno('FORA');
 
     notasPorTurma = {
-      [NA_FAIXA.orgUnitId]: achou(9),
+      [ELEGIVEL.orgUnitId]: achou(9),
       [JA_PASSOU.orgUnitId]: achou(8.5),
       [SEM_NOTA.orgUnitId]: achou(7),
+      [N1_BAIXA.orgUnitId]: achou(7.5),
     };
 
     const lista = await comoAluno(
@@ -365,17 +407,17 @@ describe('Prova substitutiva: a faixa de nota (e2e)', () => {
 
   /**
    * O par de campos atravessa o `whitelist` do ValidationPipe e a validacao. Um
-   * `notaMinima` descartado ali deixaria a janela sem filtro, e o portal
+   * `notaMinimaN1` descartado ali deixaria a janela sem filtro, e o portal
    * ofereceria a substitutiva ao semestre inteiro — sem erro em lugar nenhum.
    */
-  describe('cadastro da faixa pelo admin', () => {
+  describe('cadastro dos criterios pelo admin', () => {
     it('guarda o par e o devolve como objeto', async () => {
       const periodo = await prisma.periodoAgendamento.findUniqueOrThrow({
         where: { id: periodoId },
       });
 
-      expect(Number(periodo.notaMinima)).toBe(1.5);
-      expect(Number(periodo.notaMaxima)).toBe(6.75);
+      expect(Number(periodo.notaMinimaN1)).toBe(1.5);
+      expect(Number(periodo.notaMaximaFinal)).toBe(7);
     });
   });
 });

@@ -250,11 +250,11 @@ export class SituacaoPeriodoDto implements SituacaoPeriodo {
     nullable: true,
     type: FiltroDeNotaDto,
     description:
-      'A FAIXA DE NOTA desta janela, quando ela filtra por nota (a ' +
+      'OS CRITERIOS DE NOTA desta janela, quando ela filtra por nota (a ' +
       'substitutiva). Presente = a lista de disciplinas do aluno traz **so** as ' +
-      'materias em que a nota final dele esta em [minima, maxima); a tela ' +
-      'precisa dizer isso, senao quem tem tres disciplinas e ve uma acha que o ' +
-      'sistema errou. `null` = a prova cobre todas as disciplinas (a N2).',
+      'materias em que ele tem N1 >= minimaN1 E nota final < maximaFinal; a ' +
+      'tela precisa dizer isso, senao quem tem tres disciplinas e ve uma acha ' +
+      'que o sistema errou. `null` = a prova cobre todas as disciplinas (a N2).',
   })
   filtroDeNota?: FiltroDeNota | null;
 

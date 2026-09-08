@@ -100,13 +100,15 @@ mesma faixa, porém, a sala fica travada numa única modalidade (garantido pelo
    o período de agendamento aberto.
 4. **Disciplinas agendáveis** = disciplinas do aluno na Valence ∩ turmas reais
    (CSV) ∩ período letivo vigente. **Não são todas as disciplinas do aluno.**
-4b. **Na rodada com faixa de nota (a substitutiva), só entra a disciplina cuja
-   nota final está na faixa** — `>= notaMinima` e `< notaMaxima` (1,5 e 6,75 no
-   cadastro do cliente). É por DISCIPLINA: um aluno com três matérias pode
-   agendar só uma. O gatilho é a faixa cadastrada no período, **nunca** o texto
-   da `rodada`. Sem faixa (a N2), nada muda e nenhuma nota é consultada. Sem
-   conseguir ler a nota, o aluno **não** agenda — é *fail-closed* de propósito.
-   Ver [Período de agendamento](#período-de-agendamento).
+4b. **Na rodada com critérios de nota (a substitutiva), só entra a disciplina em
+   que o aluno passa nos DOIS**: `N1 >= notaMinimaN1` **e**
+   `nota final calculada < notaMaximaFinal` (1,5 e 7 no cadastro do cliente).
+   São notas DIFERENTES — não é uma faixa. É por DISCIPLINA: um aluno com três
+   matérias pode agendar só uma. O gatilho são os critérios cadastrados no
+   período, **nunca** o texto da `rodada`. Sem eles (a N2), nada muda e nenhuma
+   nota é consultada. Sem conseguir ler as notas, o aluno **não** agenda — é
+   *fail-closed* de propósito. Ver
+   [Período de agendamento](#período-de-agendamento).
 5. **Um agendamento cobre todas as disciplinas agendáveis de UM vínculo**, no
    mesmo horário. Aluno com dois cursos faz dois agendamentos.
 6. **Uma prova por PESSOA em cada horário** (decisão do cliente, 14/08/2026). O
@@ -486,7 +488,7 @@ POST /periodos
 }
 ```
 
-- **O prazo continua único.** Datas, `rodada` e faixa de nota valem para todas as
+- **O prazo continua único.** Datas, `rodada` e critérios de nota valem para todas as
   modalidades — é UMA janela. O que varia é só qual árvore do Brightspace
   consultar.
 - **O mapa tem de cobrir TODAS as modalidades** (400 nomeando as que faltam).
@@ -531,38 +533,61 @@ prova nele — a regular e a **substitutiva**. O campo `rodada` (`"N2"` por padr
 - **Os períodos que já existiam ganharam `rodada = "N2"` na migration**, junto com
   os agendamentos deles. Nada a fazer à mão.
 
-#### `notaMinima`/`notaMaxima`: quem pode fazer a substitutiva
+#### `notaMinimaN1`/`notaMaximaFinal`: quem pode fazer a substitutiva
 
-A `rodada` cria a segunda janela; a **faixa de nota** diz quem entra nela. Sem
-ela, aberta a SUB, o portal ofereceria a substitutiva a todo mundo — inclusive a
-quem já passou —, porque o cruzamento de disciplinas filtra só pelo semestre.
+A `rodada` cria a segunda janela; os **critérios de nota** dizem quem entra nela.
+Sem eles, aberta a SUB, o portal ofereceria a substitutiva a todo mundo —
+inclusive a quem já passou —, porque o cruzamento de disciplinas filtra só pelo
+semestre.
 
-Preenchidos os dois campos, só entra na prova a disciplina em que a **nota final
-do aluno** está em `[notaMinima, notaMaxima)`: `>=` na mínima, `<` na máxima. Com
-1,5 e 6,75, quem tirou exatamente 1,50 **entra** e quem tirou 6,75 **fica de
-fora**. É por DISCIPLINA — um aluno com três matérias pode ver só uma na tela.
+Preenchidos os dois campos, só entra na prova a disciplina em que o aluno passa
+nos **dois** critérios:
 
+| Critério | Nota olhada | Comparação |
+|---|---|---|
+| piso | **N1** | `>= notaMinimaN1` (1,50) |
+| teto | **nota final calculada** | `< notaMaximaFinal` (7,00) |
+
+Com 1,5 e 7: quem tirou exatamente 1,50 na N1 **entra**; quem tirou exatamente
+7,00 na final **fica de fora**. É por DISCIPLINA — um aluno com três matérias
+pode ver só uma na tela.
+
+- ⚠️ **Os dois números NÃO formam um intervalo.** Eles olham notas diferentes:
+  não há mínimo para a nota final, nem máximo para a N1. Quem tem final 2,0 com a
+  N1 zerada **não** agenda; quem tem N1 9,0 e final 8,0 também não.
+- ⚠️ **A regra mudou em 08/09/2026.** Antes os dois limites comparavam a mesma
+  nota (a final, em `[1,5 ; 6,75)`), e os campos se chamavam
+  `notaMinima`/`notaMaxima`. A migration renomeia as colunas e **não converte os
+  números**: o `1,50` gravado vira piso da N1, e o teto continua o que estava lá.
+  **Confira a janela da substitutiva na tela antes de abri-la.**
+- **A N1 é achada pelo NOME da categoria de notas da turma** (`D2L_CATEGORIA_N1`,
+  default `"N1"`) — o `CategoryId` é diferente em cada turma, então não há id
+  fixo possível. Turma que nomear a categoria de outro jeito ("Nota 1") recusa
+  **todos** os seus alunos, com um aviso por turma no log. `npm run d2l:notas`
+  mostra isso antes do dia.
 - **Nulos = sem filtro**, e é o caso da N2 e de todo período que já existia: a
   prova cobre as disciplinas do semestre e **nenhuma nota é consultada**.
-- **Os dois andam juntos.** Mandar um só responde 400: meio intervalo seria lido
+- **Os dois andam juntos.** Mandar um só responde 400: meio critério seria lido
   como "sem filtro" e a prova abriria para todos, sem erro nenhum aparecendo.
 - ⚠️ **O gatilho são estes campos, nunca `rodada === "SUB"`.** `rodada` é texto
   livre — quem a nomeia é a secretaria —, e amarrar a regra à string a faria
   parar de valer no dia em que alguém cadastrasse "Substitutiva".
-- **A faixa é editável mesmo com a janela cheia**, ao contrário da `rodada`: ela
-  não fica gravada em reserva nenhuma. Mas as provas já marcadas **não** são
-  revistas, e a alteração vai para a auditoria.
-- **Sem conseguir ler a nota, ninguém agenda** (*fail-closed*). Valence fora,
+- **São editáveis mesmo com a janela cheia**, ao contrário da `rodada`: não ficam
+  gravados em reserva nenhuma. Mas as provas já marcadas **não** são revistas, e
+  a alteração vai para a auditoria.
+- **Sem conseguir ler as notas, ninguém agenda** (*fail-closed*). Valence fora,
   `D2L_HABILITADO=false` ou escopo faltando: a tela diz que não foi possível
   confirmar as notas e manda à secretaria. Não há degradação possível — liberar
   sem conferir é o que a regra existe para impedir. Na N2 o fallback de sempre
   continua valendo.
-- **Exige o escopo `grades:gradevalues:read`**, e escopo vive no
-  **consentimento**: acrescentá-lo ao `.env` sem `npm run d2l:autorizar` deixa
-  todo GET de nota em 403. Confira a leitura antes de abrir a janela com
+- **Exige os escopos `grades:gradevalues:read` e `grades:gradecategories:read`**
+  (o segundo entrou com a N1), e escopo vive no **consentimento**: acrescentá-lo
+  ao `.env` sem `npm run d2l:autorizar` deixa o GET correspondente em 403.
+  Confira a leitura antes de abrir a janela com
   `npm run d2l:notas -- <orgUnitId> <userId>`.
-- A nota que decidiu fica gravada em `AgendamentoDisciplina.notaFinal` — é a
-  resposta para "por que ele agendou substitutiva desta matéria?" meses depois.
+- As notas que decidiram ficam gravadas em `AgendamentoDisciplina.notaFinal` e
+  `.notaN1` — é a resposta para "por que ele agendou substitutiva desta matéria?"
+  meses depois. A `notaN1` é nula nas reservas anteriores a 08/09/2026.
 - No compulsório, quem fica de fora por nota aparece no relatório como
   `NAO_ELEGIVEL_PELA_NOTA` — o único motivo que **não pede ação** da secretaria,
   e o mais numeroso num lote de substitutiva.
@@ -1188,8 +1213,8 @@ AlunoImportado (matrícula + curso) ──────────────�
 TurmaImportada ── ImportacaoCsv      Admin
 
 PeriodoAgendamento ── PeriodoLetivoModalidade ── Modalidade
-   (a janela: prazo,           (qual periodo letivo do
-    rodada, faixa de nota)      Brightspace vale para cada uma)
+   (a janela: prazo, rodada,   (qual periodo letivo do
+    criterios de nota)          Brightspace vale para cada uma)
 ```
 
 **Tabelas e o que cada uma guarda**

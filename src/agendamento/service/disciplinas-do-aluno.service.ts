@@ -247,7 +247,7 @@ export class DisciplinasDoAlunoService {
 
   /**
    * ==========================================================================
-   * A FAIXA DE NOTA DA JANELA — a diferenca entre a N2 e a SUBSTITUTIVA
+   * OS CRITERIOS DE NOTA DA JANELA — a diferenca entre a N2 e a SUBSTITUTIVA
    * ==========================================================================
    * Sem filtro (`null`), devolve o cruzamento como estava, com `notaFinal: null`
    * — e a verdade: nenhuma nota foi consultada, e nenhuma chamada de rede saiu.
@@ -271,6 +271,7 @@ export class DisciplinasDoAlunoService {
         agendaveis: cruzamento.agendaveis.map((d) => ({
           ...d,
           notaFinal: null,
+          notaN1: null,
         })),
         motivo: cruzamento.motivo,
       };
@@ -324,7 +325,7 @@ export class DisciplinasDoAlunoService {
         this.logger.error(
           'A janela vigente filtra por nota e D2L_HABILITADO esta desligado. ' +
             'Ninguem consegue agendar a substitutiva: ligue a integracao ou ' +
-            'remova a faixa de nota do periodo.',
+            'remova os criterios de nota do periodo.',
         );
 
         return { turmas: [], origem: 'LAUNCH', motivo: NOTAS_INDISPONIVEIS };
@@ -470,7 +471,7 @@ export class DisciplinasDoAlunoService {
     return {
       turmas: ofertas,
       // A rodada nao muda QUAIS ofertas contam (as duas cobrem as mesmas
-      // materias), mas a faixa de nota decide quais delas o aluno agenda — e
+      // materias), mas os criterios de nota decidem quais delas ele agenda — e
       // ela sai da mesma leitura, para as duas nao poderem divergir.
       filtroDeNota: vigente.filtroDeNota,
       // A frase NOMEIA o periodo letivo e a modalidade que o escolheu.

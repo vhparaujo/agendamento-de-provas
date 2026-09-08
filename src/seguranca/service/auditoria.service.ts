@@ -42,7 +42,7 @@ export type EventoSeguranca =
   // mais recente entrega o portal ao anterior, e a mudanca nao aparece em
   // lugar nenhum alem daqui.
   | 'PERIODO_REMOVIDO'
-  // A faixa de nota da janela mudou DEPOIS de ja haver reserva nela. Nao e
+  // O criterio de nota da janela mudou DEPOIS de ja haver reserva nela. Nao e
   // bloqueado (a nota nao e fotografia do periodo, e mexer nela so muda quem
   // agenda daqui para a frente), mas e a alteracao que faz um aluno elegivel
   // ontem deixar de ser hoje — e a pergunta "quem mudou isso?" vai aparecer.

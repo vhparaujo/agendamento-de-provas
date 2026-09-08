@@ -12,9 +12,9 @@ interface Periodo {
   periodoLetivoId: string;
   /** A metade da identidade que separa a regular da substitutiva. */
   rodada: string;
-  /** A faixa de nota da janela. Ausente nos fixtures = janela sem filtro. */
-  notaMinima?: number | null;
-  notaMaxima?: number | null;
+  /** Os criterios de nota da janela. Ausentes nos fixtures = sem filtro. */
+  notaMinimaN1?: number | null;
+  notaMaximaFinal?: number | null;
   descricao: string | null;
   createdAt: Date;
   /**
@@ -100,8 +100,8 @@ function montar(periodos: Periodo[], reservas: Reserva[] = []) {
           periodoLetivoId: vigente.periodoLetivoId,
           rodada: vigente.rodada,
           // Ausente no fixture = coluna nula, como no banco.
-          notaMinima: vigente.notaMinima ?? null,
-          notaMaxima: vigente.notaMaxima ?? null,
+          notaMinimaN1: vigente.notaMinimaN1 ?? null,
+          notaMaximaFinal: vigente.notaMaximaFinal ?? null,
           descricao: vigente.descricao,
           ...COLUNAS_DE_JANELA,
           // O `include` do mapa e sempre pedido junto (`MAPA_DA_JANELA`), e sem
@@ -671,36 +671,40 @@ describe('PeriodoService.exigirEncerrado', () => {
 
 /**
  * ==========================================================================
- * A FAIXA DE NOTA DA JANELA — a regra da substitutiva
+ * OS CRITERIOS DE NOTA DA JANELA — a regra da substitutiva
  * ==========================================================================
- * O par `notaMinima + notaMaxima` e o que liga o filtro. Ele NAO e comparado
- * com a `rodada`, que e texto livre: e por isso que estes testes nunca mencionam
- * a string "SUB".
+ * O par `notaMinimaN1 + notaMaximaFinal` e o que liga o filtro. Ele NAO e
+ * comparado com a `rodada`, que e texto livre: e por isso que estes testes nunca
+ * mencionam a string "SUB".
+ *
+ * ⚠️ Os dois NAO formam intervalo — um olha a N1, o outro a nota final. Ver
+ * `aceita piso da N1 maior que o teto da final`, que guarda a ausencia da
+ * validacao de ordem que existiu ate 08/09/2026.
  */
-describe('PeriodoService — a faixa de nota', () => {
+describe('PeriodoService — os criterios de nota', () => {
   const JANELA = {
     dataFechamento: '2026-12-31T23:59:00-03:00',
     periodoLetivoId: '132035',
   };
 
-  it('cadastra a faixa e a devolve como objeto no vigente', async () => {
+  it('cadastra os criterios e os devolve como objeto no vigente', async () => {
     const { service } = montar([]);
 
     await service.criar({
       ...JANELA,
       rodada: 'SUB',
-      notaMinima: 1.5,
-      notaMaxima: 6.75,
+      notaMinimaN1: 1.5,
+      notaMaximaFinal: 7,
     });
 
     await expect(service.periodoLetivoDaModalidade('EAD')).resolves.toEqual({
       periodoLetivoId: '132035',
       rodada: 'SUB',
-      filtroDeNota: { minima: 1.5, maxima: 6.75 },
+      filtroDeNota: { minimaN1: 1.5, maximaFinal: 7 },
     });
   });
 
-  it('sem a faixa, o vigente diz `null` — e nenhuma nota sera consultada', async () => {
+  it('sem criterios, o vigente diz `null` — e nenhuma nota sera consultada', async () => {
     const { service } = montar([]);
 
     await service.criar(JANELA);
@@ -717,26 +721,29 @@ describe('PeriodoService — a faixa de nota', () => {
   it('recusa uma das duas sem a outra', async () => {
     const { service } = montar([]);
 
-    await expect(service.criar({ ...JANELA, notaMinima: 1.5 })).rejects.toThrow(
-      /andam juntas/,
-    );
+    await expect(
+      service.criar({ ...JANELA, notaMinimaN1: 1.5 }),
+    ).rejects.toThrow(/andam juntas/);
 
     await expect(
-      service.criar({ ...JANELA, notaMaxima: 6.75 }),
+      service.criar({ ...JANELA, notaMaximaFinal: 7 }),
     ).rejects.toThrow(/andam juntas/);
   });
 
-  /** Intervalo vazio: NINGUEM seria elegivel, e o sintoma apontaria para o CSV. */
-  it('recusa minima >= maxima', async () => {
-    const { service } = montar([]);
+  /**
+   * ⚠️ A recusa de "minima >= maxima" SAIU em 08/09/2026, e este teste guarda a
+   * ausencia dela. Os dois numeros passaram a comparar notas DIFERENTES — N1 e
+   * nota final —, e ordem entre eles nao significa nada: `N1 >= 7 com final < 3`
+   * e uma janela severa, nao um intervalo vazio. Recusa-la seria a validacao
+   * afirmando uma relacao que a regra nao tem.
+   */
+  it('aceita piso da N1 maior que o teto da final', async () => {
+    const { service, periodos } = montar([]);
 
-    await expect(
-      service.criar({ ...JANELA, notaMinima: 6.75, notaMaxima: 1.5 }),
-    ).rejects.toThrow(/MENOR/);
+    await service.criar({ ...JANELA, notaMinimaN1: 7, notaMaximaFinal: 3 });
 
-    await expect(
-      service.criar({ ...JANELA, notaMinima: 5, notaMaxima: 5 }),
-    ).rejects.toThrow(/MENOR/);
+    expect(periodos[0].notaMinimaN1).toBe(7);
+    expect(periodos[0].notaMaximaFinal).toBe(3);
   });
 
   /** "67,5" digitado no lugar de "6,75" liberaria todo mundo. */
@@ -744,7 +751,7 @@ describe('PeriodoService — a faixa de nota', () => {
     const { service } = montar([]);
 
     await expect(
-      service.criar({ ...JANELA, notaMinima: 1.5, notaMaxima: 67.5 }),
+      service.criar({ ...JANELA, notaMinimaN1: 1.5, notaMaximaFinal: 67.5 }),
     ).rejects.toThrow(/entre 0 e 10/);
   });
 
@@ -755,16 +762,16 @@ describe('PeriodoService — a faixa de nota', () => {
    * correcao mais provavel e ter cadastrado a faixa errada e perceber depois de
    * abrir.
    */
-  it('deixa corrigir a faixa mesmo com prova ja marcada, e audita', async () => {
+  it('deixa corrigir os criterios mesmo com prova ja marcada, e audita', async () => {
     const { service, periodos, eventos } = montar(
-      [{ ...DOIS_MIL_E_VINTE_SEIS_UM, notaMinima: 1.5, notaMaxima: 6 }],
+      [{ ...DOIS_MIL_E_VINTE_SEIS_UM, notaMinimaN1: 1.5, notaMaximaFinal: 6 }],
       [{ periodoLetivoId: '132035', rodada: 'N2', status: 'CONFIRMADO' }],
     );
 
-    await service.atualizar(80, { notaMaxima: 6.75 }, 'admin@ucb.br');
+    await service.atualizar(80, { notaMaximaFinal: 7 }, 'admin@ucb.br');
 
-    expect(periodos[0].notaMaxima).toBe(6.75);
-    expect(periodos[0].notaMinima).toBe(1.5);
+    expect(periodos[0].notaMaximaFinal).toBe(7);
+    expect(periodos[0].notaMinimaN1).toBe(1.5);
     expect(eventos.map((e) => e.evento)).toContain(
       'PERIODO_FILTRO_DE_NOTA_ALTERADO',
     );
@@ -774,44 +781,44 @@ describe('PeriodoService — a faixa de nota', () => {
    * Mandar so um campo no PATCH nao pode deixar meio filtro no banco — o
    * service revalida o par inteiro, mesclando com o que ja estava la.
    */
-  it('recusa desligar so metade da faixa', async () => {
+  it('recusa desligar so metade dos criterios', async () => {
     const { service } = montar([
-      { ...DOIS_MIL_E_VINTE_SEIS_UM, notaMinima: 1.5, notaMaxima: 6.75 },
+      { ...DOIS_MIL_E_VINTE_SEIS_UM, notaMinimaN1: 1.5, notaMaximaFinal: 7 },
     ]);
 
     await expect(
-      service.atualizar(80, { notaMaxima: null }, 'admin@ucb.br'),
+      service.atualizar(80, { notaMaximaFinal: null }, 'admin@ucb.br'),
     ).rejects.toThrow(/andam juntas/);
   });
 
   it('desliga o filtro quando os dois vem nulos', async () => {
     const { service, periodos } = montar([
-      { ...DOIS_MIL_E_VINTE_SEIS_UM, notaMinima: 1.5, notaMaxima: 6.75 },
+      { ...DOIS_MIL_E_VINTE_SEIS_UM, notaMinimaN1: 1.5, notaMaximaFinal: 7 },
     ]);
 
     await service.atualizar(
       80,
-      { notaMinima: null, notaMaxima: null },
+      { notaMinimaN1: null, notaMaximaFinal: null },
       'admin@ucb.br',
     );
 
-    expect(periodos[0].notaMinima).toBeNull();
-    expect(periodos[0].notaMaxima).toBeNull();
+    expect(periodos[0].notaMinimaN1).toBeNull();
+    expect(periodos[0].notaMaximaFinal).toBeNull();
   });
 
   /**
-   * Editar so a descricao NAO pode apagar a faixa. E o caso normal da tela, que
-   * manda o formulario inteiro — sem os campos de nota quando eles nao mudaram.
+   * Editar so a descricao NAO pode apagar os criterios. E o caso normal da tela,
+   * que manda o formulario inteiro — sem os campos de nota quando nao mudaram.
    */
-  it('editar so a descricao preserva a faixa', async () => {
+  it('editar so a descricao preserva os criterios', async () => {
     const { service, periodos } = montar([
-      { ...DOIS_MIL_E_VINTE_SEIS_UM, notaMinima: 1.5, notaMaxima: 6.75 },
+      { ...DOIS_MIL_E_VINTE_SEIS_UM, notaMinimaN1: 1.5, notaMaximaFinal: 7 },
     ]);
 
     await service.atualizar(80, { descricao: 'outra' }, 'admin@ucb.br');
 
-    expect(periodos[0].notaMinima).toBe(1.5);
-    expect(periodos[0].notaMaxima).toBe(6.75);
+    expect(periodos[0].notaMinimaN1).toBe(1.5);
+    expect(periodos[0].notaMaximaFinal).toBe(7);
   });
 });
 

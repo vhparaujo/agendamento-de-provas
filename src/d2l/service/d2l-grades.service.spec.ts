@@ -19,6 +19,9 @@ import { D2lOauthService } from './d2l-oauth.service';
  *    abaixo do piso da substitutiva — errado no sentido que mais dói, porque
  *    ninguem reclama de uma prova que nao lhe foi oferecida.
  * 5. A rota e a do produto **LE**, com a versao do LE.
+ * 6. **A N1 e achada pelo NOME da categoria, e o id sai de la.** O `CategoryId`
+ *    muda de turma para turma; procurar pelo id de uma turma em outra leria a
+ *    nota de um item qualquer — ou de nenhum — sem erro nenhum aparecer.
  */
 describe('D2lGradesService', () => {
   const ENV = {
@@ -283,6 +286,148 @@ describe('D2lGradesService', () => {
       await expect(
         servico().notasFinaisDaTurma('156126', { maxPaginas: 3 }),
       ).rejects.toThrow(/sem nota/);
+    });
+  });
+
+  /**
+   * ==========================================================================
+   * A CATEGORIA N1 — a segunda nota da substitutiva
+   * ==========================================================================
+   * Uma categoria de notas e um grade object como outro qualquer
+   * (`GradeObjectType: 9`), lido pelo mesmo `/grades/{id}/values/`. O que muda e
+   * o id — e ele e DIFERENTE em cada turma, que e a razao de a busca ser por
+   * nome.
+   */
+  describe('categoriaPorNome', () => {
+    it('acha o CategoryId pelo nome, ignorando caixa e espaco', async () => {
+      responderEmSequencia([
+        resposta([
+          { CategoryId: 4230, Name: 'Atividades' },
+          { CategoryId: 4231, Name: ' n1 ' },
+        ]),
+      ]);
+
+      const id = await servico().categoriaPorNome('156126', 'N1');
+
+      expect(id).toBe('4231');
+      expect(chamadas[0].url).toContain(
+        '/d2l/api/le/1.82/156126/grades/categories/',
+      );
+    });
+
+    /**
+     * "N1" nao pode achar "N10". Casar por pedaco leria a nota de outra
+     * categoria e o aluno seria julgado por um numero que nao e o dele.
+     */
+    it('nao casa por substring', async () => {
+      responderEmSequencia([resposta([{ CategoryId: 4299, Name: 'N10' }])]);
+
+      await expect(
+        servico().categoriaPorNome('156126', 'N1'),
+      ).resolves.toBeNull();
+    });
+
+    /** Turma sem a categoria e estado ESPERADO: a regra e que decide o que fazer. */
+    it('turma sem a categoria devolve null, e 404 tambem', async () => {
+      responderEmSequencia([resposta([{ CategoryId: 1, Name: 'Provas' }])]);
+      await expect(
+        servico().categoriaPorNome('156126', 'N1'),
+      ).resolves.toBeNull();
+
+      responderEmSequencia([resposta('', 404)]);
+      await expect(
+        servico().categoriaPorNome('156127', 'N1'),
+      ).resolves.toBeNull();
+    });
+
+    /**
+     * ⚠️ 403 e o oposto de 404 aqui: ele atinge TODA turma (falta
+     * `grades:gradecategories:read` no consentimento), e traduzi-lo para "turma
+     * sem N1" mandaria o curso inteiro a secretaria enquanto a correcao e um
+     * `npm run d2l:autorizar`.
+     */
+    it('403 SOBE, e nao vira "turma sem N1"', async () => {
+      responderEmSequencia([resposta({ error: 'insufficient scope' }, 403)]);
+
+      await expect(
+        servico().categoriaPorNome('156126', 'N1'),
+      ).rejects.toThrow();
+    });
+
+    /** Uma listagem por turma, e nao uma por aluno da turma. */
+    it('o segundo pedido da mesma turma sai do cache', async () => {
+      responderEmSequencia([resposta([{ CategoryId: 4231, Name: 'N1' }])]);
+
+      const service = servico();
+      await service.categoriaPorNome('156126', 'N1');
+      await service.categoriaPorNome('156126', 'N1');
+
+      expect(chamadas).toHaveLength(1);
+    });
+  });
+
+  describe('notaDeGradeObject', () => {
+    it('le o valor da categoria pela rota do grade object', async () => {
+      responderEmSequencia([
+        resposta({
+          GradeObjectTypeName: 'Category',
+          GradeObjectType: 9,
+          PointsNumerator: 2.5,
+          PointsDenominator: 10,
+        }),
+      ]);
+
+      const nota = await servico().notaDeGradeObject('156126', '4231', '76629');
+
+      expect(nota).toEqual({
+        situacao: 'ACHOU',
+        pontos: 2.5,
+        denominador: 10,
+        origem: 'DESCONHECIDA',
+        exibida: null,
+      });
+
+      expect(chamadas[0].url).toContain(
+        '/d2l/api/le/1.82/156126/grades/4231/values/76629',
+      );
+    });
+
+    /** Mesmo contrato de `notaFinal`: aluno sem nota na categoria nao e erro. */
+    it('404 vira SEM_NOTA', async () => {
+      responderEmSequencia([resposta('', 404)]);
+
+      await expect(
+        servico().notaDeGradeObject('156126', '4231', '76629'),
+      ).resolves.toEqual({ situacao: 'SEM_NOTA' });
+    });
+  });
+
+  describe('notasDeGradeObjectDaTurma', () => {
+    /** A mesma paginacao da nota final — ignora-la daria meia turma sem N1. */
+    it('segue a paginacao ate o fim', async () => {
+      responderEmSequencia([
+        resposta({
+          Objects: [
+            { User: { Identifier: 76629 }, GradeValue: { PointsNumerator: 3 } },
+          ],
+          Next: '/d2l/api/le/1.82/156126/grades/4231/values/?bookmark=abc',
+        }),
+        resposta({
+          Objects: [
+            {
+              User: { Identifier: '80001' },
+              GradeValue: { PointsNumerator: 1 },
+            },
+          ],
+          Next: null,
+        }),
+      ]);
+
+      const notas = await servico().notasDeGradeObjectDaTurma('156126', '4231');
+
+      expect(notas.size).toBe(2);
+      expect(notas.get('76629')).toMatchObject({ pontos: 3 });
+      expect(chamadas[0].url).toContain('/156126/grades/4231/values/');
     });
   });
 });

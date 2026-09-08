@@ -126,7 +126,8 @@ Peça só o mínimo. Para este projeto:
 | **Trocar a senha do quiz** (§5.7) | `quizzing:quizzes:write` | **PUT** quizzes/(quizId) |
 | Gravar special access | `quizzing:quizzes:write` | quizzes/(quizId)/specialaccess/(userId) |
 | Ler special access (verificação) | `quizzing:quizzes:read` | quizzes/(quizId)/specialaccess/ |
-| **Ler a nota final** (§4.5) | `grades:gradevalues:read` | grades/final/values/, grades/final/values/(userId) |
+| **Ler a nota final e a N1** (§4.5) | `grades:gradevalues:read` | grades/final/values/, grades/(gradeObjectId)/values/ |
+| **Achar a categoria N1** (§4.5) | `grades:gradecategories:read` | grades/categories/ |
 
 String de exemplo (ajuste conforme o app):
 ```
@@ -194,23 +195,67 @@ GET /d2l/api/lp/(version)/enrollments/orgUnits/(orgUnitId)/users/(userId)   # ch
 
 ---
 
-### 4.5 Ler a nota final do aluno (a faixa de nota da rodada)
+### 4.5 Ler a nota final e a N1 (os critérios de nota da rodada)
 
 Quem usa: `src/d2l/service/d2l-grades.service.ts` (cliente REST) e
 `src/agendamento/service/elegibilidade-de-nota.service.ts` (a regra). É o que
 decide **quem pode fazer a prova substitutiva**: só entra na prova a disciplina
-em que a nota final do aluno está na faixa cadastrada no período
-(`notaMinima`/`notaMaxima`).
+em que o aluno passa nos **dois** critérios cadastrados no período —
+`N1 >= notaMinimaN1` **e** `nota final calculada < notaMaximaFinal`.
+
+⚠️ **São DUAS leituras desde 08/09/2026.** Até então bastava a nota final (os
+dois limites comparavam ela). A N1 é a nota nova, e ela **não tem rota própria**.
 
 ⚠️ **É produto LE, não LP** — a versão é a `D2L_API_VERSION_LE` (1.82), não a do
 `lp`. Mesma armadilha do §4.2 ao contrário: número certo no produto errado dá
 **404 com corpo vazio**, e o sintoma parece "o aluno não tem nota".
 
 ```
-GET /d2l/api/le/(version)/(orgUnitId)/grades/final/values/(userId)   # um aluno
-GET /d2l/api/le/(version)/(orgUnitId)/grades/final/values/           # a turma (paginado)
-GET /d2l/api/le/(version)/(orgUnitId)/grades/                        # os grade objects
+GET /d2l/api/le/(version)/(orgUnitId)/grades/final/values/(userId)      # final, um aluno
+GET /d2l/api/le/(version)/(orgUnitId)/grades/final/values/              # final, a turma (paginado)
+GET /d2l/api/le/(version)/(orgUnitId)/grades/categories/                # onde mora a N1
+GET /d2l/api/le/(version)/(orgUnitId)/grades/(gradeObjectId)/values/(userId)  # N1, um aluno
+GET /d2l/api/le/(version)/(orgUnitId)/grades/(gradeObjectId)/values/    # N1, a turma (paginado)
+GET /d2l/api/le/(version)/(orgUnitId)/grades/                           # os grade objects
 ```
+
+#### A N1 é uma CATEGORIA, e o id dela muda de turma para turma
+
+Uma categoria de notas (N1, N2, N3) é, ela mesma, um *grade object* endereçável —
+de um tipo específico:
+
+```
+GradeObjectType = 9  →  "Category"
+```
+
+Ou seja: o **mesmo** `grades/(gradeObjectId)/values/` que lê um item numérico lê
+também uma categoria, devolvendo a mesma estrutura (`PointsNumerator`,
+`PointsDenominator`, `DisplayedGrade`, mais `GradeObjectType: 9` e
+`GradeObjectTypeName: "Category"`). O que muda é só o id.
+
+E é aí que está a armadilha: **o `CategoryId` da N1 é diferente em cada turma.**
+Não existe um número da "N1" que sirva para o tenant. Por isso são duas etapas:
+
+```
+GET .../grades/categories/            →  [{ CategoryId: 4231, Name: "N1" }, ...]
+                                                  ↓
+GET .../grades/4231/values/(userId)   →  a N1 daquele aluno naquela turma
+```
+
+O único elo estável entre a regra e o tenant é o **nome** da categoria, e é por
+isso que ele é configurável (`D2L_CATEGORIA_N1`, default `"N1"`). A comparação
+ignora caixa, acento e espaços nas pontas — mas **não** adivinha: `"Nota 1"` não
+casa com `"N1"`, e a turma que nomear assim recusa **todos** os seus alunos
+(motivo `SEM_CATEGORIA_N1`, com um aviso por turma no log listando os nomes que
+ela tem).
+
+| Decisão | Por quê |
+|---|---|
+| Descoberta por **nome**, não por id fixo | O `CategoryId` muda por turma; um id cravado leria o item errado, ou nenhum, sem erro aparecer |
+| Cache de 5 min do `CategoryId`, **inclusive do "não achei"** | Sem o cache negativo, cada aluno de uma turma mal nomeada custaria uma listagem inteira de categorias |
+| **404 → `null`** (turma sem categorias), **403 SOBE** | São opostos: 404 é uma turma; 403 é o consentimento sem `grades:gradecategories:read`, e atinge TODAS — traduzi-lo para "turma sem N1" mandaria o curso inteiro à secretaria por um `npm run d2l:autorizar` que falta |
+| Só **leitura** | Categorias (tipo 9) e a nota final calculada não aceitam `PUT`: o `IncomingGradeValue` só vale para os tipos 1–4 (Numérico, Aprovado/Reprovado, Caixa de Seleção, Texto). Elas são sempre recalculadas a partir dos itens que as compõem — o que não nos afeta, aqui só se lê |
+| A conferência de escala (`PointsDenominator ≠ 10`) **não** roda na N1 | O aviso fala de semestre com notas por lançar, e o denominador de uma N1 só diz quanto ela vale naquela turma |
 
 Resposta de um aluno (campos que importam):
 
@@ -225,10 +270,11 @@ Resposta de um aluno (campos que importam):
 
 | Decisão | Por quê |
 |---|---|
-| Compara **`PointsNumerator`** (pontos), não o percentual | Decisão do cliente. A faixa (1,5 a 6,75) é em pontos, na mesma escala da nota que o aluno vê |
+| Compara **`PointsNumerator`** (pontos), não o percentual | Decisão do cliente. Os limites (N1 ≥ 1,5 e final < 7) são em pontos, na mesma escala da nota que o aluno vê |
 | **404 = `SEM_NOTA`**, não erro | Turma sem notas fechadas e aluno que saiu da turma respondem 404. É o segundo ponto do projeto a usar `nuloEm404`, junto de `users/?orgDefinedId=` |
 | **`PointsNumerator` nulo = `SEM_NOTA`**, nunca 0,00 | Zero poria o curso inteiro abaixo do piso, e ninguém reclama de uma prova que não lhe foi oferecida |
-| A listagem por turma **segue a paginação até o fim**, e **estoura** se não terminar | Meia turma lida é pior que erro: os alunos que faltaram viram "sem nota", e sem nota ninguém agenda |
+| A listagem por turma **segue a paginação até o fim**, e **estoura** se não terminar | Meia turma lida é pior que erro: os alunos que faltaram viram "sem nota", e sem nota ninguém agenda. Vale igual para a N1 — é o mesmo código |
+| A nota **final** é lida primeiro; a N1 só depois | A maioria dos alunos passou de ano e sai no primeiro critério: checar a N1 antes faria o portal pagar duas chamadas por disciplina para todo mundo |
 | `PointsDenominator ≠ 10` só **avisa** no log | A comparação é em pontos, e um denominador menor quase sempre significa que o semestre ainda está correndo (com só a N1 lançada, a "Nota Calculada Final" vale 4,5) |
 
 **Calculada × Ajustada.** A rota devolve **uma** nota final por aluno, e
@@ -241,15 +287,22 @@ seletor. Confira com um aluno que **tenha** nota ajustada lançada:
 npm run d2l:notas -- <orgUnitId> <userId>
 ```
 
+Esse script também resolve a **categoria N1** da turma e imprime o `CategoryId`
+(ou explica que ela não existe). Rode-o em algumas turmas antes de abrir a
+janela: a turma sem categoria "N1" é a pendência que este recurso mais produz, e
+em produção o único sinal dela é uma linha de `WARN` no log.
+
 Se toda turma responder `CALCULADA` mesmo com ajustadas lançadas, a leitura
 precisa passar a buscar o grade object ajustado em `GET /grades/` +
 `GET /grades/(gradeObjectId)/values/(userId)` — o que exige também
 `grades:gradeobjects:read`. O ponto de mudança é um método só
 (`D2lGradesService.notaFinal`); a regra de negócio não muda.
 
-**Escopo:** `grades:gradevalues:read`, e vale o mesmo aviso do §3 — ele vive no
-consentimento. Sem reautorizar, todo GET aqui volta **403**, e como o filtro é
-*fail-closed*, **ninguém** consegue agendar a substitutiva.
+**Escopos:** `grades:gradevalues:read` (os valores) e
+`grades:gradecategories:read` (a listagem de categorias, para achar a N1). Vale o
+mesmo aviso do §3 — eles vivem no consentimento. Sem reautorizar, o GET
+correspondente volta **403**, e como o filtro é *fail-closed*, **ninguém**
+consegue agendar a substitutiva.
 
 ---
 

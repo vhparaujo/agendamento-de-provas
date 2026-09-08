@@ -11,24 +11,32 @@ import { Prisma, StatusAgendamento } from '../../generated/prisma/client';
 import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 
 /**
- * A FAIXA DE NOTA QUE HABILITA A RODADA — a regra da substitutiva.
+ * OS CRITERIOS DE NOTA QUE HABILITAM A RODADA — a regra da substitutiva.
  *
  * `null` = sem filtro, que e o caso da N2 e o de toda janela cadastrada antes
  * desta regra existir: a prova cobre as disciplinas do semestre sem olhar nota
  * nenhuma, e nenhuma chamada de nota sai para a Valence.
  *
- * Preenchido = so entra na prova a disciplina em que a nota final do aluno esta
- * em `[minima, maxima)` — `>=` na minima e `<` na maxima, assimetrico de
- * proposito: quem tirou o piso ainda tem chance, quem alcancou o teto ja passou.
+ * Preenchido = so entra na prova a disciplina em que o aluno passa nos DOIS
+ * criterios: `N1 >= minimaN1` **e** `nota final calculada < maximaFinal`.
+ *
+ * ⚠️ **Os dois numeros NAO delimitam um intervalo** — eles olham notas
+ * DIFERENTES. Ate 08/09/2026 delimitavam (a nota final em `[1,5 ; 6,75)`), e e
+ * por isso que os campos foram renomeados junto com a regra: `minima`/`maxima`
+ * continuariam compilando, e quem lesse `minima` como piso da final voltaria a
+ * liberar a substitutiva para quem tem final 2,0 com a N1 zerada. Nao existe
+ * mais piso na nota final, nem teto na N1.
  *
  * ⚠️ **E um objeto, e nao dois campos soltos**, pela mesma razao que
- * `periodoLetivoVigente()` devolve o par: quem desestrutura tem de dizer se o
+ * `periodoLetivoVigente()` devolvia o par: quem desestrutura tem de dizer se o
  * filtro importa para ele. Dois numeros nulaveis lado a lado seriam esquecidos
  * em silencio, e o sintoma seria a substitutiva liberada para o curso inteiro.
  */
 export interface FiltroDeNota {
-  minima: number;
-  maxima: number;
+  /** Piso da **N1**, INCLUSIVE: quem tirou exatamente isso ainda tem chance. */
+  minimaN1: number;
+  /** Teto da **nota final calculada**, EXCLUSIVE: quem o alcanca ja passou. */
+  maximaFinal: number;
 }
 
 export interface SituacaoPeriodo {
@@ -71,7 +79,7 @@ export interface SituacaoPeriodo {
    */
   rodada?: string;
   /**
-   * A faixa de nota desta janela, ou `null` quando ela nao filtra por nota.
+   * Os criterios de nota desta janela, ou `null` quando ela nao filtra.
    *
    * Vai para a TELA do aluno: sem ela, quem tem tres disciplinas e ve uma so na
    * substitutiva nao tem como saber que a lista foi filtrada, e a hipotese
@@ -561,8 +569,8 @@ export class PeriodoService {
       periodoLetivoId: string;
     }[];
     rodada?: string;
-    notaMinima?: number | null;
-    notaMaxima?: number | null;
+    notaMinimaN1?: number | null;
+    notaMaximaFinal?: number | null;
     descricao?: string;
     aberto?: boolean;
     dataAbertura?: string;
@@ -576,7 +584,10 @@ export class PeriodoService {
     validarJanela(abertura, fechamento);
 
     const rodada = dados.rodada?.trim() || RODADA_PADRAO;
-    const filtro = exigirFiltroDeNotaValido(dados.notaMinima, dados.notaMaxima);
+    const filtro = exigirFiltroDeNotaValido(
+      dados.notaMinimaN1,
+      dados.notaMaximaFinal,
+    );
 
     const principal = dados.periodoLetivoId.trim();
 
@@ -619,8 +630,8 @@ export class PeriodoService {
       data: {
         periodoLetivoId: principal,
         rodada,
-        notaMinima: filtro?.minima ?? null,
-        notaMaxima: filtro?.maxima ?? null,
+        notaMinimaN1: filtro?.minimaN1 ?? null,
+        notaMaximaFinal: filtro?.maximaFinal ?? null,
         descricao: dados.descricao?.trim() || null,
         aberto: dados.aberto ?? false,
         dataAbertura: abertura,
@@ -730,8 +741,8 @@ export class PeriodoService {
         modalidadeCodigo: string;
         periodoLetivoId: string;
       }[];
-      notaMinima?: number | null;
-      notaMaxima?: number | null;
+      notaMinimaN1?: number | null;
+      notaMaximaFinal?: number | null;
       descricao?: string | null;
       aberto?: boolean;
       dataAbertura?: string | null;
@@ -756,20 +767,20 @@ export class PeriodoService {
       : undefined;
 
     // O par de nota e revalidado INTEIRO, mesmo quando so um dos dois campos
-    // vem: mandar `notaMaxima` sozinha para uma janela sem filtro deixaria meio
-    // filtro no banco, e meio filtro nao e regra nenhuma — seria lido como
-    // "sem filtro" e a substitutiva abriria para todos.
+    // vem: mandar `notaMaximaFinal` sozinha para uma janela sem filtro deixaria
+    // meio criterio no banco, e meio criterio nao e regra nenhuma — seria lido
+    // como "sem filtro" e a substitutiva abriria para todos.
     const mexeuNaNota =
-      dados.notaMinima !== undefined || dados.notaMaxima !== undefined;
+      dados.notaMinimaN1 !== undefined || dados.notaMaximaFinal !== undefined;
 
     const filtro = mexeuNaNota
       ? exigirFiltroDeNotaValido(
-          dados.notaMinima === undefined
-            ? numeroOuNulo(periodo.notaMinima)
-            : dados.notaMinima,
-          dados.notaMaxima === undefined
-            ? numeroOuNulo(periodo.notaMaxima)
-            : dados.notaMaxima,
+          dados.notaMinimaN1 === undefined
+            ? numeroOuNulo(periodo.notaMinimaN1)
+            : dados.notaMinimaN1,
+          dados.notaMaximaFinal === undefined
+            ? numeroOuNulo(periodo.notaMaximaFinal)
+            : dados.notaMaximaFinal,
         )
       : undefined;
 
@@ -821,9 +832,11 @@ export class PeriodoService {
         data: {
           rodada,
           // `undefined` = nao mexeu; `null` = desligou o filtro. A distincao
-          // e o que permite editar so a descricao sem apagar a faixa de nota.
-          notaMinima: mexeuNaNota ? (filtro?.minima ?? null) : undefined,
-          notaMaxima: mexeuNaNota ? (filtro?.maxima ?? null) : undefined,
+          // e o que permite editar so a descricao sem apagar os criterios.
+          notaMinimaN1: mexeuNaNota ? (filtro?.minimaN1 ?? null) : undefined,
+          notaMaximaFinal: mexeuNaNota
+            ? (filtro?.maximaFinal ?? null)
+            : undefined,
           descricao:
             dados.descricao === undefined
               ? undefined
@@ -844,7 +857,7 @@ export class PeriodoService {
 
   /**
    * ==========================================================================
-   * MEXER NA FAIXA DE NOTA COM A JANELA JA EM USO — avisa e NAO bloqueia
+   * MEXER NOS CRITERIOS DE NOTA COM A JANELA JA EM USO — avisa e NAO bloqueia
    * ==========================================================================
    * Ao contrario da `rodada` (`exigirRodadaAindaTrocavel`), que so muda com a
    * janela vazia. Sao coisas diferentes:
@@ -852,10 +865,11 @@ export class PeriodoService {
    * - `rodada` e FOTOGRAFIA: cada reserva grava a sua, e trocar a da janela
    *   desalinha o par que TODA consulta usa — o portal passa a dizer ao aluno
    *   que ele nao tem prova, e a exportacao o lista como nao agendado.
-   * - a faixa de nota nao e gravada em lugar nenhum. Mexer nela nao desfaz nem
-   *   renomeia reserva alguma: so muda quem consegue agendar daqui para a
-   *   frente. E bloquear seria pior que o problema — a correcao mais provavel e
-   *   justamente ter cadastrado a faixa errada e perceber com a janela ja aberta.
+   * - os criterios de nota nao sao gravados em lugar nenhum. Mexer neles nao
+   *   desfaz nem renomeia reserva alguma: so muda quem consegue agendar daqui
+   *   para a frente. E bloquear seria pior que o problema — a correcao mais
+   *   provavel e justamente ter cadastrado o numero errado e perceber com a
+   *   janela ja aberta.
    *
    * O que ela FAZ e deixar rastro, porque a consequencia e invisivel na tela:
    * quem estava elegivel ontem pode nao estar hoje, e quem ja agendou continua
@@ -878,7 +892,7 @@ export class PeriodoService {
     });
 
     const faixa = filtro
-      ? `[${filtro.minima}; ${filtro.maxima})`
+      ? `N1 >= ${filtro.minimaN1} e final < ${filtro.maximaFinal}`
       : 'sem filtro de nota';
 
     this.auditoria.registrar('PERIODO_FILTRO_DE_NOTA_ALTERADO', {
@@ -891,7 +905,7 @@ export class PeriodoService {
     if (reservas === 0) return;
 
     this.logger.warn(
-      `A faixa de nota do periodo ${periodo.id} mudou para ${faixa} com ` +
+      `O criterio de nota do periodo ${periodo.id} mudou para ${faixa} com ` +
         `${reservas} reserva(s) ja marcada(s). As provas existentes NAO sao ` +
         'revistas: quem agendou pela faixa anterior continua com o horario. ' +
         'Confira a lista se a mudanca foi correcao de cadastro.',
@@ -1204,15 +1218,15 @@ const NOTA_MAXIMA_POSSIVEL = 10;
  * que essa metade chegue la, e este `null` e a segunda trava.
  */
 function lerFiltroDeNota(periodo: {
-  notaMinima: Prisma.Decimal | null;
-  notaMaxima: Prisma.Decimal | null;
+  notaMinimaN1: Prisma.Decimal | null;
+  notaMaximaFinal: Prisma.Decimal | null;
 }): FiltroDeNota | null {
-  const minima = numeroOuNulo(periodo.notaMinima);
-  const maxima = numeroOuNulo(periodo.notaMaxima);
+  const minimaN1 = numeroOuNulo(periodo.notaMinimaN1);
+  const maximaFinal = numeroOuNulo(periodo.notaMaximaFinal);
 
-  if (minima === null || maxima === null) return null;
+  if (minimaN1 === null || maximaFinal === null) return null;
 
-  return { minima, maxima };
+  return { minimaN1, maximaFinal };
 }
 
 /**
@@ -1234,37 +1248,43 @@ function numeroOuNulo(valor: Prisma.Decimal | null): number | null {
 /**
  * Valida o par informado no cadastro. `null` quando a janela nao filtra.
  *
- * As tres recusas, e por que cada uma existe:
+ * As duas recusas, e por que cada uma existe:
  *
- * - **um sem o outro**: metade de um intervalo nao delimita nada, e o banco
- *   leria a linha como "sem filtro" — a substitutiva aberta para o curso todo,
- *   sem erro nenhum aparecendo.
- * - **minima >= maxima**: intervalo vazio. NINGUEM seria elegivel, e o sintoma
- *   ("nenhuma disciplina sua...") apontaria para o CSV de turmas, nao para o
- *   cadastro que o causou.
+ * - **um sem o outro**: meio criterio nao e regra nenhuma, e o banco leria a
+ *   linha como "sem filtro" — a substitutiva aberta para o curso todo, sem erro
+ *   nenhum aparecendo. Vale nos dois sentidos: so o piso da N1 liberaria quem ja
+ *   passou de ano, e so o teto da final liberaria quem ja reprovou.
  * - **fora de 0..10**: digitacao trocada. "67,5" no lugar de "6,75" libera todo
  *   mundo; "0,675", ninguem.
+ *
+ * ⚠️ **Nao ha mais a recusa de `minima >= maxima`**, e a ausencia dela e
+ * deliberada: os dois numeros passaram a comparar notas DIFERENTES, e ordem
+ * entre eles nao significa nada. `N1 >= 7` com `final < 3` e uma janela
+ * estranha, mas nao e um intervalo vazio — e recusa-la seria fazer a validacao
+ * afirmar uma relacao que a regra nao tem. A trava que resta contra digitacao e
+ * a faixa 0..10.
  */
 function exigirFiltroDeNotaValido(
-  minima: number | null | undefined,
-  maxima: number | null | undefined,
+  minimaN1: number | null | undefined,
+  maximaFinal: number | null | undefined,
 ): FiltroDeNota | null {
-  const temMinima = minima !== null && minima !== undefined;
-  const temMaxima = maxima !== null && maxima !== undefined;
+  const temN1 = minimaN1 !== null && minimaN1 !== undefined;
+  const temFinal = maximaFinal !== null && maximaFinal !== undefined;
 
-  if (!temMinima && !temMaxima) return null;
+  if (!temN1 && !temFinal) return null;
 
-  if (!temMinima || !temMaxima) {
+  if (!temN1 || !temFinal) {
     throw new BadRequestException(
-      'notaMinima e notaMaxima andam juntas: informe as duas para filtrar por ' +
-        'nota (a substitutiva), ou nenhuma para a janela cobrir todas as ' +
-        'disciplinas do semestre. Metade do intervalo seria lida como "sem filtro".',
+      'notaMinimaN1 e notaMaximaFinal andam juntas: informe as duas para ' +
+        'filtrar por nota (a substitutiva), ou nenhuma para a janela cobrir ' +
+        'todas as disciplinas do semestre. Meio criterio seria lido como ' +
+        '"sem filtro", e a substitutiva abriria para o curso inteiro.',
     );
   }
 
   for (const [campo, valor] of [
-    ['notaMinima', minima],
-    ['notaMaxima', maxima],
+    ['notaMinimaN1', minimaN1],
+    ['notaMaximaFinal', maximaFinal],
   ] as const) {
     if (!Number.isFinite(valor) || valor < 0 || valor > NOTA_MAXIMA_POSSIVEL) {
       throw new BadRequestException(
@@ -1274,13 +1294,5 @@ function exigirFiltroDeNotaValido(
     }
   }
 
-  if (minima >= maxima) {
-    throw new BadRequestException(
-      `notaMinima (${minima}) precisa ser MENOR que notaMaxima (${maxima}). ` +
-        'Do jeito informado nenhum aluno ficaria elegivel, e a tela diria a ' +
-        'todos que eles nao tem disciplina para agendar.',
-    );
-  }
-
-  return { minima: minima, maxima: maxima };
+  return { minimaN1, maximaFinal };
 }

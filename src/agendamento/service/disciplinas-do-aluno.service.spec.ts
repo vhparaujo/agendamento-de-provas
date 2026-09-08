@@ -64,10 +64,12 @@ describe('DisciplinasDoAlunoService', () => {
     periodoLetivoId?: string | undefined;
     /** A Valence recusa em vez de responder — token invalido, rede, 502. */
     erroDaValence?: Error;
-    /** A faixa de nota da janela. Ausente = a N2, que nao filtra por nota. */
-    filtroDeNota?: { minima: number; maxima: number } | null;
-    /** Nota por orgUnitId. Ausente = a turma nao lancou nota para o aluno. */
+    /** Os criterios de nota da janela. Ausentes = a N2, que nao filtra. */
+    filtroDeNota?: { minimaN1: number; maximaFinal: number } | null;
+    /** Nota FINAL por orgUnitId. Ausente = a turma nao lancou para o aluno. */
     notas?: Record<string, number>;
+    /** Nota da N1 por orgUnitId. Ausente = o aluno nao tem nota na categoria. */
+    notasN1?: Record<string, number>;
     /** A leitura de notas falha — Valence fora, escopo faltando, 502. */
     erroDasNotas?: Error;
   }) => {
@@ -109,27 +111,34 @@ describe('DisciplinasDoAlunoService', () => {
 
     // O cliente de notas e mockado no nivel do `D2lGradesService`: assim o
     // proprio `ElegibilidadeDeNotaService` (a regra, e o cache) entra no teste.
-    const notaFinal = opcoes.erroDasNotas
-      ? jest.fn().mockRejectedValue(opcoes.erroDasNotas)
-      : jest.fn().mockImplementation((orgUnitId: string) => {
-          const pontos = opcoes.notas?.[orgUnitId];
+    const leitor = (notas: Record<string, number> | undefined) =>
+      opcoes.erroDasNotas
+        ? jest.fn().mockRejectedValue(opcoes.erroDasNotas)
+        : jest.fn().mockImplementation((orgUnitId: string) => {
+            const pontos = notas?.[orgUnitId];
 
-          return Promise.resolve(
-            pontos === undefined
-              ? { situacao: 'SEM_NOTA' }
-              : {
-                  situacao: 'ACHOU',
-                  pontos,
-                  denominador: 10,
-                  origem: 'CALCULADA',
-                  exibida: null,
-                },
-          );
-        });
+            return Promise.resolve(
+              pontos === undefined
+                ? { situacao: 'SEM_NOTA' }
+                : {
+                    situacao: 'ACHOU',
+                    pontos,
+                    denominador: 10,
+                    origem: 'CALCULADA',
+                    exibida: null,
+                  },
+            );
+          });
+
+    const notaFinal = leitor(opcoes.notas);
 
     const elegibilidade = new ElegibilidadeDeNotaService({
       notaFinal,
+      notaDeGradeObject: leitor(opcoes.notasN1),
+      categoriaPorNome: jest.fn().mockResolvedValue('4231'),
+      nomeDaCategoriaN1: () => 'N1',
       notasFinaisDaTurma: jest.fn(),
+      notasDeGradeObjectDaTurma: jest.fn(),
       habilitado: () => true,
     } as unknown as D2lGradesService);
 
@@ -325,22 +334,23 @@ describe('DisciplinasDoAlunoService', () => {
   });
   /**
    * ==========================================================================
-   * A JANELA DA SUBSTITUTIVA — a faixa de nota
+   * A JANELA DA SUBSTITUTIVA — os criterios de nota
    * ==========================================================================
    * O que muda aqui e so o `filtroDeNota` do periodo vigente. Nada de `rodada`:
    * ela e texto livre, e amarrar a regra a string "SUB" faria a substitutiva
    * abrir para todo mundo no dia em que alguem cadastrasse "Substitutiva".
    */
-  describe('com faixa de nota na janela', () => {
-    const FAIXA = { minima: 1.5, maxima: 6.75 };
+  describe('com criterios de nota na janela', () => {
+    const REGRA = { minimaN1: 1.5, maximaFinal: 7 };
 
-    it('devolve so as disciplinas dentro da faixa', async () => {
+    it('devolve so as disciplinas que passam nos dois criterios', async () => {
       const { service } = montar({
         habilitado: true,
         ofertas: [HISTORIA, NUTRICAO],
         cruzamento: [cruzada(HISTORIA), cruzada(NUTRICAO)],
-        filtroDeNota: FAIXA,
+        filtroDeNota: REGRA,
         notas: { '6606': 4.25, '6610': 8.5 },
+        notasN1: { '6606': 3.0, '6610': 9.0 },
       });
 
       const disciplinas = await service.agendaveis(
@@ -348,16 +358,19 @@ describe('DisciplinasDoAlunoService', () => {
         'EAD',
       );
 
-      expect(disciplinas).toEqual([{ ...cruzada(HISTORIA), notaFinal: 4.25 }]);
+      expect(disciplinas).toEqual([
+        { ...cruzada(HISTORIA), notaFinal: 4.25, notaN1: 3 },
+      ]);
     });
 
-    it('nenhuma na faixa: motivo proprio, que NAO manda conferir o CSV', async () => {
+    it('nenhuma elegivel: motivo proprio, que NAO manda conferir o CSV', async () => {
       const { service } = montar({
         habilitado: true,
         ofertas: [HISTORIA],
         cruzamento: [cruzada(HISTORIA)],
-        filtroDeNota: FAIXA,
+        filtroDeNota: REGRA,
         notas: { '6606': 8.5 },
+        notasN1: { '6606': 9.0 },
       });
 
       const { agendaveis, motivo, causa } = await service.cruzar(
@@ -381,7 +394,7 @@ describe('DisciplinasDoAlunoService', () => {
       const { service } = montar({
         habilitado: true,
         cruzamento: [cruzada(HISTORIA)],
-        filtroDeNota: FAIXA,
+        filtroDeNota: REGRA,
         erroDaValence: new Error('502 no tenant'),
       });
 
@@ -399,7 +412,7 @@ describe('DisciplinasDoAlunoService', () => {
         habilitado: true,
         ofertas: [HISTORIA],
         cruzamento: [cruzada(HISTORIA)],
-        filtroDeNota: FAIXA,
+        filtroDeNota: REGRA,
         erroDasNotas: new Error('403 sem escopo'),
       });
 
@@ -422,7 +435,7 @@ describe('DisciplinasDoAlunoService', () => {
         habilitado: true,
         ofertas: [HISTORIA],
         cruzamento: [cruzada(HISTORIA)],
-        filtroDeNota: FAIXA,
+        filtroDeNota: REGRA,
         erroDasNotas: new Error('403 sem escopo'),
       });
 
@@ -432,11 +445,11 @@ describe('DisciplinasDoAlunoService', () => {
     });
 
     /** Sem integracao nao ha nota, e sem nota a substitutiva nao pode abrir. */
-    it('D2L desligado com faixa de nota recusa, em vez de usar o launch', async () => {
+    it('D2L desligado com criterio de nota recusa, em vez de usar o launch', async () => {
       const { service } = montar({
         habilitado: false,
         cruzamento: [cruzada(HISTORIA)],
-        filtroDeNota: FAIXA,
+        filtroDeNota: REGRA,
       });
 
       const { agendaveis, motivo } = await service.cruzar(
@@ -453,7 +466,7 @@ describe('DisciplinasDoAlunoService', () => {
         habilitado: true,
         ofertas: [HISTORIA],
         cruzamento: [cruzada(HISTORIA)],
-        filtroDeNota: FAIXA,
+        filtroDeNota: REGRA,
         notas: {},
       });
 
@@ -470,7 +483,7 @@ describe('DisciplinasDoAlunoService', () => {
      * O caminho da N2 nao pode ter passado a custar uma consulta de nota por
      * disciplina — e o caminho de quase todo agendamento do sistema.
      */
-    it('sem faixa, NENHUMA nota e consultada', async () => {
+    it('sem criterios, NENHUMA nota e consultada', async () => {
       const { service, notaFinal } = montar({
         habilitado: true,
         ofertas: [HISTORIA, NUTRICAO],
