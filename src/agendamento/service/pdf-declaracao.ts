@@ -97,12 +97,21 @@ const CORPO = {
    */
   base: 264,
   /**
-   * Justificado: com a largura da coluna o paragrafo vira um bloco de texto de
-   * verdade, e bloco de texto justificado e o que se espera de uma declaracao.
-   * O `pdfkit` deixa a ultima linha alinhada a esquerda sozinho, que e o
-   * comportamento certo.
+   * ALINHADO A ESQUERDA, E NAO JUSTIFICADO — foi o preco do negrito no meio da
+   * frase, pago de propria vontade.
+   *
+   * O `pdfkit` justifica CADA trecho continuado por conta propria: ele reparte a
+   * sobra da linha entre os espacos daquele trecho, sem enxergar os vizinhos.
+   * Numa linha que atravessa uma emenda (e o nome do aluno garante que a
+   * primeira sempre atravessa), o pedaco em negrito sai com espaco normal e o
+   * seguinte recebe a sobra inteira — "está     matriculado(a)", um rio de
+   * branco no meio da unica frase do documento.
+   *
+   * Entre uma margem direita irregular e um paragrafo esburacado, a irregular e
+   * a que ninguem estranha: e como sai qualquer carta. A ultima linha ja saia
+   * assim de todo jeito.
    */
-  alinhamento: 'justify' as const,
+  alinhamento: 'left' as const,
   /**
    * Entrelinha de 18pt, base a base. A Helvetica 11 do `pdfkit` ja ocupa 12,72
    * (ascender + descender + gap da propria fonte), entao o que falta e o
@@ -123,6 +132,7 @@ const CORPO = {
  * se o cliente pedir.
  */
 const REGULAR = 'Helvetica';
+const NEGRITO = 'Helvetica-Bold';
 const PRETO = '#000000';
 
 type Doc = typeof PDFDocument extends new (...args: never[]) => infer T
@@ -167,18 +177,67 @@ function dataPorExtenso(data: Date): string {
   return `${data.getUTCDate()} de ${MESES[data.getUTCMonth()]} de ${data.getUTCFullYear()}`;
 }
 
+/** Um trecho da frase e o peso com que ele e impresso. */
+export interface PedacoDaDeclaracao {
+  texto: string;
+  negrito: boolean;
+}
+
 /**
- * A frase inteira, exportada para que o teste a leia sem abrir o PDF.
+ * A FRASE EM PEDACOS, porque tres deles saem em NEGRITO.
+ *
+ * Quem le a declaracao no balcao do RH procura tres coisas — de quem e, sob que
+ * RA, e para quando. Sao justamente os tres campos que vem de fora (o CSV e a
+ * faixa); todo o resto da frase e formula. O negrito os separa da formula sem
+ * mudar uma palavra do que esta escrito.
+ *
+ * ⚠️ O HORARIO ENTRA JUNTO COM A DATA, no mesmo pedaco. Sao a mesma informacao
+ * para quem justifica uma ausencia ("12 de junho de 2026 às 15:01"), e destacar
+ * so o dia deixaria a hora — a metade que decide se a pessoa perde a manha ou a
+ * tarde — em peso menor, no meio da mesma oracao.
+ *
+ * ⚠️ O ESPACO DE CADA EMENDA FICA NO FIM DO PEDACO DE CIMA, nunca no comeco do
+ * de baixo (`\`${dados.nome} \`` e nao `' está matriculado(a)'`). O `pdfkit`
+ * apara o branco do inicio de um trecho continuado, e a frase sai com as
+ * palavras coladas — "SANTOSestá". Como o espaco tambem entra em
+ * `textoDaDeclaracao`, mover a emenda de lado nao muda a frase, so quem a
+ * imprime.
  *
  * "realizou o agendamento" no passado e proposital: a declaracao so existe
  * depois de o prazo encerrar, quando a escolha ja aconteceu e nao muda mais.
  */
+export function pedacosDaDeclaracao(
+  dados: DeclaracaoDeAgendamento,
+): PedacoDaDeclaracao[] {
+  return [
+    { texto: 'Declaramos, para os devidos fins, que ', negrito: false },
+    { texto: `${dados.nome} `, negrito: true },
+    { texto: 'está matriculado(a) sob o RA ', negrito: false },
+    { texto: `${dados.matricula} `, negrito: true },
+    {
+      texto:
+        'e realizou o agendamento para realização da prova presencial no dia ',
+      negrito: false,
+    },
+    {
+      texto: `${dataPorExtenso(dados.data)} às ${dados.horario}`,
+      negrito: true,
+    },
+  ];
+}
+
+/**
+ * A frase inteira, exportada para que o teste a leia sem abrir o PDF.
+ *
+ * E A SOMA DOS PEDACOS, e nao uma segunda copia do texto: com duas listas de
+ * palavras, mexer no negrito de um trecho passaria a poder mudar a frase que o
+ * teste protege — e a divergencia so apareceria no papel, ja assinado. Assim ha
+ * um texto so, e o negrito nao alcanca o que ele diz.
+ */
 export function textoDaDeclaracao(dados: DeclaracaoDeAgendamento): string {
-  return (
-    `Declaramos, para os devidos fins, que ${dados.nome} está matriculado(a) sob o RA ` +
-    `${dados.matricula} e realizou o agendamento para realização da prova presencial ` +
-    `no dia ${dataPorExtenso(dados.data)} às ${dados.horario}`
-  );
+  return pedacosDaDeclaracao(dados)
+    .map((pedaco) => pedaco.texto)
+    .join('');
 }
 
 // ------------------------------------------------------------------- desenho
@@ -210,12 +269,31 @@ export function pdfDeDeclaracao(
   desenharModelo(doc);
 
   const topo = topoDaCaixa(CORPO.base, CORPO.tamanho);
+  const pedacosDaFrase = pedacosDaDeclaracao(dados);
 
-  doc
-    .font(REGULAR)
-    .fontSize(CORPO.tamanho)
-    .fillColor(PRETO)
-    .text(textoDaDeclaracao(dados), MARGEM, topo, {
+  doc.fontSize(CORPO.tamanho).fillColor(PRETO);
+
+  /**
+   * UM `text()` POR PEDACO, amarrados por `continued`.
+   *
+   * `continued: true` diz ao `pdfkit` que o proximo trecho segue na MESMA linha,
+   * de onde este parou — e nao num paragrafo novo. E o que permite trocar a
+   * fonte no meio da frase sem quebrar a linha, e o que faz a quebra e a
+   * justificacao continuarem sendo do paragrafo inteiro, e nao de cada pedaco.
+   *
+   * As opcoes vao repetidas em todas as chamadas de proposito: o `pdfkit` guarda
+   * as da primeira, mas depender disso deixaria a largura e o teto do paragrafo
+   * escritos num lugar so por acidente de implementacao. So o ultimo pedaco fecha
+   * o texto (`continued: false`) — sem isso o paragrafo fica aberto e a proxima
+   * coisa desenhada na pagina entraria coladinha nele.
+   */
+  pedacosDaFrase.forEach((pedaco, i) => {
+    const ultimo = i === pedacosDaFrase.length - 1;
+
+    doc.font(pedaco.negrito ? NEGRITO : REGULAR);
+
+    const opcoes = {
+      continued: !ultimo,
       width: LARGURA_UTIL,
       /**
        * O TETO EXISTE PARA QUE A FOLHA CONTINUE SENDO UMA FOLHA.
@@ -232,7 +310,12 @@ export function pdfDeDeclaracao(
       ellipsis: true,
       align: CORPO.alinhamento,
       lineGap: CORPO.espacoEntreLinhas,
-    });
+    };
+
+    // O primeiro posiciona a caixa; os outros continuam de onde ele parou.
+    if (i === 0) doc.text(pedaco.texto, MARGEM, topo, opcoes);
+    else doc.text(pedaco.texto, opcoes);
+  });
 
   doc.end();
 

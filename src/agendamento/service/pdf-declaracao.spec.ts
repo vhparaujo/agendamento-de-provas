@@ -1,4 +1,8 @@
-import { pdfDeDeclaracao, textoDaDeclaracao } from './pdf-declaracao';
+import {
+  pdfDeDeclaracao,
+  pedacosDaDeclaracao,
+  textoDaDeclaracao,
+} from './pdf-declaracao';
 
 /**
  * O modulo do PDF e puro, entao o teste e da FRASE e do arquivo — nao do banco.
@@ -59,6 +63,48 @@ describe('textoDaDeclaracao', () => {
       'novembro',
       'dezembro',
     ]);
+  });
+});
+
+describe('pedacosDaDeclaracao', () => {
+  it('destaca o nome, o RA e a data — e nada alem deles', () => {
+    const negrito = pedacosDaDeclaracao(BASE)
+      .filter((pedaco) => pedaco.negrito)
+      .map((pedaco) => pedaco.texto.trim());
+
+    expect(negrito).toEqual([
+      'LAYDSON ABEL SILVA SANTOS',
+      'UC26425318',
+      '12 de junho de 2026 às 15:01',
+    ]);
+  });
+
+  /**
+   * O `pdfkit` APARA O BRANCO DO INICIO de um trecho continuado. Um pedaco que
+   * comece com espaco perde a separacao e a frase sai com as palavras coladas —
+   * "SANTOSestá matriculado(a)", num documento que vai impresso e assinado. Por
+   * isso o espaco de cada emenda mora no FIM do pedaco de cima, e este teste
+   * falha se alguem o mover de volta ao editar a frase.
+   */
+  it('nunca comeca um pedaco com espaco, que o pdfkit comeria', () => {
+    const comecamComBranco = pedacosDaDeclaracao(BASE)
+      .map((pedaco) => pedaco.texto)
+      .filter((texto) => /^\s/.test(texto));
+
+    expect(comecamComBranco).toEqual([]);
+  });
+
+  /**
+   * A frase e a SOMA dos pedacos, e nao uma segunda copia do texto: com duas
+   * listas de palavras, mexer no negrito passaria a poder mudar o que a
+   * declaracao diz — e a divergencia so apareceria no papel.
+   */
+  it('soma exatamente a frase que `textoDaDeclaracao` devolve', () => {
+    const somado = pedacosDaDeclaracao(BASE)
+      .map((pedaco) => pedaco.texto)
+      .join('');
+
+    expect(somado).toBe(textoDaDeclaracao(BASE));
   });
 });
 

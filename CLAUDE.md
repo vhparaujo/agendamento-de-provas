@@ -1718,6 +1718,26 @@ botão que só produz 403 num banco recém-migrado.
   do fornecedor anterior (Avalia/Grupo A). **Nas duas trocas o texto não mudou
   nenhuma palavra**: `textoDaDeclaracao` é a mesma função desde o começo, e o
   teste que a lê continua valendo letra por letra.
+- **O nome, o RA e a data saem em NEGRITO** (10/09/2026). São os três campos que
+  vêm de fora (o CSV e a faixa) e as três coisas que se procuram no balcão do
+  RH — o resto da frase é fórmula. O **horário entra no mesmo trecho da data**
+  ("12 de junho de 2026 às 15:01"): destacar só o dia deixaria em peso menor a
+  metade que decide se a pessoa perde a manhã ou a tarde.
+- **A frase virou uma lista de pedaços (`pedacosDaDeclaracao`), e
+  `textoDaDeclaracao` é a SOMA dela** — não uma segunda cópia do texto. Com duas
+  listas de palavras, mexer no negrito de um trecho passaria a poder mudar o que
+  a declaração diz, e a divergência só apareceria no papel, já assinado.
+- ⚠️ **O ESPAÇO DE CADA EMENDA FICA NO FIM DO PEDAÇO DE CIMA**, nunca no começo
+  do de baixo. O `pdfkit` apara o branco do início de um trecho `continued`, e a
+  frase sai com as palavras coladas — "SANTOSestá matriculado(a)". Há teste
+  recusando pedaço que comece com espaço.
+- ⚠️ **O parágrafo deixou de ser justificado por causa do negrito.** O `pdfkit`
+  justifica cada trecho continuado por conta própria: numa linha que atravessa
+  uma emenda (e o nome do aluno garante que a primeira sempre atravessa), o
+  pedaço em negrito sai com espaço normal e o seguinte recebe a sobra inteira —
+  "está     matriculado(a)", um rio de branco no meio da única frase do
+  documento. Entre margem direita irregular e parágrafo esburacado, a irregular
+  é a que ninguém estranha. **Não devolva `justify` sem resolver isso.**
 - ⚠️ **O TÍTULO E A ASSINATURA VÊM NA ARTE, e por isso o código não os desenha
   mais.** É a diferença que quem mexer neste arquivo precisa saber: o timbrado
   antigo era só o papel, e "DECLARAÇÃO" e "UCB | UBEC - Católica" eram texto do

@@ -1127,8 +1127,9 @@ endereço da unidade no pé) e traz impressos o **título** e o **bloco de
 assinatura** ("Universidade Católica de Brasília" + "Documento emitido
 automaticamente pelo Sistema de Agendamento"). O sistema escreve **uma única
 coisa** na página: o parágrafo da declaração, na área branca entre os dois,
-alinhado à mesma margem do título. O texto declarado é o de sempre — a troca foi
-só de layout. Ficam de fora o QR code e as duas linhas de validação do documento
+alinhado à mesma margem do título, com **o nome do aluno, o RA e a data/hora da
+prova em negrito** — os três campos que quem recebe o papel procura. O texto
+declarado é o de sempre — a troca foi só de layout. Ficam de fora o QR code e as duas linhas de validação do documento
 antigo: apontavam para o serviço do fornecedor anterior, que não existe deste
 lado. A arte fica em `src/agendamento/assets/modelo-declaracao.png`.
 
