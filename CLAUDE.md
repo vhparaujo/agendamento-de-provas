@@ -1712,28 +1712,45 @@ botão que só produz 403 num banco recém-migrado.
 - **Os meses são uma lista no código**, não `toLocaleDateString('pt-BR')`: o texto
   vai impresso, e não pode mudar de grafia porque a imagem do Node subiu de versão
   ou veio sem os dados completos do ICU.
-- **O layout é o TIMBRADO OFICIAL DA CATÓLICA EAD** para documentos online
-  (21/08/2026). Até então era o da "Declaração de Prova" do sistema anterior
-  (Avalia/Grupo A), com as coordenadas tiradas do PDF daquele fornecedor — um
-  papel que a secretaria reconhecia mas que não seguia a identidade visual da
-  instituição. **O texto não mudou nenhuma palavra**: `textoDaDeclaracao` é a
-  mesma função, e o teste que a lê continua valendo letra por letra.
-- **O timbrado é UMA IMAGEM, e por isso a troca foi barata.** O PDF de origem
-  (`EAD - TIMBRADO PARA DOC. ONLINE.pdf`) não tem texto nem vetor: é um único
-  PNG A4 de 2000×2830 (~240 dpi, 63 KB), extraído para
-  `src/agendamento/assets/timbrado-ead.png` e desenhado de canto a canto como
-  fundo, antes de qualquer texto. Não foi preciso `pdf-lib` nem redesenhar arte
-  — o `pdfkit` embute PNG truecolor sem recodificar.
-- **As medidas do texto saem da arte, não de um gosto.** A margem lateral (46pt)
-  é a do endereço no pé do timbrado; a área branca útil vai de ~100pt (fim da
-  curva do topo) a ~630pt (onde a curva do rodapé invade pela direita), e é ela
-  que limita até onde a assinatura pode descer. O título repete o azul da marca
-  (`#283489`, a cor dominante da arte).
-- **A assinatura acompanha o fim do parágrafo**, 34pt abaixo dele — não um `y`
-  fixo. O documento antigo a ancorava numa altura fixa, e o vão acima dela mudava
-  conforme o nome ocupasse duas ou três linhas (e, sem um piso, ela era impressa
-  POR CIMA do texto que assina). Medindo a partir do texto, os dois casos saem
-  iguais e o piso deixa de existir.
+- **O layout é o MODELO OFICIAL DA DECLARAÇÃO** (10/09/2026), desenhado pela
+  instituição e entregue pronto. Ele substituiu o timbrado genérico da Católica
+  EAD adotado em 21/08/2026, que por sua vez substituiu a "Declaração de Prova"
+  do fornecedor anterior (Avalia/Grupo A). **Nas duas trocas o texto não mudou
+  nenhuma palavra**: `textoDaDeclaracao` é a mesma função desde o começo, e o
+  teste que a lê continua valendo letra por letra.
+- ⚠️ **O TÍTULO E A ASSINATURA VÊM NA ARTE, e por isso o código não os desenha
+  mais.** É a diferença que quem mexer neste arquivo precisa saber: o timbrado
+  antigo era só o papel, e "DECLARAÇÃO" e "UCB | UBEC - Católica" eram texto do
+  `pdfkit`. Este modelo já traz os dois impressos, na fonte da marca — o título
+  em azul, alinhado à esquerda com o risco embaixo, e o bloco "Universidade
+  Católica de Brasília" + "Documento emitido automaticamente pelo Sistema de
+  Agendamento" centralizado. Redesenhá-los duplicaria o texto na folha, e
+  reescrevê-los em Helvetica ao lado de um título na fonte da marca faria a
+  página parecer montada em dois lugares. **O `pdfkit` imprime UMA coisa aqui: o
+  parágrafo.**
+- **O modelo é UMA IMAGEM, e por isso a troca foi barata** — a mesma razão da
+  troca anterior. O PDF de origem (`Declaração - SAgen.pdf`) é vetorial, mas foi
+  rasterizado a 240 dpi (2001×2830) para caber no mesmo caminho de código:
+  `src/agendamento/assets/modelo-declaracao.png`, desenhado de canto a canto
+  como fundo, antes do texto. Não foi preciso `pdf-lib` nem redesenhar arte. O
+  PNG é **indexado em 256 cores** (145 KB, contra 350 KB em truecolor) porque a
+  arte é de cores chapadas e a diferença não aparece no papel — o `pdfkit`
+  embute paleta sem recodificar.
+- **As medidas do texto saem da arte, não de um gosto.** A margem lateral é
+  **68pt** — onde começam o título, o risco e o endereço no pé —, e não os 46pt
+  de antes, porque esta arte tem a banda azul ocupando os primeiros 43,7pt da
+  folha. A página é declarada em **595,276 × 841,89** (o `MediaBox` exato da
+  arte): arredondar para 595×842 deslocaria o texto em relação às coordenadas
+  medidas nela.
+- **A área branca útil vai de 220,4pt (fim do risco do título) a 527,1pt (topo
+  da assinatura impressa)**, e o parágrafo tem de caber inteira nela. Ele começa
+  na linha de base 264 — 44pt abaixo do risco, o mesmo respiro do layout
+  anterior — e a caixa de texto recebe `height` + `ellipsis` justamente por causa
+  do outro extremo: `AlunoImportado.nome` vem do CSV sem limite de tamanho, e sem
+  teto o `pdfkit` escreveria por cima da assinatura e **abriria uma segunda
+  página** — em branco, sem o modelo, com o fim da frase solto nela. Reticência
+  é defeito que alguém reporta; página 2 em branco parece o documento normal.
+  Há teste com um nome absurdo travando o `/Count 1`.
 - **O QR code e as duas linhas de validação ficaram de fora**, por decisão do
   cliente: apontavam para o `ValidacaoCertificados` do fornecedor antigo, que não
   existe deste lado. QR que leva a lugar nenhum é pior que nenhum QR, porque
@@ -1741,8 +1758,11 @@ botão que só produz 403 num banco recém-migrado.
 - **A arte vai versionada**, ao contrário do logo da lista de presença, porque é
   a identidade visual que o cliente pediu. A leitura continua tolerante à
   ausência: derrubar o download por causa de um `.png` faltando trocaria um papel
-  imperfeito por papel nenhum. O `nest build` a copia para o `dist` pelo mesmo
-  `**/*.png` de `nest-cli.json`.
+  imperfeito por papel nenhum. ⚠️ Só que agora a folha sem a arte sai **sem
+  título e sem assinatura**, não apenas sem o papel — é mais uma razão para o
+  `.png` estar sempre no lugar, não para o download falhar quando ele não
+  estiver. O `nest build` a copia para o `dist` pelo mesmo `**/*.png` de
+  `nest-cli.json`.
 - **A fonte continua Helvetica.** A arte usa outra família, mas ela vem embutida
   na imagem — é pixel, não texto, então não há o que casar. Aproximá-la exigiria
   versionar um `.ttf` e o direito de uso dele.

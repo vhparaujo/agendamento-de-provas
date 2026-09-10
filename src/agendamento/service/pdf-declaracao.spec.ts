@@ -71,19 +71,36 @@ describe('pdfDeDeclaracao', () => {
   });
 
   /**
-   * Nome longo ganha uma linha no paragrafo, e a assinatura desce junto — ela e
-   * medida a partir do fim do texto, nao de um `y` fixo. O defeito que isso
-   * evita (assinatura impressa POR CIMA do texto que assina) nao quebra o PDF,
-   * so aparece a olho; aqui o teste cobre a geracao, e o layout se confere no
-   * papel.
+   * Nome longo ganha uma linha no paragrafo, que cresce para baixo dentro da
+   * area branca do modelo. O defeito que isso evita (texto impresso POR CIMA da
+   * assinatura, que agora vem na arte) nao quebra o PDF, so aparece a olho;
+   * aqui o teste cobre a geracao, e o layout se confere no papel.
    */
-  it('nao quebra com nome longo, que empurra a assinatura para baixo', async () => {
+  it('nao quebra com nome longo, que empurra o paragrafo para baixo', async () => {
     const pdf = await pdfDeDeclaracao({
       ...BASE,
       nome: 'MATEUS DA SILVA ALARÇÃO CARNEIRO DE ALBUQUERQUE VINÍCIUS GONÇALVES',
     });
 
     expect(pdf.subarray(0, 5).toString('latin1')).toBe('%PDF-');
+  });
+
+  /**
+   * A DECLARACAO E UMA FOLHA, E TEM DE CONTINUAR SENDO UMA.
+   *
+   * `AlunoImportado.nome` vem do CSV e nao tem limite de tamanho. Sem o `height`
+   * na caixa de texto, o `pdfkit` escreveria por cima da assinatura impressa na
+   * arte e, passando do pe da pagina, abriria uma SEGUNDA PAGINA — em branco,
+   * sem o modelo, com o fim da frase solto nela. Este teste falha se alguem
+   * tirar o teto (ou o `ellipsis` que marca onde o texto parou).
+   */
+  it('cabe numa pagina so, mesmo com um nome absurdo', async () => {
+    const pdf = await pdfDeDeclaracao({
+      ...BASE,
+      nome: 'ANA '.repeat(600).trim(),
+    });
+
+    expect(pdf.toString('latin1')).toContain('/Count 1');
   });
 
   /**

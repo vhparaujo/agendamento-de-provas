@@ -1120,13 +1120,17 @@ semestre vigente — cancelada não emite. É **uma declaração por prova**, n�
 pessoa: quem tem dois cursos faz duas provas, em dias diferentes, e cada uma
 justifica uma ausência diferente.
 
-O layout segue o **timbrado oficial da Católica EAD** para documentos online: a
-arte cobre a folha inteira (curvas azuis, o selo Great Place to Work e a marca no
-alto, o endereço da unidade no pé) e o texto ocupa a área branca, alinhado à
-mesma margem do rodapé da arte. O texto declarado é o de sempre — a troca foi só
-de layout. Ficam de fora o QR code e as duas linhas de validação do documento
+O layout segue o **modelo oficial da declaração**, desenhado pela instituição: a
+arte cobre a folha inteira (banda azul na lateral esquerda, a marca Católica EAD
+no alto à esquerda, o selo Great Place to Work à direita, curvas no rodapé e o
+endereço da unidade no pé) e traz impressos o **título** e o **bloco de
+assinatura** ("Universidade Católica de Brasília" + "Documento emitido
+automaticamente pelo Sistema de Agendamento"). O sistema escreve **uma única
+coisa** na página: o parágrafo da declaração, na área branca entre os dois,
+alinhado à mesma margem do título. O texto declarado é o de sempre — a troca foi
+só de layout. Ficam de fora o QR code e as duas linhas de validação do documento
 antigo: apontavam para o serviço do fornecedor anterior, que não existe deste
-lado. A arte fica em `src/agendamento/assets/timbrado-ead.png`.
+lado. A arte fica em `src/agendamento/assets/modelo-declaracao.png`.
 
 Toda alteração registra **quem a fez**, e o administrador consulta em
 `GET /agendamentos/:id/historico`. É a resposta para "mudaram minha prova e não
