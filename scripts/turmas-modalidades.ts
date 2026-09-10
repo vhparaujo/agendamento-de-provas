@@ -21,10 +21,10 @@ import { Prisma, PrismaClient } from '../src/generated/prisma/client';
  *
  *   AMBIGUA          alunos de DUAS modalidades na mesma turma. O lote NAO
  *                    escolhe a maioria (a minoria ficaria sem abrir a prova),
- *                    entao a turma fica com a data antiga. **Nao ha caminho de
- *                    recuperacao automatico**: se aparecerem linhas aqui, a
- *                    correcao e uma decisao humana, e vale acrescentar uma
- *                    coluna de modalidade fixada antes de ir para producao.
+ *                    entao a turma fica com a data antiga ate alguem DECIDIR.
+ *                    A decisao se toma na tela — Senhas e datas > Conferir —, e
+ *                    este script mostra as que ja foram decididas separadas das
+ *                    que ainda esperam (10/09/2026).
  *
  *   SEM_AGENDAMENTO  ninguem agendou naquela turma nesta rodada. Se o periodo
  *                    ainda esta aberto, e esperado — rode de novo depois do
@@ -107,7 +107,39 @@ async function main(): Promise<void> {
        ORDER BY quantas DESC, reservas DESC
     `;
 
-    const ambiguas = linhas.filter((l) => Number(l.quantas) > 1);
+    // As decisoes manuais desta rodada. Sem elas o diagnostico choraria lobo:
+    // uma turma ja decidida na tela sairia como pendencia, e o script sairia com
+    // codigo 1 as vesperas da prova sem haver nada a fazer.
+    //
+    // ⚠️ A regra do servidor e reproduzida aqui, e nao importada: a escolha so
+    // vale se a modalidade escolhida AINDA tem reserva na turma. Ver
+    // `decidir()`, em modalidade-da-turma.service.ts.
+    const escolhas = new Map(
+      (
+        await prisma.modalidadeEscolhidaDaTurma.findMany({
+          where: { rodada },
+          include: { modalidade: { select: { codigo: true } } },
+        })
+      ).map((e) => [
+        e.orgUnitId,
+        { codigo: e.modalidade.codigo, por: e.escolhidaPor },
+      ]),
+    );
+
+    const emDisputa = linhas.filter((l) => Number(l.quantas) > 1);
+
+    /** A escolha vale nesta turma? So se a modalidade dela tem reserva aqui. */
+    const decidida = (l: Linha) => {
+      const escolha = escolhas.get(l.orgUnitId);
+
+      return escolha &&
+        l.modalidades.split(', ').includes(escolha.codigo)
+        ? escolha
+        : undefined;
+    };
+
+    const ambiguas = emDisputa.filter((l) => !decidida(l));
+    const desempatadas = emDisputa.filter((l) => decidida(l));
     const resolvidas = linhas.filter((l) => Number(l.quantas) === 1);
 
     // Turmas do CSV que o cruzamento NAO alcancou: elas nao aparecem na
@@ -132,7 +164,10 @@ async function main(): Promise<void> {
       `  com modalidade UNICA (entram no lote) .. ${resolvidas.length}`,
     );
     console.log(
-      `  AMBIGUAS (ficam de fora) ............... ${ambiguas.length}`,
+      `  ambiguas DECIDIDAS a mao (entram) ...... ${desempatadas.length}`,
+    );
+    console.log(
+      `  AMBIGUAS sem decisao (ficam de fora) ... ${ambiguas.length}`,
     );
     console.log(`  SEM_AGENDAMENTO (ficam de fora) ........ ${orfas.length}\n`);
 
@@ -148,6 +183,19 @@ async function main(): Promise<void> {
       console.log('TURMAS POR MODALIDADE');
       for (const [codigo, quantas] of [...porModalidade].sort()) {
         console.log(`  ${codigo.padEnd(12)} ${quantas}`);
+      }
+      console.log();
+    }
+
+    if (desempatadas.length > 0) {
+      console.log('DECIDIDAS A MAO — entram no lote da modalidade escolhida');
+      for (const l of desempatadas) {
+        const escolha = decidida(l)!;
+        console.log(
+          `  ${(l.codigoTurma ?? '?').padEnd(14)} ` +
+            `${(l.nomeDisciplina ?? `orgUnit ${l.orgUnitId}`).slice(0, 40).padEnd(42)} ` +
+            `${escolha.codigo}  (de ${l.modalidades}; por ${escolha.por})`,
+        );
       }
       console.log();
     }
@@ -180,12 +228,15 @@ async function main(): Promise<void> {
 
     if (ambiguas.length === 0) {
       console.log(
-        '✅ Nenhuma turma ambigua: a derivacao por agendamento resolve sozinha.',
+        desempatadas.length > 0
+          ? '✅ Nenhuma turma ambigua em aberto: as que estavam ja foram decididas na tela.'
+          : '✅ Nenhuma turma ambigua: a derivacao por agendamento resolve sozinha.',
       );
     } else {
       console.log(
-        `❌ ${ambiguas.length} turma(s) ambigua(s). Elas ficariam com a data ` +
-          'antiga, e os alunos nao abririam a prova. Trate antes do primeiro dia.',
+        `❌ ${ambiguas.length} turma(s) ambigua(s) sem decisao. Elas ficariam ` +
+          'com a data antiga, e os alunos nao abririam a prova. Decida em ' +
+          'Senhas e datas > Conferir antes do primeiro dia.',
       );
       process.exitCode = 1;
     }

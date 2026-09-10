@@ -74,6 +74,12 @@ export type EventoSeguranca =
   // modalidade. Separados dos de senha de proposito — quem investiga "por que a
   // prova abriu as 16h?" nao quer as trocas de senha no meio, e vice-versa.
   | 'DATA_QUIZ_JANELAS_ALTERADAS'
+  // O desempate manual de uma turma ambigua (10/09/2026). Auditavel pelo mesmo
+  // motivo que as janelas: decide EM QUE HORARIO uma turma inteira abre a
+  // prova. E a unica decisao da aba que o sistema se recusa a tomar sozinho,
+  // entao ela precisa ter dono — inclusive quando der errado.
+  | 'DATA_QUIZ_MODALIDADE_ESCOLHIDA'
+  | 'DATA_QUIZ_MODALIDADE_ESCOLHA_REMOVIDA'
   | 'DATA_QUIZ_INICIADA'
   | 'DATA_QUIZ_CONCLUIDA'
   | 'DATA_QUIZ_FALHOU'

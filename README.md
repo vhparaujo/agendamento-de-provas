@@ -916,6 +916,7 @@ ou sozinho por cron nos horários configurados.
 | `GET`/`PUT` | `/senhas-de-prova/alvo` | Qual questionário o lote procura (nome + `EXATO`/`CONTEM`) |
 | `GET`/`PUT` | `/senhas-de-prova/horarios` | A que horas o cron aplica cada turno. Turno em branco não dispara |
 | `GET` | `/senhas-de-prova/turmas` | Pré-visualiza **quais turmas serão tocadas**, e quais não resolveram |
+| `PUT`/`DELETE` | `/senhas-de-prova/turmas/:turmaId/modalidade` | Desempata a turma **ambígua** — e só ela. Ver abaixo |
 | `POST` | `/senhas-de-prova/execucoes` | Dispara. Responde na hora com um `id`; **simula por padrão** |
 | `GET` | `/senhas-de-prova/execucoes/ultima?origem=` | A execução mais recente. É por aqui que a tela **enxerga o cron** — ele não tem quem o acompanhe |
 | `GET` | `/senhas-de-prova/execucoes/:id` | Andamento e contagens |
@@ -952,6 +953,22 @@ nome configurado não é erro de rede nem falha de ninguém: é uma turma inteir
 não abriria a prova no dia. O mesmo vale para as linhas de
 `GET /senhas-de-prova/turmas` que não resolveram — **revise essa lista antes do
 primeiro dia**, não depois.
+
+**A turma ambígua tem saída na tela (10/09/2026).** Quando alunos de duas
+modalidades têm prova na mesma turma, o sistema não escolhe — o questionário tem
+uma janela só, e escolher a maioria trancaria a prova da minoria. Só que "não
+escolher" tranca todo mundo: a turma fica fora do lote de datas e a prova
+permanece no horário antigo. Foi o caso real de uma turma com **EAD (583) e
+MODULAR (1)**.
+
+Na conferência (*Senhas e datas > Conferir*) cada linha dessas agora traz um
+seletor com as modalidades em disputa e quantos alunos cada uma tem. A escolha é
+de uma **pessoa**, fica gravada com o e-mail e a hora, e vale para a rodada
+vigente. Ela **caduca sozinha** se a turma deixar de ser ambígua ou se a
+modalidade escolhida ficar sem nenhum aluno com prova ali — e o servidor recusa
+(400) desempatar turma que não está ambígua ou escolher modalidade sem reserva
+na turma. Isso é o que impede a rota de virar uma coluna de modalidade no
+cadastro, que a decisão de 10/08/2026 recusou.
 
 **A senha em texto claro existe em uma coluna só** (`senha_de_prova.senha`): o
 Brightspace exige o valor literal e a secretaria imprime a folha dos fiscais. Ela
@@ -1246,6 +1263,8 @@ PeriodoAgendamento ── PeriodoLetivoModalidade ── Modalidade
 | `ConfiguracaoSenhaQuiz` | Linha única (`id=1`): o que o admin configura — questionário-alvo e os horários do cron |
 | `ExecucaoSenhaQuiz` | Uma rodada do lote de troca de senhas. Guarda contadores e a `versaoAplicada`; **nunca a senha** |
 | `ItemSenhaQuiz` | Uma linha por (turma, questionário) da execução, com o `resultado`. **Nunca a senha** |
+| `JanelaDeProva` | Um disparo: a que horas o questionário abre/fecha, por modalidade, e o grupo que libera a prova |
+| `ModalidadeEscolhidaDaTurma` | O desempate da turma **ambígua**: `(orgUnitId, rodada) → modalidade`, com quem decidiu. **Só é lida quando a turma continua ambígua** |
 
 **Índices que importam para a regra**
 
@@ -1267,6 +1286,10 @@ PeriodoAgendamento ── PeriodoLetivoModalidade ── Modalidade
 - `ExecucaoSenhaQuiz.senhaDeProvaId` é **`onDelete: SetNull`**, e `data`/`turno`
   ficam desnormalizados na própria execução: apagar a senha (retenção) não pode
   apagar a prova de que o lote rodou.
+- `ModalidadeEscolhidaDaTurma @@unique([orgUnitId, rodada])` — uma decisão por
+  turma em cada prova. O período letivo não entra na chave porque o `orgUnitId`
+  já o carrega; a `rodada` entra porque a N2 e a SUB do mesmo semestre
+  **compartilham** o org unit, e o desempate de uma não decide a outra.
 
 **`Agendamento.modalidadeId` e `Agendamento.poloId` são fotografia**, não consulta
 ao vínculo. `AlunoImportado` é tabela de **estado atual**: cada importação
@@ -1826,6 +1849,9 @@ linha de relatório reprocessável, em vez de gente alocada para a disciplina er
       `quizzing:` incluídos** (`npm run d2l:token` confirma o que foi concedido)
 - [ ] Grade de senhas cadastrada e `GET /senhas-de-prova/turmas` revisado — cada
       linha em `naoResolvidas` é uma turma que ficaria sem senha
+- [ ] Turmas **sem modalidade** decididas na mesma tela: as ambíguas (alunos de
+      duas modalidades) têm o seletor de desempate ali; as sem agendamento
+      nenhum só o fechamento do prazo resolve
 - [ ] Dry-run de um turno rodado, **com o tempo medido**: é o que diz se o horário
       do cron é cedo o bastante
 - [ ] Questionário-alvo e horários dos turnos cadastrados **na tela** (não estão

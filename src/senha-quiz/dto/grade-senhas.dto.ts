@@ -274,6 +274,40 @@ export class HorariosDoCronDto {
   toleranciaMin!: number;
 }
 
+/** Uma das modalidades em disputa numa turma ambigua. */
+export class CandidataDeModalidadeDto {
+  @ApiProperty({ example: 3, description: 'Id da modalidade, para o PUT.' })
+  modalidadeId!: number;
+
+  @ApiProperty({ example: 'EAD' })
+  codigo!: string;
+
+  @ApiProperty({ example: 'EaD' })
+  nome!: string;
+
+  @ApiProperty({
+    example: 583,
+    description:
+      'Quantos alunos desta modalidade tem prova confirmada na turma. E o ' +
+      'numero que a secretaria olha para decidir — 583 contra 1 e uma decisao ' +
+      'diferente de 12 contra 9.',
+  })
+  reservas!: number;
+}
+
+export class EscolherModalidadeDaTurmaDto {
+  @ApiProperty({
+    example: 3,
+    description:
+      'A modalidade que passa a valer para esta turma. Precisa ser uma das ' +
+      '`candidatas` — o servidor recusa qualquer outra, inclusive uma ' +
+      'modalidade real que simplesmente nao tenha aluno com prova ali.',
+  })
+  @IsInt()
+  @Min(1)
+  modalidadeId!: number;
+}
+
 export class TurmaDoLoteDto {
   @ApiProperty({ example: 41 })
   turmaId!: number;
@@ -311,6 +345,34 @@ export class TurmaDoLoteDto {
       'dia**: cada linha destas e uma turma que ficaria com a data antiga.',
   })
   motivoSemModalidade!: string | null;
+
+  @ApiProperty({
+    type: [CandidataDeModalidadeDto],
+    description:
+      'As modalidades que tem prova nesta turma, quando ha mais de uma — ' +
+      'ordenadas por reservas. **Vazio significa que nao ha o que escolher**: ' +
+      'ou a derivacao foi unanime, ou ninguem agendou ali. E este array que ' +
+      'habilita `PUT /senhas-de-prova/turmas/:turmaId/modalidade`, e a mesma ' +
+      'condicao e reconferida no servidor a cada gravacao.',
+  })
+  candidatas!: CandidataDeModalidadeDto[];
+
+  @ApiProperty({
+    example: 'secretaria@ucb.br',
+    nullable: true,
+    description:
+      'Quem decidiu a modalidade desta turma, quando ela veio de uma escolha ' +
+      'manual. **Nulo na derivacao normal** — a tela precisa distinguir "a ' +
+      'turma so tem EaD" de "alguem decidiu que ela vale como EaD".',
+  })
+  modalidadeEscolhidaPor!: string | null;
+
+  @ApiProperty({
+    example: '2026-09-10T13:45:00.000Z',
+    nullable: true,
+    description: 'Quando a escolha manual foi feita ou trocada.',
+  })
+  modalidadeEscolhidaEm!: string | null;
 }
 
 export class TurmaForaDoLoteDto {

@@ -380,6 +380,7 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `GET /agendamentos/:id/historico` | admin | Quem alterou: aluno ou administrador |
 | `GET/PUT /senhas-de-prova` · `GET /:id/revelar` · `DELETE /:id` | admin | A grade dia × turno das senhas das provas. **A listagem nunca devolve o valor** |
 | `GET/PUT /senhas-de-prova/alvo` · `/horarios` · `GET /senhas-de-prova/turmas` | admin | Questionário-alvo, horários do cron, e quais turmas o lote vai tocar |
+| `PUT/DELETE /senhas-de-prova/turmas/:turmaId/modalidade` | admin | Desempata a turma **ambígua** (alunos de duas modalidades). Só nesse caso |
 | `GET/PUT /senhas-de-prova/janelas` | admin | O calendário de abertura/fechamento do questionário, por modalidade |
 | `POST /senhas-de-prova/execucoes` · `GET /:id` · `/:id/relatorio` | admin | Troca a **senha** (`tipo: SENHA`) ou a **janela de datas** (`tipo: DATA`) dos questionários no Brightspace; acompanha e baixa o CSV |
 | `GET /d2l/callback` | — | Callback OAuth da Valence: troca o `code` e grava o refresh token |
@@ -902,6 +903,9 @@ npm run alunos:recalcular -- --gravar
 # unica forma de ver as turmas AMBIGUAS antes do dia da prova (elas ficariam com
 # a data antiga, e ninguem abriria a prova). So leitura; sai com codigo 1 se
 # houver ambiguidade. RODE ANTES DO PRIMEIRO DIA.
+#
+# Desde 10/09/2026 ele separa as AMBIGUAS ja decididas na tela das que ainda
+# esperam decisao, e so as segundas fazem o codigo de saida ser 1.
 npm run turmas:modalidades
 
 # "id_token do LTI invalido" e generico de proposito (nao conta a quem sonda a
@@ -2149,17 +2153,67 @@ agendamentos de propósito.
 | Modalidades distintas na turma | Resultado |
 |---|---|
 | 1 | entra no lote daquela modalidade |
-| ≥ 2 | `MODALIDADE_AMBIGUA` — linha de relatório, **nada é gravado** |
+| ≥ 2 | `MODALIDADE_AMBIGUA` — linha de relatório, **nada é gravado**… até alguém decidir (abaixo) |
 | 0 | `SEM_AGENDAMENTO` — linha de relatório |
 
 Não há voto de maioria: o questionário tem uma janela só, e a minoria ficaria sem
 conseguir abrir a prova, com o erro aparecendo no dia.
 
-⚠️ **Uma turma ambígua não tem caminho de recuperação automático.** Ela fica com
-a data antiga. **Rode `npm run turmas:modalidades` antes do primeiro dia** — ele
-mede exatamente isso na base real e sai com código 1 se houver ambiguidade. Se
-aparecerem linhas, a correção mínima é uma coluna de modalidade fixada,
-preenchida à mão só nessas turmas.
+**Rode `npm run turmas:modalidades` antes do primeiro dia** — ele mede isso na
+base real e sai com código 1 se houver ambiguidade.
+
+#### O desempate manual (10/09/2026): o admin escolhe, o sistema não
+
+"Nada é chutado" resolvia metade do problema. A outra metade apareceu numa turma
+real de PROBABILIDADE E ESTATÍSTICA: **EAD (583) e MODULAR (1)**. Sem modalidade
+a turma inteira fica fora do lote de datas e a prova continua no horário antigo —
+para os 583 tanto quanto para o 1. A conferência mostrava o problema e não
+oferecia saída nenhuma.
+
+Agora oferece, e **isso não afrouxa a regra — completa ela**. O sistema continua
+sem escolher; quem escolhe é uma pessoa, na aba *Senhas e datas > Conferir*, e a
+decisão fica em `modalidade_escolhida_turma` com o e-mail e a hora
+(`DATA_QUIZ_MODALIDADE_ESCOLHIDA` na auditoria).
+
+| | |
+|---|---|
+| Rotas | `PUT`/`DELETE /senhas-de-prova/turmas/:turmaId/modalidade` |
+| Recorte | `orgUnitId` + `rodada` — o org unit já carrega o semestre; a rodada entra porque N2 e SUB **compartilham** o org unit |
+| Onde a decisão é lida | dentro de `ModalidadeDaTurmaService.resolver` — vale de graça para a conferência, o lote manual e o cron, e nenhum deles sabe que a tabela existe |
+
+⚠️ **A decisão só vale enquanto a turma for AMBÍGUA, e isso é reconferido em
+toda LEITURA** (`decidir`), nunca só na gravação. Dois casos a derrubam sozinha:
+
+1. **Voltou a ter uma modalidade só** (o único MODULAR cancelou) — a derivação
+   vence. O dado de agora vale mais que uma decisão de dias atrás; manter a
+   escolha faria uma turma 100% EaD receber a janela MODULAR porque alguém
+   desempatou na terça.
+2. **A modalidade escolhida ficou sem NENHUMA reserva** — a turma reaparece como
+   ambígua na conferência, com o aviso no `detalhe`. Aplicar a janela de uma
+   modalidade que ninguém ali cursa é pior que não aplicar nada: em vez de quase
+   todos abrirem a prova no horário antigo, **ninguém** abre no horário novo.
+
+E na gravação, as duas travas que impedem isto de virar "definir a modalidade de
+qualquer turma" — a coluna de cadastro recusada em 10/08/2026, com outro nome:
+
+- a turma precisa estar **ambígua agora** (400 se a modalidade já se deriva
+  sozinha, 400 se não há agendamento nenhum — ausência não é ambiguidade);
+- a modalidade precisa ser uma das **candidatas**, isto é, ter aluno com prova
+  confirmada ali.
+
+**Escolher a minoria é válido**, e de propósito: se aquela turma aplica a prova
+no calendário MODULAR, um voto de maioria acertaria o número e erraria a decisão.
+É o argumento inteiro de a escolha ser de uma pessoa.
+
+**Por que uma tabela e não uma coluna em `turma_importada`:** pelo mesmo motivo
+que a migration `turma_sem_curso` **removeu** `curso` de lá. Uma turma não "é" de
+uma modalidade — ela tem alunos de várias. O que existe aqui é uma decisão
+operacional de UMA rodada, com autor e data. E o CSV de turmas é reimportado: o
+upsert apagaria a decisão em silêncio.
+
+**O `DELETE` não exige ambiguidade**, ao contrário do `PUT`: apagar uma decisão
+nunca aplica nada em prova nenhuma, e exigir a ambiguidade prenderia a linha no
+banco justamente quando ela já não vale. Apagar o que não existe não é erro.
 
 ### 🔴 Por que o lote de datas TAMBÉM grava a senha
 
@@ -2302,6 +2356,10 @@ lote prefere deixar a data antiga a abrir a prova no horário de outra modalidad
 Os três caminhos que levam a isso, todos reportados por turma no CSV da execução:
 `SEM_AGENDAMENTO`, `MODALIDADE_AMBIGUA`, ou a turma derivou para **outra**
 modalidade (aí ela foi tocada, mas por outro disparo, com outra janela).
+
+Desde 10/09/2026 o segundo caminho tem saída na tela: o admin decide qual
+modalidade vale naquela turma, e ela passa a entrar no lote normalmente. Ver
+"O desempate manual", acima.
 
 E o lote de senhas **nunca toca em condição de liberação**: ele alcança todas as
 turmas do CSV, sem janela, e trocar o grupo ali apontaria a prova da instituição

@@ -28,16 +28,22 @@ import {
   AlvoDoQuizDto,
   CelulaDaGradeDto,
   DefinirSenhaDto,
+  EscolherModalidadeDaTurmaDto,
   HorariosDoCronDto,
   JanelasDeProvaDto,
   SalvarAlvoDto,
   SalvarHorariosDto,
   SalvarJanelasDto,
   SenhaReveladaDto,
+  TurmaDoLoteDto,
   TurmasDoLoteDto,
 } from '../dto/grade-senhas.dto';
 import { GradeSenhasService } from '../service/grade-senhas.service';
-import { ModalidadeDaTurmaService } from '../service/modalidade-da-turma.service';
+import {
+  ModalidadeDaTurma,
+  ModalidadeDaTurmaService,
+  TurmaDesempatada,
+} from '../service/modalidade-da-turma.service';
 import { ResolucaoOrgUnitService } from '../service/resolucao-orgunit.service';
 import { PeriodoService } from '../../periodo/service/periodo.service';
 import { BadRequestException } from '@nestjs/common';
@@ -138,6 +144,118 @@ export class GradeSenhasController {
   async turmas(): Promise<TurmasDoLoteDto> {
     // Os dois periodos letivos da janela: a lista precisa mostrar as turmas das
     // DUAS grades, senao as presenciais somem da tela do admin.
+    const { periodoLetivoIds, rodada } = await this.janelaOuRecusar();
+
+    const resolucao = await this.resolucao.resolver(periodoLetivoIds);
+    const mapa = await this.modalidades.resolver(periodoLetivoIds, rodada);
+
+    return {
+      ...resolucao,
+      resolvidas: resolucao.resolvidas.map((turma) =>
+        linhaDaTurma(turma, mapa.de(turma.orgUnitId)),
+      ),
+    };
+  }
+
+  @Put('turmas/:turmaId/modalidade')
+  @ApiOperation({
+    summary: 'Decide a modalidade de uma turma AMBIGUA',
+    description:
+      'A saida para a turma que tem alunos de duas modalidades e por isso fica ' +
+      'de fora do lote de datas — com a prova presa no horario antigo para a ' +
+      'turma inteira, e nao so para a minoria.\n\n' +
+      '**O sistema continua sem escolher.** Quem escolhe e uma pessoa, e a ' +
+      'decisao fica gravada com o e-mail dela e a hora ' +
+      '(`DATA_QUIZ_MODALIDADE_ESCOLHIDA` na auditoria).\n\n' +
+      '### As duas travas, reconferidas a cada gravacao\n\n' +
+      '1. **A turma precisa estar ambigua AGORA.** Turma cuja modalidade ja se ' +
+      'deriva sozinha responde 400 — sem isso, isto viraria "definir a ' +
+      'modalidade de qualquer turma", que e a coluna de cadastro recusada em ' +
+      '10/08/2026 com outro nome.\n' +
+      '2. **A modalidade precisa ser uma das `candidatas`**, isto e, ter aluno ' +
+      'com prova confirmada ali. Aplicar a janela de uma modalidade que ' +
+      'ninguem cursa fecharia a prova para TODOS, e nao so para a minoria.\n\n' +
+      'A escolha tambem **caduca sozinha na leitura**: se a turma voltar a ter ' +
+      'uma modalidade so, a derivacao vence; se a modalidade escolhida ficar ' +
+      'sem nenhuma reserva, a turma reaparece como ambigua na conferencia. ' +
+      'Nao e preciso desfazer nada a mao.\n\n' +
+      'Vale para a **rodada vigente** — a decisao da N2 nao decide a ' +
+      'substitutiva, que tem outro publico sob o mesmo org unit.',
+  })
+  @ApiParam({ name: 'turmaId', type: Number, example: 41 })
+  @ApiOkResponse({ type: TurmaDoLoteDto })
+  @ApiBadRequestResponse({
+    description:
+      'A turma nao esta ambigua, nao tem agendamento nenhum, nao teve o ' +
+      'orgUnitId resolvido, ou a modalidade informada nao tem aluno com prova ' +
+      'nela',
+  })
+  @ApiNotFoundResponse({ description: 'Turma nao encontrada' })
+  async escolherModalidade(
+    @Param('turmaId', ParseIntPipe) turmaId: number,
+    @Body() dto: EscolherModalidadeDaTurmaDto,
+    @AdminLogado() admin: AdminJwtPayload,
+  ): Promise<TurmaDoLoteDto> {
+    const { periodoLetivoIds, rodada } = await this.janelaOuRecusar();
+
+    return linhaDesempatada(
+      await this.modalidades.escolher(
+        turmaId,
+        dto.modalidadeId,
+        periodoLetivoIds,
+        rodada,
+        admin.email,
+      ),
+    );
+  }
+
+  // ⚠️ ANTES de `@Delete(':id')`, la embaixo. Declarado depois, o `:id` engoliria
+  // a palavra "turmas" e o desfazer viraria "apagar a senha da celula 'turmas'"
+  // — mesma armadilha ja documentada em `senha-quiz.module.ts`.
+  @Delete('turmas/:turmaId/modalidade')
+  @ApiOperation({
+    summary: 'Desfaz a decisao de modalidade de uma turma',
+    description:
+      'A turma volta a aparecer como ambigua na conferencia e sai do lote de ' +
+      'datas de novo.\n\n' +
+      'Ao contrario do PUT, **nao exige que a turma continue ambigua**: apagar ' +
+      'uma decisao nunca aplica nada em prova nenhuma, e exigir a ambiguidade ' +
+      'prenderia a linha no banco justamente quando ela ja nao vale.\n\n' +
+      'Apagar o que nao existe **nao e erro** — dois cliques no mesmo botao ' +
+      'devolvem o mesmo estado.',
+  })
+  @ApiParam({ name: 'turmaId', type: Number, example: 41 })
+  @ApiOkResponse({ type: TurmaDoLoteDto })
+  @ApiBadRequestResponse({
+    description: 'A turma nao teve o orgUnitId resolvido',
+  })
+  @ApiNotFoundResponse({ description: 'Turma nao encontrada' })
+  async esquecerModalidade(
+    @Param('turmaId', ParseIntPipe) turmaId: number,
+    @AdminLogado() admin: AdminJwtPayload,
+  ): Promise<TurmaDoLoteDto> {
+    const { periodoLetivoIds, rodada } = await this.janelaOuRecusar();
+
+    return linhaDesempatada(
+      await this.modalidades.esquecer(
+        turmaId,
+        periodoLetivoIds,
+        rodada,
+        admin.email,
+      ),
+    );
+  }
+
+  /**
+   * A janela vigente, ou a recusa com o motivo — a mesma frase de `turmas`.
+   *
+   * Sem periodo cadastrado nao ha rodada, e sem rodada a decisao nao teria a
+   * que se aplicar: ela e gravada por `(orgUnitId, rodada)`.
+   */
+  private async janelaOuRecusar(): Promise<{
+    periodoLetivoIds: string[];
+    rodada: string;
+  }> {
     const { periodoLetivoIds, rodada } =
       (await this.periodo.janelaVigente()) ?? {};
 
@@ -148,27 +266,7 @@ export class GradeSenhasController {
       );
     }
 
-    const resolucao = await this.resolucao.resolver(periodoLetivoIds);
-    const mapa = await this.modalidades.resolver(periodoLetivoIds, rodada);
-
-    return {
-      ...resolucao,
-      resolvidas: resolucao.resolvidas.map((turma) => {
-        const decisao = mapa.de(turma.orgUnitId);
-
-        return {
-          ...turma,
-          modalidadeCodigo:
-            decisao.situacao === 'ENCONTRADA' ? decisao.codigo : null,
-          modalidadeNome:
-            decisao.situacao === 'ENCONTRADA' ? decisao.nome : null,
-          // A frase que explica a ausencia — a mesma que iria para o CSV do
-          // relatorio se o lote rodasse agora.
-          motivoSemModalidade:
-            decisao.situacao === 'ENCONTRADA' ? null : decisao.detalhe,
-        };
-      }),
-    };
+    return { periodoLetivoIds, rodada };
   }
 
   @Get('alvo')
@@ -330,4 +428,49 @@ export class GradeSenhasController {
   ): Promise<void> {
     await this.grade.remover(id, admin.email);
   }
+}
+
+/**
+ * Uma turma resolvida + a decisao de modalidade, no formato da tela.
+ *
+ * Funcao livre e compartilhada pelas tres rotas de proposito: a conferencia e as
+ * duas rotas de escrita mostram A MESMA linha, e duas montagens acabariam
+ * divergindo justamente no campo que diz se a turma recebe data ou nao.
+ */
+function linhaDaTurma(
+  turma: {
+    turmaId: number;
+    orgUnitId: string;
+    codigoTurma: string;
+    nomeDisciplina: string;
+  },
+  decisao: ModalidadeDaTurma,
+): TurmaDoLoteDto {
+  const encontrada = decisao.situacao === 'ENCONTRADA';
+
+  return {
+    turmaId: turma.turmaId,
+    orgUnitId: turma.orgUnitId,
+    codigoTurma: turma.codigoTurma,
+    nomeDisciplina: turma.nomeDisciplina,
+    modalidadeCodigo: encontrada ? decisao.codigo : null,
+    modalidadeNome: encontrada ? decisao.nome : null,
+    // A frase que explica a ausencia — a mesma que iria para o CSV do relatorio
+    // se o lote rodasse agora.
+    motivoSemModalidade: encontrada ? null : decisao.detalhe,
+    // Vazio quando nao ha o que escolher. E este array que a tela usa para
+    // decidir se desenha o seletor de desempate.
+    candidatas: decisao.candidatas,
+    modalidadeEscolhidaPor:
+      encontrada && decisao.escolha ? decisao.escolha.escolhidaPor : null,
+    modalidadeEscolhidaEm:
+      encontrada && decisao.escolha
+        ? decisao.escolha.escolhidaEm.toISOString()
+        : null,
+  };
+}
+
+/** O mesmo, para o que as rotas de escrita devolvem. */
+function linhaDesempatada(turma: TurmaDesempatada): TurmaDoLoteDto {
+  return linhaDaTurma(turma, turma.decisao);
 }

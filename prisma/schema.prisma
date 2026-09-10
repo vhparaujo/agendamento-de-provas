@@ -95,6 +95,9 @@ model Modalidade {
   // Qual periodo letivo do Brightspace vale para esta modalidade em cada janela
   // de agendamento: modular anda por modulo, presencial por semestre.
   periodosLetivos PeriodoLetivoModalidade[]
+  // As turmas em que o admin DECIDIU que esta e a modalidade da prova, por nao
+  // haver como derivar (alunos de duas modalidades na mesma turma).
+  escolhasDeTurma ModalidadeEscolhidaDaTurma[]
 
   @@map("modalidade")
 }
@@ -1332,4 +1335,75 @@ model JanelaDeProva {
   @@unique([modalidadeId, ordem])
   @@index([modalidadeId])
   @@map("janela_de_prova")
+}
+
+// ----------------------------------------------------------------------------
+// A MODALIDADE QUE O ADMIN DECIDIU — o desempate da turma ambigua
+// ----------------------------------------------------------------------------
+//
+// O lote de DATAS precisa de UMA modalidade por turma, e ela e derivada dos
+// agendamentos confirmados (`modalidade-da-turma.service.ts`). Quando a turma
+// tem alunos de DUAS modalidades, nada e derivado de proposito: o questionario
+// tem uma janela so, e escolher a maioria trancaria a prova da minoria.
+//
+// So que "nada" tambem tranca — a turma inteira fica de fora do lote e a prova
+// permanece com a DATA ANTIGA, para os 583 alunos EaD tanto quanto para o unico
+// MODULAR. Foi o caso real de 10/09/2026: 583 x 1, e nenhuma saida na tela.
+//
+// Esta tabela e a saida, e ela NAO quebra a regra "nada e chutado" — ela a
+// completa. O sistema continua nao escolhendo; quem escolhe e uma PESSOA, e a
+// escolha fica gravada com nome e hora.
+//
+// ⚠️ **A linha so vale enquanto a turma for AMBIGUA**, e a checagem e feita em
+// toda leitura, nunca na gravacao (ver `decidir()`):
+//
+//  - voltou a ter uma modalidade so? a derivacao vence, e esta linha e ignorada.
+//    O dado real e sempre mais confiavel que uma decisao de dias atras;
+//  - a modalidade escolhida ficou sem NENHUMA reserva na turma? a linha e
+//    ignorada tambem, e a turma volta a aparecer como ambigua na conferencia.
+//    Aplicar a janela de uma modalidade que ninguem ali cursa seria pior que nao
+//    aplicar nada — ninguem abriria a prova, em vez de quase todos.
+//
+// POR QUE NAO E UMA COLUNA EM `turma_importada`: pelo mesmo motivo de 10/08/2026
+// que removeu `curso` de la. Uma turma nao "e" de uma modalidade — ela tem
+// alunos de varias. O que existe aqui e uma DECISAO OPERACIONAL, valida para uma
+// rodada de prova, com autor e data; escrever isso no cadastro transformaria um
+// desempate pontual em um fato permanente sobre a turma. Alem disso o CSV de
+// turmas e reimportado, e o upsert sobrescreveria a decisao em silencio.
+//
+// O RECORTE E `orgUnitId` + `rodada`, e nao inclui o periodo letivo porque o
+// `orgUnitId` ja o carrega: a mesma disciplina em outro semestre e outra oferta,
+// com outro id. A `rodada` entra porque a N2 e a SUB do mesmo semestre
+// COMPARTILHAM o org unit — sem ela, o desempate da N2 decidiria a substitutiva,
+// que tem outro publico.
+model ModalidadeEscolhidaDaTurma {
+  id Int @id @default(autoincrement())
+
+  /// A oferta no Brightspace. E a mesma chave com que o mapa de modalidades
+  /// responde, e o que faz a decisao valer para a conferencia, para o lote
+  /// manual e para o cron sem nenhum deles saber que ela existe.
+  orgUnitId String
+  /// Qual prova do semestre ("N2", "SUB"). Ver o recorte, acima.
+  rodada    String
+
+  modalidadeId Int
+
+  /// Desnormalizado, como em `item_senha_quiz`: a pergunta que se faz sobre esta
+  /// tabela e "quem decidiu o que?", e ela precisa de resposta legivel mesmo se
+  /// a turma sair do CSV do semestre seguinte.
+  codigoTurma String?
+
+  /// Fotografia do e-mail, como em `SenhaDeProva.atualizadoPor`. NAO e FK: o
+  /// admin pode ser desativado depois, e a decisao continua tendo dono.
+  escolhidaPor String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  modalidade Modalidade @relation(fields: [modalidadeId], references: [id])
+
+  // Uma decisao por turma em cada rodada: duas seriam duas janelas para um
+  // questionario que so tem uma. Trocar a escolha e um upsert nesta chave.
+  @@unique([orgUnitId, rodada])
+  @@index([modalidadeId])
+  @@map("modalidade_escolhida_turma")
 }
