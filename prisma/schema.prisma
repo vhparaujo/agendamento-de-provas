@@ -988,6 +988,21 @@ model ExecucaoSenhaQuiz {
   gruposTrocados  Int @default(0)
   gruposPendentes Int @default(0)
 
+  /// A celula da GRADE DE GRUPOS usada, e a versao dela. NULAS quando o grupo
+  /// veio do nome fixo da janela, ou quando nao houve grupo.
+  ///
+  /// ⚠️ Entram na chave da idempotencia junto com `versaoAplicada` (a da
+  /// janela). Sem elas, corrigir o grupo de hoje depois do disparo nao
+  /// liberaria nada: a janela nao mudou, e a execucao concluida bloquearia o
+  /// novo disparo em silencio — o bug de 25/08/2026 num campo novo.
+  grupoDaJanelaId     Int?
+  versaoGrupoAplicada Int?
+  /// O nome que esta execucao aplicou — congelado, como `horaInicioAplicada`.
+  /// Antes da grade ele era lido da JANELA na hora de exibir, o que so funcionava
+  /// porque o nome nunca mudava; com um nome por dia, o relatorio de ontem
+  /// mostraria o grupo de hoje.
+  nomeGrupoAplicado   String? @db.VarChar(200)
+
   /// Quantos GETs devolveram `Password` PREENCHIDO.
   ///
   /// Zero com itens > 0 significa que a API esconde o campo (o QuizReadData so o
@@ -1011,6 +1026,7 @@ model ExecucaoSenhaQuiz {
 
   senhaDeProva  SenhaDeProva?   @relation(fields: [senhaDeProvaId], references: [id], onDelete: SetNull)
   janelaDeProva JanelaDeProva?  @relation(fields: [janelaDeProvaId], references: [id], onDelete: SetNull)
+  grupoDaJanela GrupoDaJanela?  @relation(fields: [grupoDaJanelaId], references: [id], onDelete: SetNull)
   itens         ItemSenhaQuiz[]
 
   /// A consulta de idempotencia do cron: "esta celula ja foi aplicada de verdade?"
@@ -1101,6 +1117,14 @@ enum ResultadoGrupoQuiz {
 
   /// A turma nao tem nenhuma categoria de grupo — nao ha onde procurar.
   SEM_CATEGORIA_DE_GRUPO
+
+  /// A janela usa a GRADE DE GRUPOS, e o dia da prova ficou em branco — sem
+  /// celula e sem nome fixo na janela (14/09/2026).
+  ///
+  /// Nenhuma chamada de grupo sai: nao ha nome a procurar. E pendencia, e nao
+  /// "nao troca", porque a condicao continua apontando para o grupo da sessao
+  /// ANTERIOR — e calar aqui faria o dia esquecido parecer um disparo limpo.
+  SEM_GRUPO_NO_DIA
 
   FALHA_AO_LER_CONDICOES
   FALHA_AO_GRAVAR_CONDICOES
@@ -1270,8 +1294,10 @@ model JanelaDeProva {
   /// numero de grupos por turma cai da modalidade, como as janelas: 3 no EaD, 6
   /// em Semi/Modular, 5 no Presencial. Sao ~14 nomes no total, um por janela.
   ///
-  /// O nome e fixo por janela e vale para todas as turmas e para todos os dias
-  /// de prova: a lista de nomes nao muda, quem anda por ela e o disparo.
+  /// ⚠️ **Desde 14/09/2026 e o PADRAO, nao a regra.** O nome de cada DIA vem da
+  /// grade `GrupoDaJanela`; este campo so vale nos dias sem celula. Ele nasceu
+  /// "fixo por janela e reusado nos seis dias" (26/08/2026), e a operacao real
+  /// mostrou grupos com nomes proprios por dia. Ver `grupo-do-dia.ts`.
   ///
   /// ⚠️ **Guarda o NOME, nunca o `GroupId`.** Cada turma tem os seus proprios
   /// grupos, com ids proprios, mesmo com nomes identicos: "Prova 2" existe em
@@ -1330,11 +1356,80 @@ model JanelaDeProva {
 
   modalidade Modalidade @relation(fields: [modalidadeId], references: [id])
 
-  execucoes ExecucaoSenhaQuiz[]
+  execucoes   ExecucaoSenhaQuiz[]
+  gruposDoDia GrupoDaJanela[]
 
   @@unique([modalidadeId, ordem])
   @@index([modalidadeId])
   @@map("janela_de_prova")
+}
+
+// ----------------------------------------------------------------------------
+// A GRADE DE GRUPOS — dia x janela -> nome do grupo (14/09/2026)
+// ----------------------------------------------------------------------------
+//
+// REVERTE a decisao 1 de 26/08/2026 ("o nome do grupo e FIXO POR JANELA e
+// reusado nos seis dias"). Na operacao real os grupos de cada dia de prova tem
+// nomes proprios e LIVRES, e a secretaria passou a trocar `nomeGrupo` da janela
+// a mao todo dia — exatamente o trabalho que o disparo automatico existia para
+// tirar dela, com o risco extra de esquecer a troca de um dia.
+//
+// E a mesma forma da grade de SENHAS, com outra chave: la e dia x TURNO, aqui e
+// dia x JANELA. Nao da para reusar o turno: em Semi/Modular sao seis janelas e
+// tres turnos, e cada SESSAO tem o seu grupo.
+//
+// COMO O DISPARO ESCOLHE O GRUPO (`grupo-do-dia.ts`, pura e testada):
+//
+//   1. ha celula para (dia, janela)            -> o nome da celula;
+//   2. nao ha, mas a janela tem `nomeGrupo`    -> o nome fixo, como antes;
+//   3. nao ha nenhum dos dois, e a janela JA
+//      USOU a grade em algum dia               -> PENDENCIA (`SEM_GRUPO_NO_DIA`)
+//                                                em cada questionario;
+//   4. nunca teve grupo nenhum                 -> nao troca grupo, como antes.
+//
+// O caso 3 e o que impede o esquecimento de passar calado: sem ele, o dia que
+// ficou em branco abriria a prova para o grupo da sessao ANTERIOR, com a
+// execucao verde.
+//
+// Nao ha segredo aqui (nome de grupo nao e senha), entao nao ha rota de revelar
+// nem auditoria de leitura — so de escrita, porque decide para quem a prova abre.
+model GrupoDaJanela {
+  id              Int      @id @default(autoincrement())
+  /// O dia da PROVA — o mesmo `data` que a execucao grava, ja com o
+  /// `diaSeguinte` resolvido. A janela das 22:01 de segunda le a celula de TERCA.
+  data            DateTime @db.Date
+  janelaDeProvaId Int
+
+  /// O NOME, nunca o `GroupId` — mesmo motivo de `JanelaDeProva.nomeGrupo`: cada
+  /// turma tem os seus grupos, com ids proprios. Nunca vazio: celula apagada na
+  /// tela e linha REMOVIDA, e nao string vazia.
+  nomeGrupo      String  @db.VarChar(200)
+  /// Opcional. NULO = usa a categoria da janela.
+  categoriaGrupo String? @db.VarChar(200)
+
+  /// Sobe quando o nome ou a categoria MUDAM. Gemea de `SenhaDeProva.versao`, e
+  /// pelo mesmo bug de 25/08/2026: corrigir o grupo de hoje depois do disparo
+  /// das 12:01 precisa liberar a janela para rodar de novo HOJE. A execucao
+  /// guarda a celula e esta versao (`grupoDaJanelaId` + `versaoGrupoAplicada`),
+  /// e a idempotencia compara as duas.
+  versao Int @default(1)
+
+  /// Fotografia do e-mail, como em `SenhaDeProva`.
+  criadoPor     String
+  atualizadoPor String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// CASCADE: `salvarJanelas` remove a sessao que saiu do calendario, e a grade
+  /// dela nao teria a que se aplicar. A execucao historica sobrevive por outro
+  /// caminho (`onDelete: SetNull` + `nomeGrupoAplicado` desnormalizado).
+  janelaDeProva JanelaDeProva       @relation(fields: [janelaDeProvaId], references: [id], onDelete: Cascade)
+  execucoes     ExecucaoSenhaQuiz[]
+
+  @@unique([data, janelaDeProvaId])
+  @@index([janelaDeProvaId])
+  @@map("grupo_da_janela")
 }
 
 // ----------------------------------------------------------------------------

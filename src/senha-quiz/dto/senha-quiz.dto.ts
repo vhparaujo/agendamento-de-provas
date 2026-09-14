@@ -301,8 +301,10 @@ export class AndamentoDaSenhaQuizDto {
     example: 'Prova 2',
     nullable: true,
     description:
-      'O nome do grupo que esta execucao aplicou, vindo da janela. **Nulo = a ' +
-      'janela nao troca grupo**, e a tela nao deve mostrar a secao de grupos.',
+      'O nome do grupo que esta execucao aplicou — da grade de grupos do dia, ' +
+      'ou o nome padrao da janela. Congelado na execucao. **Nulo = nenhum grupo ' +
+      'foi aplicado**: a janela nao troca grupo, ou o dia ficou em branco na ' +
+      'grade (neste caso `grupos` traz `SEM_GRUPO_NO_DIA`).',
   })
   nomeGrupoAplicado!: string | null;
 

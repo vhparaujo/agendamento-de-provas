@@ -30,6 +30,7 @@ import {
   gruposDasCondicoes,
   trocarGrupoNasCondicoes,
 } from './condicoes';
+import { GradeGruposService } from './grade-grupos.service';
 import { GradeSenhasService } from './grade-senhas.service';
 import { rotularGrupo } from './grupo';
 import {
@@ -187,6 +188,7 @@ export class SenhaQuizService {
     private readonly grade: GradeSenhasService,
     private readonly periodo: PeriodoService,
     private readonly auditoria: AuditoriaService,
+    private readonly gradeGrupos: GradeGruposService,
   ) {}
 
   /**
@@ -258,6 +260,13 @@ export class SenhaQuizService {
 
     const dataAlvo = dataUtcDeIso(opcoes.data);
 
+    // O grupo do DIA, e nao mais so o da janela (14/09/2026): celula da grade de
+    // grupos, ou o nome fixo como padrao. Lido ANTES da idempotencia porque a
+    // celula entra na chave dela — ver `recusarSeJaAplicadaAJanela`.
+    const grupoDoDia = janela
+      ? await this.gradeGrupos.doDia(janela, dataAlvo)
+      : null;
+
     // O turno de onde sai a senha: da propria opcao, no lote de senhas; da
     // janela, no de datas.
     const turnoDaSenha = janela
@@ -291,6 +300,8 @@ export class SenhaQuizService {
           janela.id,
           dataAlvo,
           janela.versao,
+          grupoDoDia?.celulaId ?? null,
+          grupoDoDia?.versao ?? null,
         );
       } else {
         await this.recusarSeJaAplicada(celula.id, celula.versao);
@@ -335,6 +346,14 @@ export class SenhaQuizService {
         // janela no de datas. E ela que faz a idempotencia liberar um novo
         // disparo quando o admin corrige o horario ou a senha.
         versaoAplicada: janela ? janela.versao : celula.versao,
+        // A celula da grade de grupos e a versao dela, pelo mesmo motivo da
+        // linha acima: corrigir o grupo de hoje precisa liberar um novo disparo.
+        // Nulas quando o grupo veio do nome fixo da janela, ou nao houve grupo.
+        grupoDaJanelaId: grupoDoDia?.celulaId ?? null,
+        versaoGrupoAplicada: grupoDoDia?.versao ?? null,
+        // Congelado: com um nome por dia, ler da janela na hora de exibir faria
+        // o relatorio de ontem mostrar o grupo de hoje.
+        nomeGrupoAplicado: grupoDoDia?.nome ?? null,
         nomeQuizAlvo: alvo.nomeQuiz,
         matchQuizAlvo: alvo.matchQuiz,
         turmasNoCsv: resolvidas.totalNoCsv,
@@ -347,7 +366,10 @@ export class SenhaQuizService {
     });
 
     const descricao = janela
-      ? `janela ${janela.horaInicio}-${janela.horaFim} de ${recorte.codigoDaModalidade ?? janela.modalidadeId} em ${opcoes.data}`
+      ? `janela ${janela.horaInicio}-${janela.horaFim} de ${recorte.codigoDaModalidade ?? janela.modalidadeId} em ${opcoes.data}` +
+        // De ONDE veio o grupo entra no log: "por que a prova abriu para o
+        // grupo de ontem?" so tem resposta sabendo se foi a grade ou o padrao.
+        `; grupo ${grupoDoDia?.nome ? `"${grupoDoDia.nome}" (${grupoDoDia.origem === 'GRADE' ? 'grade do dia' : 'padrao da janela'})` : grupoDoDia?.origem === 'SEM_GRUPO_NO_DIA' ? 'AUSENTE na grade do dia' : 'nao troca'}`
       : `celula ${opcoes.data} ${rotuloDoTurno(celula.turno)}`;
 
     this.auditoria.registrar(
@@ -364,6 +386,18 @@ export class SenhaQuizService {
           `alvo "${alvo.nomeQuiz}" (${alvo.matchQuiz})`,
       },
     );
+
+    // O dia esquecido na grade. NAO recusa: a data precisa entrar (decisao de
+    // 26/08/2026 — falha de grupo nao bloqueia a data). Mas vira evento de falha,
+    // e cada questionario vira pendencia no relatorio.
+    if (grupoDoDia?.origem === 'SEM_GRUPO_NO_DIA') {
+      this.auditoria.registrar('DATA_QUIZ_SEM_GRUPO_NO_DIA', {
+        ator: iniciadoPor,
+        detalhe:
+          `execucao ${execucao.id}; ${descricao}. A janela usa a grade de grupos ` +
+          'e o dia esta em branco: a prova segue liberada para o grupo anterior.',
+      });
+    }
 
     // Fire-and-forget: o lote leva minutos e nenhum navegador segura a conexao.
     // O `catch` dentro de `executar` e o que garante que uma falha vire FALHOU
@@ -388,15 +422,12 @@ export class SenhaQuizService {
       // a parte — e deixa-lo entrar naquele objeto convidaria alguem a tentar
       // envia-lo no PUT do quiz, onde ele seria ignorado em silencio.
       //
-      // Nome em branco conta como ausente: um `"  "` salvo por engano na tela
-      // faria a resolucao procurar um grupo sem nome em toda turma e reportar
-      // 157 pendencias.
-      grupo: janela?.nomeGrupo?.trim()
-        ? {
-            nome: janela.nomeGrupo.trim(),
-            categoria: janela.categoriaGrupo?.trim() || null,
-          }
+      // O nome ja chega resolvido e aparado por `escolherGrupoDoDia`: celula do
+      // dia, ou o nome fixo da janela. Em branco nos dois conta como ausente.
+      grupo: grupoDoDia?.nome
+        ? { nome: grupoDoDia.nome, categoria: grupoDoDia.categoria }
         : null,
+      semGrupoNoDia: grupoDoDia?.origem === 'SEM_GRUPO_NO_DIA',
       simulacao: opcoes.simulacao,
       iniciadoPor,
     });
@@ -544,15 +575,10 @@ export class SenhaQuizService {
       itens: Object.fromEntries(
         porResultado.map((linha) => [linha.resultado, linha._count._all]),
       ),
-      /**
-       * O nome do grupo que ESTA execucao aplicou. Nulo quando a janela nao
-       * troca grupo — e o que a tela usa para nao mostrar a secao inteira.
-       *
-       * Vem da janela, e nao de um item: os itens guardam o rotulo COM o id, que
-       * muda de turma para turma. O que a secretaria quer ler no topo e "esta
-       * execucao apontou a prova para Prova 2".
-       */
-      nomeGrupoAplicado: janelaDeProva?.nomeGrupo ?? null,
+      // `nomeGrupoAplicado` vem da propria execucao, no `...campos`. Ate
+      // 14/09/2026 era lido da JANELA aqui, o que so funcionava porque o nome
+      // nunca mudava; com a grade de grupos, o relatorio de ontem mostraria o
+      // grupo de hoje. A migration congelou o historico com o valor de entao.
       grupos: Object.fromEntries(
         porGrupo.flatMap((linha): [ResultadoGrupoQuiz, number][] =>
           // O `null` fica de fora: ele e ausencia de tentativa (janela sem
@@ -902,6 +928,8 @@ export class SenhaQuizService {
     janelaDeProvaId: number,
     data: Date,
     versao: number,
+    grupoDaJanelaId: number | null,
+    versaoGrupo: number | null,
   ): Promise<void> {
     const ja = await this.prisma.execucaoSenhaQuiz.findFirst({
       where: {
@@ -911,6 +939,11 @@ export class SenhaQuizService {
         // que ja rodou hoje nao a libera — o `upsert` preserva o id da linha, e
         // esta consulta encontraria a execucao antiga. Bug real de 25/08/2026.
         versaoAplicada: versao,
+        // A celula da grade de grupos, pelo mesmo motivo (14/09/2026): criar ou
+        // corrigir o grupo de hoje depois do disparo nao muda a versao da
+        // JANELA. O cron usa a mesma chave em `motivoParaNaoDisparar`.
+        grupoDaJanelaId,
+        versaoGrupoAplicada: versaoGrupo,
         simulacao: false,
         status: StatusExecucao.CONCLUIDA,
       },
@@ -949,6 +982,11 @@ export class SenhaQuizService {
     janela: { inicio: Date; fim: Date; codigo: string | null } | null;
     /** `null` = a janela nao tem grupo cadastrado; as condicoes nao sao tocadas. */
     grupo: { nome: string; categoria: string | null } | null;
+    /**
+     * A janela usa a grade de grupos e o dia ficou em branco. As condicoes nao
+     * sao tocadas (nao ha nome), mas cada questionario vira PENDENCIA.
+     */
+    semGrupoNoDia: boolean;
     simulacao: boolean;
     iniciadoPor: string;
   }): Promise<void> {
@@ -961,6 +999,7 @@ export class SenhaQuizService {
       alvo,
       janela,
       grupo,
+      semGrupoNoDia,
       simulacao,
       iniciadoPor,
     } = entrada;
@@ -1030,6 +1069,7 @@ export class SenhaQuizService {
               alvo,
               janela: janelaDoQuiz,
               grupo: grupoDoLote,
+              semGrupoNoDia,
               modalidadeCodigo: janela?.codigo ?? null,
               simulacao,
               ritmo,
@@ -1110,7 +1150,9 @@ export class SenhaQuizService {
             (grupoDoLote
               ? `; grupo "${grupoDoLote.nome}": ${contagem.gruposTrocados} ` +
                 `trocado(s), ${contagem.gruposPendentes} pendente(s)`
-              : ''),
+              : semGrupoNoDia
+                ? `; SEM grupo na grade do dia: ${contagem.gruposPendentes} pendente(s)`
+                : ''),
         },
       );
     } catch (erro) {
@@ -1149,6 +1191,7 @@ export class SenhaQuizService {
     alvo: { nomeQuiz: string; matchQuiz: TipoMatchQuiz };
     janela?: JanelaDoQuiz;
     grupo: GrupoDoLote | null;
+    semGrupoNoDia: boolean;
     modalidadeCodigo: string | null;
     simulacao: boolean;
     ritmo: RitmoDoLote;
@@ -1159,6 +1202,7 @@ export class SenhaQuizService {
       alvo,
       janela,
       grupo,
+      semGrupoNoDia,
       modalidadeCodigo,
       simulacao,
       ritmo,
@@ -1244,6 +1288,16 @@ export class SenhaQuizService {
           detalhe: resolvido.motivo,
         };
       }
+    } else if (semGrupoNoDia) {
+      // Nenhuma chamada de grupo: nao ha nome a procurar. Mas a linha NAO fica
+      // com `resultadoGrupo` nulo ("nao tentou") — a condicao continua no grupo
+      // da sessao anterior, e isso e pendencia com o mesmo peso das outras.
+      falhaDoGrupo = {
+        resultadoGrupo: ResultadoGrupoQuiz.SEM_GRUPO_NO_DIA,
+        detalhe:
+          'A grade de grupos nao tem este dia para esta janela, e a janela nao ' +
+          'tem nome padrao. A condicao de acesso nao foi trocada.',
+      };
     }
 
     const itens: ItemParaGravar[] = [];

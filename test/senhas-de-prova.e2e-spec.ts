@@ -283,6 +283,124 @@ describe('Senhas de prova: a grade dia x turno (e2e)', () => {
     });
   });
 
+  /**
+   * A grade dia x janela dos grupos (14/09/2026).
+   *
+   * Roda DEPOIS do bloco das janelas, e usa a janela que ele deixou na
+   * modalidade de teste: a celula e FK da janela, e o `limpar` apaga as duas
+   * juntas (cascade).
+   */
+  describe('GET/PUT /senhas-de-prova/grupos — a grade de grupos do dia', () => {
+    let janelaId: number;
+
+    const salvar = (celulas: Record<string, unknown>[]) =>
+      comoAdmin(api().put('/api/senhas-de-prova/grupos').send({ celulas }));
+
+    const daJanela = (corpo: unknown) =>
+      (corpo as Record<string, unknown>[]).filter(
+        (c) => c.janelaDeProvaId === janelaId,
+      );
+
+    beforeAll(async () => {
+      const modalidade = await prisma.modalidade.findUniqueOrThrow({
+        where: { codigo: MODALIDADE_CODIGO },
+      });
+      janelaId = (
+        await prisma.janelaDeProva.findFirstOrThrow({
+          where: { modalidadeId: modalidade.id },
+        })
+      ).id;
+    });
+
+    it('cria a celula e a devolve com versao 1', async () => {
+      const res = await salvar([
+        { data: DIA, janelaDeProvaId: janelaId, nomeGrupo: ' EaD 16/09 15h ' },
+      ]).expect(200);
+
+      expect(daJanela(res.body)).toEqual([
+        expect.objectContaining({
+          data: DIA,
+          nomeGrupo: 'EaD 16/09 15h',
+          categoriaGrupo: null,
+          versao: 1,
+          atualizadoPor: EMAIL,
+        }),
+      ]);
+    });
+
+    it('a listagem do intervalo traz a celula', async () => {
+      const res = await comoAdmin(
+        api()
+          .get('/api/senhas-de-prova/grupos')
+          .query({ de: DIA, ate: OUTRO_DIA }),
+      ).expect(200);
+
+      expect(daJanela(res.body)).toHaveLength(1);
+    });
+
+    /**
+     * A versao so sobe quando o nome MUDA: e ela que libera um novo disparo
+     * hoje, e salvar a semana de novo nao pode reprocessar a instituicao.
+     */
+    it('salvar o MESMO nome nao sobe a versao; trocar sobe', async () => {
+      const igual = await salvar([
+        { data: DIA, janelaDeProvaId: janelaId, nomeGrupo: 'EaD 16/09 15h' },
+      ]).expect(200);
+      expect(daJanela(igual.body)[0].versao).toBe(1);
+
+      const trocado = await salvar([
+        { data: DIA, janelaDeProvaId: janelaId, nomeGrupo: 'EaD 16/09 tarde' },
+      ]).expect(200);
+      expect(daJanela(trocado.body)[0]).toMatchObject({
+        nomeGrupo: 'EaD 16/09 tarde',
+        versao: 2,
+      });
+    });
+
+    it('nome vazio APAGA a celula', async () => {
+      await salvar([
+        { data: DIA, janelaDeProvaId: janelaId, nomeGrupo: '   ' },
+      ]).expect(200);
+
+      expect(
+        await prisma.grupoDaJanela.count({
+          where: { janelaDeProvaId: janelaId },
+        }),
+      ).toBe(0);
+    });
+
+    it('recusa data com hora, janela inexistente e celula repetida', async () => {
+      await salvar([
+        {
+          data: `${DIA}T10:00:00Z`,
+          janelaDeProvaId: janelaId,
+          nomeGrupo: 'X',
+        },
+      ]).expect(400);
+
+      await salvar([
+        { data: DIA, janelaDeProvaId: 999_999_999, nomeGrupo: 'X' },
+      ]).expect(400);
+
+      await salvar([
+        { data: DIA, janelaDeProvaId: janelaId, nomeGrupo: 'X' },
+        { data: DIA, janelaDeProvaId: janelaId, nomeGrupo: 'Y' },
+      ]).expect(400);
+    });
+
+    it('listar sem intervalo e 400', async () => {
+      await comoAdmin(api().get('/api/senhas-de-prova/grupos')).expect(400);
+    });
+
+    it('aluno nao acessa a grade de grupos', async () => {
+      await api()
+        .get('/api/senhas-de-prova/grupos')
+        .query({ de: DIA, ate: DIA })
+        .set('Authorization', `Bearer ${alunoToken}`)
+        .expect(401);
+    });
+  });
+
   describe('PUT /senhas-de-prova — cadastro da celula', () => {
     it('cria a celula e NAO devolve a senha na resposta', async () => {
       const res = await comoAdmin(

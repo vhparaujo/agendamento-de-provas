@@ -524,8 +524,10 @@ export class JanelaDeProvaDto {
       'Nao e um grupo unico com os alunos trocados a cada sessao: cada turma ' +
       'tem UM GRUPO POR SESSAO, na quantidade que a modalidade define (3 no ' +
       'EaD, 6 em Semi/Modular, 5 no Presencial), e o disparo troca o grupo ' +
-      'APONTADO pela condicao. O nome e fixo por janela e vale para todas as ' +
-      'turmas e para todos os dias de prova.\n\n' +
+      'APONTADO pela condicao.\n\n' +
+      '**Desde 14/09/2026 e o nome PADRAO.** O grupo de cada dia vem da grade ' +
+      '`/senhas-de-prova/grupos` (dia x janela); este campo so vale nos dias ' +
+      'sem celula ali.\n\n' +
       '⚠️ Alterar este campo SOBE a versao da janela, liberando-a para disparar ' +
       'de novo hoje — e o que faz a correcao de um nome errado valer no mesmo ' +
       'dia, em vez de so no seguinte.',

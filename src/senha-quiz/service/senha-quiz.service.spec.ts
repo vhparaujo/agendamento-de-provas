@@ -12,6 +12,7 @@ import {
 } from '../../generated/prisma/client';
 import { PeriodoService } from '../../periodo/service/periodo.service';
 import { AuditoriaService } from '../../seguranca/service/auditoria.service';
+import { GradeGruposService } from './grade-grupos.service';
 import { GradeSenhasService } from './grade-senhas.service';
 import { ModalidadeDaTurmaService } from './modalidade-da-turma.service';
 import { ResolucaoGrupoService } from './resolucao-grupo.service';
@@ -113,6 +114,10 @@ describe('SenhaQuizService', () => {
     semCategoria?: boolean;
     lerCondicoesLanca?: boolean;
     gravarCondicoesLanca?: boolean;
+    /** A celula da GRADE DE GRUPOS do dia. Ausente = o dia nao tem celula. */
+    celulaDeGrupo?: Record<string, unknown> | null;
+    /** A janela ja teve alguma celula na grade (em qualquer dia). */
+    janelaUsaGrade?: boolean;
   }) => {
     itensGravados = [];
     gravacoes = [];
@@ -176,6 +181,13 @@ describe('SenhaQuizService', () => {
               }
             : opcoes.janela,
         ),
+      },
+      // Por padrao o dia NAO tem celula na grade de grupos e a janela nunca a
+      // usou — o estado de antes de 14/09/2026, e o que mantem os testes antigos
+      // medindo o nome fixo da janela.
+      grupoDaJanela: {
+        findUnique: jest.fn().mockResolvedValue(opcoes.celulaDeGrupo ?? null),
+        count: jest.fn().mockResolvedValue(opcoes.janelaUsaGrade ? 1 : 0),
       },
     } as unknown as PrismaService;
 
@@ -306,9 +318,12 @@ describe('SenhaQuizService', () => {
       grade,
       periodo,
       auditoria,
+      // O servico de verdade sobre o prisma mockado: a regra de qual grupo vale
+      // no dia (`grupo-do-dia.ts`) e exatamente o que estes testes medem.
+      new GradeGruposService(prisma, auditoria),
     );
 
-    return { servico, prisma };
+    return { servico, prisma, auditoria };
   };
 
   const QUIZZES = { '156126': [{ QuizId: 42, Name: 'Prova N1' }] };
@@ -604,6 +619,7 @@ describe('SenhaQuizService', () => {
         {} as unknown as GradeSenhasService,
         {} as unknown as PeriodoService,
         {} as unknown as AuditoriaService,
+        {} as unknown as GradeGruposService,
       );
 
       return { servico, findFirst };
@@ -952,6 +968,150 @@ describe('SenhaQuizService', () => {
         resultadoGrupo: 'TROCADO',
         grupoAnterior: 'Prova 1 (#156988)',
         grupoAplicado: 'Prova 2 (#156989)',
+      });
+    });
+
+    /**
+     * ========================================================================
+     * A GRADE DE GRUPOS (14/09/2026)
+     * ========================================================================
+     * Os grupos de cada dia tem nomes livres, e a secretaria trocava o nome da
+     * janela a mao todo dia. A celula do dia vence o nome fixo.
+     */
+    describe('grade de grupos do dia', () => {
+      const CELULA = {
+        id: 31,
+        nomeGrupo: 'EaD 16-09 tarde',
+        categoriaGrupo: null,
+        versao: 2,
+      };
+
+      const comOGrupoDoDia = {
+        ...umaTurmaEad,
+        gruposPorTurma: {
+          '156126': [
+            { GroupId: 156988, Name: 'Prova 1' },
+            { GroupId: 156989, Name: 'Prova 2' },
+            { GroupId: 157001, Name: 'EaD 16-09 tarde' },
+          ],
+        },
+        celulaDeGrupo: CELULA,
+      };
+
+      it('aponta a condicao para o grupo da GRADE, e nao para o nome fixo', async () => {
+        const { servico } = montar(comOGrupoDoDia);
+
+        await servico.iniciar(OPCOES, 'admin@ucb.br');
+        await deixarOLoteTerminar();
+
+        const corpo = condicoesGravadas[0].corpo as {
+          Expression: { ExpressionParams: { Operands: Record<string, any>[] } };
+        };
+
+        expect(
+          corpo.Expression.ExpressionParams.Operands[0].EnrolledInGroupParams,
+        ).toEqual({ GroupId: 157001, GroupCategoryId: null });
+        expect(itensGravados[0].grupoAplicado).toBe(
+          'EaD 16-09 tarde (#157001)',
+        );
+      });
+
+      /**
+       * O nome aplicado vai CONGELADO na execucao: com um nome por dia, le-lo da
+       * janela na hora de exibir mostraria o grupo de hoje no relatorio de
+       * ontem. A celula e a versao dela sao a chave da idempotencia.
+       */
+      it('a execucao guarda a celula, a versao dela e o nome aplicado', async () => {
+        const { servico, prisma } = montar(comOGrupoDoDia);
+
+        await servico.iniciar(OPCOES, 'admin@ucb.br');
+        await deixarOLoteTerminar();
+
+        const criacao = (
+          prisma.execucaoSenhaQuiz.create as unknown as jest.Mock
+        ).mock.calls[0][0] as { data: Record<string, unknown> };
+
+        expect(criacao.data).toMatchObject({
+          grupoDaJanelaId: 31,
+          versaoGrupoAplicada: 2,
+          nomeGrupoAplicado: 'EaD 16-09 tarde',
+        });
+      });
+
+      /**
+       * O bug de 25/08/2026 num campo novo: corrigir o grupo das 15h depois do
+       * disparo das 12:01 nao muda a versao da JANELA. Sem a celula na chave, a
+       * execucao concluida bloquearia a reaplicacao.
+       */
+      it('a checagem de "ja aplicada" leva a celula e a versao do grupo', async () => {
+        const { servico, prisma } = montar(comOGrupoDoDia);
+
+        await servico.iniciar(OPCOES, 'admin@ucb.br');
+        await deixarOLoteTerminar();
+
+        const idempotencia = (
+          prisma.execucaoSenhaQuiz.findFirst as unknown as jest.Mock
+        ).mock.calls
+          .map((c) => (c[0] as { where: Record<string, unknown> }).where)
+          .find((w) => w.janelaDeProvaId !== undefined);
+
+        expect(idempotencia).toMatchObject({
+          janelaDeProvaId: 10,
+          versaoAplicada: 3,
+          grupoDaJanelaId: 31,
+          versaoGrupoAplicada: 2,
+        });
+      });
+
+      it('sem celula no dia, o nome fixo da janela continua valendo', async () => {
+        const { servico, prisma } = montar({
+          ...umaTurmaEad,
+          janelaUsaGrade: true,
+        });
+
+        await servico.iniciar(OPCOES, 'admin@ucb.br');
+        await deixarOLoteTerminar();
+
+        expect(itensGravados[0].grupoAplicado).toBe('Prova 2 (#156989)');
+
+        const criacao = (
+          prisma.execucaoSenhaQuiz.create as unknown as jest.Mock
+        ).mock.calls[0][0] as { data: Record<string, unknown> };
+
+        expect(criacao.data).toMatchObject({
+          grupoDaJanelaId: null,
+          versaoGrupoAplicada: null,
+          nomeGrupoAplicado: 'Prova 2',
+        });
+      });
+
+      /**
+       * O dia esquecido na grade. A DATA entra (falha de grupo nao bloqueia a
+       * data, decisao de 26/08/2026), mas cada questionario vira PENDENCIA — sem
+       * isso a execucao sairia verde com a prova aberta para a sessao anterior.
+       */
+      it('dia em branco numa janela que usa a grade vira pendencia, e a data entra', async () => {
+        const { servico, auditoria } = montar({
+          ...umaTurmaEad,
+          janela: { ...JANELA_COM_GRUPO, nomeGrupo: null },
+          janelaUsaGrade: true,
+        });
+
+        await servico.iniciar(OPCOES, 'admin@ucb.br');
+        await deixarOLoteTerminar();
+
+        expect(gravacoes).toHaveLength(1);
+        expect(condicoesGravadas).toHaveLength(0);
+        expect(itensGravados[0]).toMatchObject({
+          resultado: 'DEFINIDA',
+          resultadoGrupo: 'SEM_GRUPO_NO_DIA',
+        });
+        expect(execucao).toMatchObject({ gruposPendentes: 1 });
+        const { registrar } = auditoria as unknown as { registrar: jest.Mock };
+        expect(registrar).toHaveBeenCalledWith(
+          'DATA_QUIZ_SEM_GRUPO_NO_DIA',
+          expect.anything(),
+        );
       });
     });
 

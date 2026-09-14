@@ -11,6 +11,7 @@ import {
 } from '../../generated/prisma/client';
 import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 import { carregarConfigDoCron } from '../config/senha-quiz.config';
+import { GradeGruposService } from './grade-grupos.service';
 import { GradeSenhasService } from './grade-senhas.service';
 import { janelasParaDisparar } from './janela';
 import { agoraNaOperacao, diaSeguinteDe, isoDeDataUtc } from './relogio';
@@ -84,6 +85,7 @@ export class SenhaQuizCron {
     private readonly lote: SenhaQuizService,
     private readonly grade: GradeSenhasService,
     private readonly auditoria: AuditoriaService,
+    private readonly gradeGrupos: GradeGruposService,
   ) {}
 
   @Cron(CronExpression.EVERY_MINUTE)
@@ -209,6 +211,9 @@ export class SenhaQuizCron {
         diaSeguinte: true,
         ativo: true,
         versao: true,
+        // Para achar o grupo do dia: a celula dele entra na idempotencia.
+        nomeGrupo: true,
+        categoriaGrupo: true,
         modalidade: { select: { codigo: true } },
       },
       orderBy: [{ modalidadeId: 'asc' }, { ordem: 'asc' }],
@@ -257,9 +262,15 @@ export class SenhaQuizCron {
       // rodou hoje, passa para a proxima candidata em vez de sair: as 12:01 sao
       // tres modalidades, e parar na primeira ja concluida deixaria as outras
       // duas para o minuto seguinte sem necessidade.
+      // A celula da grade de grupos do dia ALVO — a janela das 22:01 le a de
+      // amanha, como a senha. Mesma consulta que o lote fara ao comecar.
+      const grupoDoDia = await this.gradeGrupos.doDia(janela, alvo);
+
       const motivoDoPulo = await this.motivoParaNaoDisparar(
         janela.id,
         janela.versao,
+        grupoDoDia.celulaId,
+        grupoDoDia.versao,
         alvo,
         cfg.maxTentativas,
       );
@@ -350,10 +361,17 @@ export class SenhaQuizCron {
    * da linha, entao sem a versao a execucao concluida de manha bloquearia o
    * disparo da tarde depois de o admin corrigir o horario — e so no dia seguinte
    * funcionaria. Mesma solucao de `SenhaDeProva.versao`, do lado das senhas.
+   *
+   * ⚠️ **A celula da GRADE DE GRUPOS tambem** (14/09/2026). Corrigir o grupo das
+   * 15h depois do disparo das 12:01 nao muda a versao da janela; sem a celula e
+   * a versao dela na chave, a correcao so valeria no dia seguinte — com a prova
+   * aberta para a sessao anterior o dia inteiro.
    */
   private async motivoParaNaoDisparar(
     janelaDeProvaId: number,
     versao: number,
+    grupoDaJanelaId: number | null,
+    versaoGrupo: number | null,
     data: Date,
     maxTentativas: number,
   ): Promise<string | null> {
@@ -362,6 +380,8 @@ export class SenhaQuizCron {
         janelaDeProvaId,
         data,
         versaoAplicada: versao,
+        grupoDaJanelaId,
+        versaoGrupoAplicada: versaoGrupo,
         simulacao: false,
       },
       orderBy: { iniciadoEm: 'desc' },

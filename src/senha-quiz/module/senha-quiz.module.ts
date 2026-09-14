@@ -1,8 +1,10 @@
 import { Module } from '@nestjs/common';
 import { D2lModule } from '../../d2l/module/d2l.module';
 import { PeriodoModule } from '../../periodo/module/periodo.module';
+import { GradeGruposController } from '../controller/grade-grupos.controller';
 import { GradeSenhasController } from '../controller/grade-senhas.controller';
 import { SenhaQuizController } from '../controller/senha-quiz.controller';
+import { GradeGruposService } from '../service/grade-grupos.service';
 import { GradeSenhasService } from '../service/grade-senhas.service';
 import { ModalidadeDaTurmaService } from '../service/modalidade-da-turma.service';
 import { ResolucaoGrupoService } from '../service/resolucao-grupo.service';
@@ -44,14 +46,24 @@ import { SenhaQuizService } from '../service/senha-quiz.service';
  * `senhas-de-prova/execucoes/...` e `GradeSenhasController` tem
  * `senhas-de-prova/:id/...`; declarar a grade primeiro faria o `:id` disputar a
  * palavra "execucoes". Mesma armadilha ja documentada em `agendamento.module.ts`.
+ * `GradeGruposController` (`senhas-de-prova/grupos`) entra antes da grade de
+ * senhas pelo mesmo motivo.
+ *
+ * Desde 14/09/2026 o grupo de cada disparo sai da GRADE DE GRUPOS (dia x janela),
+ * com o nome fixo da janela como padrao — ver `grupo-do-dia.ts`.
  *
  * PrismaService e AuditoriaService vem de modulos globais.
  */
 @Module({
   imports: [D2lModule, PeriodoModule],
-  controllers: [SenhaQuizController, GradeSenhasController],
+  controllers: [
+    SenhaQuizController,
+    GradeGruposController,
+    GradeSenhasController,
+  ],
   providers: [
     GradeSenhasService,
+    GradeGruposService,
     ResolucaoOrgUnitService,
     ResolucaoGrupoService,
     ModalidadeDaTurmaService,

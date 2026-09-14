@@ -384,6 +384,7 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `GET/PUT /senhas-de-prova/alvo` · `/horarios` · `GET /senhas-de-prova/turmas` | admin | Questionário-alvo, horários do cron, e quais turmas o lote vai tocar |
 | `PUT/DELETE /senhas-de-prova/turmas/:turmaId/modalidade` | admin | Desempata a turma **ambígua** (alunos de duas modalidades). Só nesse caso |
 | `GET/PUT /senhas-de-prova/janelas` | admin | O calendário de abertura/fechamento do questionário, por modalidade |
+| `GET/PUT /senhas-de-prova/grupos` | admin | A grade **dia × janela** do grupo que libera a prova. PUT em lote; nome vazio apaga a célula |
 | `POST /senhas-de-prova/execucoes` · `GET /:id` · `/:id/relatorio` | admin | Troca a **senha** (`tipo: SENHA`) ou a **janela de datas** (`tipo: DATA`) dos questionários no Brightspace; acompanha e baixa o CSV |
 | `GET /d2l/callback` | — | Callback OAuth da Valence: troca o `code` e grava o refresh token |
 
@@ -826,7 +827,8 @@ src/
                questionários (d2l-quizzes) · condições de liberação e grupos
                (d2l-condicoes, LP ≥ 1.49). Special access continua adiado —
                não criar sem pedido.
-  senha-quiz/  ✅ a grade dia × turno (grade-senhas.service) · o lote
+  senha-quiz/  ✅ a grade dia × turno (grade-senhas.service) · a grade dia ×
+               janela dos grupos (grade-grupos.service + grupo-do-dia.ts) · o lote
                (senha-quiz.service) · o cron (senha-quiz.cron) · puras:
                quiz-body.ts, condicoes.ts, grupo.ts, senha.ts, turno.ts,
                relogio.ts · resolucao-orgunit.service.ts (CSV ∩ ofertas do
@@ -2571,9 +2573,52 @@ duas escritas falham independentemente. Detalhes da API na §5.8 de
 
 | Pergunta | Resposta | Por quê |
 |---|---|---|
-| Onde mora o nome do grupo? | **Fixo por janela** (`JanelaDeProva.nomeGrupo`), reusado nos seis dias | Os grupos da instância se chamam "Prova 1/2/3". São ~14 nomes no total; a secretaria reimporta o CSV de alunos no mesmo grupo a cada dia |
+| Onde mora o nome do grupo? | ~~Fixo por janela, reusado nos seis dias~~ **REVERTIDA em 14/09/2026**: grade **dia × janela** (`GrupoDaJanela`), com o nome da janela como padrão | Na operação real os grupos de cada dia têm nomes próprios e livres, e a secretaria trocava o nome da janela à mão todo dia. Ver "A grade de grupos", abaixo |
 | Falha de grupo bloqueia a data? | **Não.** Vira linha de pendência | Sem a data a prova não abre para NINGUÉM; sem a troca de grupo ela abre para o grupo anterior. Bloquear troca o problema menor pelo maior |
 | Cria condição onde não há? | **Nunca.** Só troca | Criar uma restrição onde não havia muda o comportamento de uma prova que talvez seja aberta a todos de propósito — e o PUT substitui a lista inteira |
+
+#### A grade de grupos: um nome por DIA e por JANELA (14/09/2026)
+
+A primeira decisão da tabela acima não sobreviveu à operação: cada dia de prova
+tem grupos com nomes próprios, e a secretaria editava `JanelaDeProva.nomeGrupo`
+todo dia — o trabalho manual que o disparo existia para eliminar, com o risco de
+esquecer um dia. Agora a aba tem uma **Grade de grupos**, na mesma forma da de
+senhas, com a chave `(data, janelaDeProvaId)` — não turno: Semi/Modular tem seis
+janelas e três turnos, e cada sessão tem o seu grupo.
+
+**Qual grupo o disparo aplica** — `grupo-do-dia.ts`, pura e testada, consultada
+pelo lote e pelo cron via `GradeGruposService.doDia`:
+
+| Célula do dia | Nome na janela | Janela já usou a grade | Resultado |
+|---|---|---|---|
+| sim | — | — | o nome da célula (categoria: a dela, senão a da janela) |
+| não | sim | — | o nome da janela — virou **padrão** |
+| não | não | sim | `SEM_GRUPO_NO_DIA` em cada questionário: **pendência** |
+| não | não | não | não troca grupo (o opt-in de 26/08 continua) |
+
+- ⚠️ **O dia esquecido é pendência, não "não troca".** A condição continuaria no
+  grupo da sessão anterior com a execução verde. Conta em `gruposPendentes`, gera
+  `DATA_QUIZ_SEM_GRUPO_NO_DIA` (evento de falha) e a data entra normalmente —
+  falha de grupo continua não bloqueando a data.
+- ⚠️ **A célula entra na idempotência.** `grupoDaJanelaId` + `versaoGrupoAplicada`
+  estão na chave de `recusarSeJaAplicadaAJanela` e de `motivoParaNaoDisparar`, ao
+  lado de `versaoAplicada` (a da janela). Sem isso, corrigir o grupo das 15h
+  depois do disparo das 12:01 não mudaria a versão da janela, e a correção só
+  valeria no dia seguinte — o bug de 25/08/2026 num campo novo. A versão da
+  célula sobe só quando nome/categoria **mudam**.
+  Limite conhecido: apagar uma célula no mesmo dia em que ela e um disparo sem
+  célula já rodaram volta à chave `(NULL, NULL)` e é pulada — use `forcar`.
+- **`nomeGrupoAplicado` é congelado na execução.** Antes era lido da janela na
+  hora de exibir; com um nome por dia, o relatório de ontem mostraria o grupo de
+  hoje. A migration `grade_de_grupos` preencheu o histórico com o valor de então.
+- **A janela da noite lê a célula de AMANHÃ**, como a senha (`data` é o dia da
+  prova, já com `diaSeguinte`). A tela avisa as sessões de hoje/amanhã sem grupo
+  (`faltas`, em `GradeDeGrupos.vue`), calada fora de período de prova.
+- **Nome de grupo não é segredo**: a listagem traz o valor, não há rota de
+  revelar, e só a escrita é auditada (`DATA_QUIZ_GRADE_GRUPOS_ALTERADA`).
+- **PUT em lote e numa transação**; célula ausente do corpo não é tocada, nome
+  vazio **apaga**. `ON DELETE CASCADE` a partir da janela: sessão removida do
+  calendário leva a grade junto (a execução histórica sobrevive por `SetNull`).
 
 #### ⚠️ O grupo vem ANTES do PUT do quiz, e a ordem não é indiferente
 
@@ -2617,6 +2662,9 @@ lista os grupos que existem naquela turma, para distinguir os dois casos.
 
 #### Detalhes que vão custar tempo se esquecidos
 
+- **A grade de grupos e o nome da janela são DUAS fontes** desde 14/09/2026. Um
+  grupo "errado" num dia pode estar na célula ou no padrão; o `descricao` da
+  auditoria `DATA_QUIZ_INICIADA` diz qual das duas foi usada.
 - **`nomeGrupo` e `categoriaGrupo` SOBEM a `versao` da janela.** Mesmo bug de
   25/08/2026 num campo novo: corrigir um nome errado às 12:43, depois do disparo
   das 12:01, não reprocessaria nada em silêncio. Só valeria no dia seguinte — com

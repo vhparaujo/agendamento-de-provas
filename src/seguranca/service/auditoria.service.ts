@@ -74,6 +74,13 @@ export type EventoSeguranca =
   // modalidade. Separados dos de senha de proposito — quem investiga "por que a
   // prova abriu as 16h?" nao quer as trocas de senha no meio, e vice-versa.
   | 'DATA_QUIZ_JANELAS_ALTERADAS'
+  // A grade dia x janela dos grupos (14/09/2026). Auditavel pelo mesmo motivo
+  // que as janelas: decide PARA QUEM a prova abre naquele dia, e "quem trocou o
+  // grupo de terca?" precisa ter resposta.
+  | 'DATA_QUIZ_GRADE_GRUPOS_ALTERADA'
+  // O lote de datas comecou num dia em que a janela usa a grade de grupos e a
+  // celula estava vazia. A data entra; o grupo fica o da sessao anterior.
+  | 'DATA_QUIZ_SEM_GRUPO_NO_DIA'
   // O desempate manual de uma turma ambigua (10/09/2026). Auditavel pelo mesmo
   // motivo que as janelas: decide EM QUE HORARIO uma turma inteira abre a
   // prova. E a unica decisao da aba que o sistema se recusa a tomar sozinho,
@@ -175,6 +182,9 @@ const EVENTOS_DE_FALHA = new Set<EventoSeguranca>([
   // do turno ANTERIOR — ou seja, fechada.
   'DATA_QUIZ_CRON_SEM_GRADE',
   'DATA_QUIZ_CRON_SEM_JANELA',
+  // A prova abre no horario certo para o grupo da sessao ANTERIOR — o mesmo
+  // peso de `gruposPendentes` na tela.
+  'DATA_QUIZ_SEM_GRUPO_NO_DIA',
 ]);
 
 /**

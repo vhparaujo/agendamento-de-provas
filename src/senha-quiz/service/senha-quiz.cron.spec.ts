@@ -3,6 +3,7 @@ import { D2lQuizzesService } from '../../d2l/service/d2l-quizzes.service';
 import { PrismaService } from '../../database/prisma.service';
 import { StatusExecucao, Turno } from '../../generated/prisma/client';
 import { AuditoriaService } from '../../seguranca/service/auditoria.service';
+import { GradeGruposService } from './grade-grupos.service';
 import { GradeSenhasService } from './grade-senhas.service';
 import { SenhaQuizCron } from './senha-quiz.cron';
 import { SenhaQuizService } from './senha-quiz.service';
@@ -62,6 +63,8 @@ describe('SenhaQuizCron', () => {
     horarios?: Record<Turno, string | null>;
     /** As janelas ATIVAS no banco. Vazio = o tick de datas nao dispara nada. */
     janelas?: Record<string, unknown>[];
+    /** A celula da grade de GRUPOS do dia alvo. Ausente = sem celula. */
+    celulaDeGrupo?: Record<string, unknown> | null;
   }) => {
     jest.useFakeTimers().setSystemTime(opcoes.agora ?? NA_HORA);
 
@@ -84,6 +87,10 @@ describe('SenhaQuizCron', () => {
       janelaDeProva: {
         findMany: jest.fn().mockResolvedValue(opcoes.janelas ?? []),
       },
+      grupoDaJanela: {
+        findUnique: jest.fn().mockResolvedValue(opcoes.celulaDeGrupo ?? null),
+        count: jest.fn().mockResolvedValue(0),
+      },
     } as unknown as PrismaService;
 
     const quizzes = {
@@ -105,6 +112,7 @@ describe('SenhaQuizCron', () => {
       { iniciar } as unknown as SenhaQuizService,
       grade,
       auditoria,
+      new GradeGruposService(prisma, auditoria),
     );
   };
 
@@ -552,6 +560,60 @@ describe('SenhaQuizCron', () => {
 
       expect(iniciar).not.toHaveBeenCalled();
       expect(eventos).toContain('DATA_QUIZ_CRON_NADA_A_FAZER');
+    });
+
+    /**
+     * A grade de grupos (14/09/2026), o mesmo bug de 25/08/2026 num campo novo:
+     * a secretaria corrige o grupo do dia depois do disparo das 12:01. A JANELA
+     * nao mudou de versao, entao so a celula na chave libera o novo disparo.
+     */
+    it('corrigir o grupo do dia libera um novo disparo HOJE', async () => {
+      const cron = montar({
+        agora: AS_1201,
+        janelas: [janela()],
+        celulaDeGrupo: {
+          id: 31,
+          nomeGrupo: 'EaD 16-09 tarde',
+          categoriaGrupo: null,
+          versao: 2,
+        },
+      });
+
+      const prisma = (cron as unknown as { prisma: Record<string, any> })
+        .prisma;
+      prisma.execucaoSenhaQuiz.findMany = jest
+        .fn()
+        .mockImplementation(
+          ({ where }: { where: { versaoGrupoAplicada?: number | null } }) =>
+            Promise.resolve(
+              // So a versao 1 da celula foi aplicada; a celula agora e versao 2.
+              where.versaoGrupoAplicada === 1
+                ? [
+                    {
+                      id: 9,
+                      status: StatusExecucao.CONCLUIDA,
+                      atualizadoEm: NA_HORA,
+                    },
+                  ]
+                : [],
+            ),
+        );
+
+      await cron.tick();
+
+      expect(prisma.execucaoSenhaQuiz.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            grupoDaJanelaId: 31,
+            versaoGrupoAplicada: 2,
+          }),
+        }),
+      );
+      expect(iniciar).toHaveBeenCalledWith(
+        expect.objectContaining({ tipo: 'DATA', janelaId: 10 }),
+        'cron',
+        'CRON',
+      );
     });
 
     it('o teto de tentativas vale tambem para a janela', async () => {
