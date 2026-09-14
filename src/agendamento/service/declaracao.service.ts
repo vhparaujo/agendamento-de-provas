@@ -114,6 +114,9 @@ export class DeclaracaoService {
       matricula: agendamento.matricula,
       data: agendamento.salaFaixa.faixa.data,
       horario: agendamento.salaFaixa.faixa.horaInicio,
+      // A data de expedicao e a do DOWNLOAD: o PDF nao e guardado, e gerado a
+      // cada pedido.
+      emitidaEm: new Date(),
     });
 
     return { nomeArquivo: nomeDoArquivo(agendamento.matricula), conteudo };

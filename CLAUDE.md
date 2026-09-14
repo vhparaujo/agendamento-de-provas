@@ -1711,7 +1711,16 @@ botão que só produz 403 num banco recém-migrado.
   `dataDaProva` e `hojeUtc`. Há teste que trava isso.
 - **Os meses são uma lista no código**, não `toLocaleDateString('pt-BR')`: o texto
   vai impresso, e não pode mudar de grafia porque a imagem do Node subiu de versão
-  ou veio sem os dados completos do ICU.
+  ou veio sem os dados completos do ICU. Os dias da semana seguem a mesma regra.
+- **A data de expedição é a do DOWNLOAD** (14/09/2026): "Brasília, sábado, 12 de
+  setembro de 2026", numa linha **fixa** (base 470pt) logo acima da assinatura
+  impressa na arte, e não colada ao parágrafo — senão ela subiria e desceria
+  com o tamanho do nome. O PDF não é guardado: cada pedido gera um papel novo,
+  com a data daquele dia. ⚠️ **Aqui o dia é o de BRASÍLIA, não o do UTC** — o
+  inverso da `Faixa.data`: `emitidaEm` é um instante, e das 21h à meia-noite o
+  UTC já virou; a conversão é `agoraNaOperacao` (`relogio.ts`), a mesma do cron.
+  O teto do parágrafo desceu de 520 para **440pt** para não encostar nessa linha.
+  Há teste para a virada da noite (`textoDaEmissao`).
 - **O layout é o MODELO OFICIAL DA DECLARAÇÃO** (10/09/2026), desenhado pela
   instituição e entregue pronto. Ele substituiu o timbrado genérico da Católica
   EAD adotado em 21/08/2026, que por sua vez substituiu a "Declaração de Prova"

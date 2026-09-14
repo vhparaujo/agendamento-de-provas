@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import PDFDocument from 'pdfkit';
+import { agoraNaOperacao } from '../../senha-quiz/service/relogio';
 
 /**
  * ============================================================================
@@ -30,7 +31,8 @@ import PDFDocument from 'pdfkit';
  * Por isso este modulo nao os desenha mais: redesenha-los por cima duplicaria o
  * texto, e reescreve-los em Helvetica ao lado de um titulo na fonte da marca
  * faria a folha parecer montada em dois lugares — que e exatamente o que ela e.
- * O `pdfkit` imprime UMA coisa nesta pagina: o paragrafo.
+ * O `pdfkit` imprime DUAS coisas nesta pagina: o paragrafo e a linha de emissao
+ * ("Brasília, sábado, 12 de setembro de 2026"), logo acima da assinatura.
  *
  * A FRASE E O MESMO TEXTO DE SEMPRE. Mudou onde e como ela e impressa;
  * `textoDaDeclaracao` nao foi tocada, e o teste dela continua valendo palavra
@@ -59,6 +61,11 @@ export interface DeclaracaoDeAgendamento {
   data: Date;
   /** Hora de inicio da prova, "HH:MM". */
   horario: string;
+  /**
+   * O INSTANTE em que a declaracao foi gerada — o download. E instante, e nao
+   * dia, porque o dia depende do fuso: quem converte e `textoDaEmissao`.
+   */
+  emitidaEm: Date;
 }
 
 // ----------------------------------------------------------------- geometria
@@ -85,9 +92,22 @@ const LARGURA_UTIL = PAGINA.largura - 2 * MARGEM;
 /**
  * A FAIXA BRANCA UTIL vai do risco do titulo (termina em 220,4pt) ao topo do
  * bloco de assinatura (comeca em 527,1pt) — nesse intervalo a arte nao tem nada
- * fora da banda lateral, e e nele que o paragrafo tem de caber inteiro.
+ * fora da banda lateral. Ela e dividida em duas: o paragrafo em cima e a linha
+ * de emissao embaixo, e o teto do paragrafo para ANTES da linha de emissao.
+ *
+ * Sem essa divisao, um nome longo empurraria o paragrafo por cima da data — as
+ * duas coisas escritas na mesma altura, que e pior que a reticencia.
  */
-const LIMITE_INFERIOR = 520;
+const LIMITE_INFERIOR = 440;
+
+/**
+ * A LINHA DE EMISSAO fica em posicao FIXA, e nao logo abaixo do paragrafo.
+ * Como na carta, a data mora junto da assinatura: se ela seguisse o paragrafo,
+ * subiria e desceria conforme o tamanho do nome, e a folha de cada aluno sairia
+ * com um desenho diferente. A linha de base a 470pt deixa ~57pt ate o topo da
+ * assinatura impressa (527,1pt) — o mesmo respiro do modelo anterior.
+ */
+const EMISSAO = { base: 470, tamanho: 11 };
 
 const CORPO = {
   tamanho: 11,
@@ -175,6 +195,36 @@ const MESES = [
  */
 function dataPorExtenso(data: Date): string {
   return `${data.getUTCDate()} de ${MESES[data.getUTCMonth()]} de ${data.getUTCFullYear()}`;
+}
+
+/**
+ * Indexada por `getUTCDay()`: domingo e 0. Lista, e nao `toLocaleDateString`,
+ * pelo mesmo motivo dos meses.
+ */
+const DIAS_DA_SEMANA = [
+  'domingo',
+  'segunda-feira',
+  'terça-feira',
+  'quarta-feira',
+  'quinta-feira',
+  'sexta-feira',
+  'sábado',
+] as const;
+
+/**
+ * "Brasília, sábado, 12 de setembro de 2026" — o dia em que o aluno baixou.
+ *
+ * ⚠️ O DIA E O DE BRASILIA, NAO O DO UTC. Ao contrario de `Faixa.data` (que ja
+ * e um dia, meia-noite UTC), `emitidaEm` e um instante: das 21h a meia-noite de
+ * Brasilia o UTC ja virou, e ler as partes em UTC dataria a declaracao com o
+ * dia de amanha. `agoraNaOperacao` e a mesma conversao que o cron de senhas usa
+ * — e devolve o dia como meia-noite UTC, entao dali em diante a leitura e a
+ * mesma de `dataPorExtenso`, com os `getUTC*`.
+ */
+export function textoDaEmissao(emitidaEm: Date): string {
+  const dia = agoraNaOperacao(emitidaEm).data;
+
+  return `Brasília, ${DIAS_DA_SEMANA[dia.getUTCDay()]}, ${dataPorExtenso(dia)}`;
 }
 
 /** Um trecho da frase e o peso com que ele e impresso. */
@@ -316,6 +366,22 @@ export function pdfDeDeclaracao(
     if (i === 0) doc.text(pedaco.texto, MARGEM, topo, opcoes);
     else doc.text(pedaco.texto, opcoes);
   });
+
+  /**
+   * Coordenadas explicitas, e nao a continuacao do cursor: a linha e fixa (ver
+   * `EMISSAO`). `lineBreak: false` porque a frase e curta e de tamanho
+   * previsivel — nao ha o que quebrar, e uma segunda linha invadiria a
+   * assinatura.
+   */
+  doc
+    .font(REGULAR)
+    .fontSize(EMISSAO.tamanho)
+    .text(
+      textoDaEmissao(dados.emitidaEm),
+      MARGEM,
+      topoDaCaixa(EMISSAO.base, EMISSAO.tamanho),
+      { width: LARGURA_UTIL, lineBreak: false },
+    );
 
   doc.end();
 

@@ -2,6 +2,7 @@ import {
   pdfDeDeclaracao,
   pedacosDaDeclaracao,
   textoDaDeclaracao,
+  textoDaEmissao,
 } from './pdf-declaracao';
 
 /**
@@ -15,6 +16,8 @@ const BASE = {
   matricula: 'UC26425318',
   data: new Date(Date.UTC(2026, 5, 12)),
   horario: '15:01',
+  // 12/09/2026 10:00 em Brasilia.
+  emitidaEm: new Date('2026-09-12T13:00:00.000Z'),
 };
 
 describe('textoDaDeclaracao', () => {
@@ -62,6 +65,44 @@ describe('textoDaDeclaracao', () => {
       'outubro',
       'novembro',
       'dezembro',
+    ]);
+  });
+});
+
+describe('textoDaEmissao', () => {
+  it('escreve a cidade, o dia da semana e a data por extenso', () => {
+    expect(textoDaEmissao(BASE.emitidaEm)).toBe(
+      'Brasília, sábado, 12 de setembro de 2026',
+    );
+  });
+
+  /**
+   * O ESPELHO DA GUARDA DE UTC, ao contrario. `emitidaEm` e um instante, e das
+   * 21h a meia-noite de Brasilia o UTC ja esta no dia seguinte. Ler as partes em
+   * UTC dataria a declaracao de sabado a noite como domingo. Este teste falha se
+   * alguem trocar `agoraNaOperacao` por `getUTC*` direto no instante.
+   */
+  it('usa o dia de Brasilia, e nao o do UTC, a noite', () => {
+    // 13/09 01:30 UTC = 12/09 22:30 em Brasilia.
+    expect(textoDaEmissao(new Date('2026-09-13T01:30:00.000Z'))).toBe(
+      'Brasília, sábado, 12 de setembro de 2026',
+    );
+  });
+
+  it('nomeia todos os dias da semana em portugues', () => {
+    // 13/09/2026 e domingo; meio-dia UTC fica no mesmo dia em Brasilia.
+    const dias = Array.from({ length: 7 }, (_, i) =>
+      textoDaEmissao(new Date(Date.UTC(2026, 8, 13 + i, 12))),
+    );
+
+    expect(dias.map((t) => t.split(', ')[1])).toEqual([
+      'domingo',
+      'segunda-feira',
+      'terça-feira',
+      'quarta-feira',
+      'quinta-feira',
+      'sexta-feira',
+      'sábado',
     ]);
   });
 });
