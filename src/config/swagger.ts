@@ -12,6 +12,8 @@ import { DocumentBuilder, OpenAPIObject, SwaggerModule } from '@nestjs/swagger';
  */
 export const AUTH_ADMIN = 'admin-jwt';
 export const AUTH_ALUNO = 'aluno-jwt';
+/** API key de OUTRO SISTEMA (header `X-API-Key`) — nao e JWT. */
+export const AUTH_INTEGRACAO = 'integracao-api-key';
 
 /** Agrupamento das rotas na interface. Toda rota nova entra em uma destas tags. */
 export const TAGS = {
@@ -32,6 +34,7 @@ export const TAGS = {
   RELATORIOS: 'Relatorios e exportacoes (admin)',
   D2L: 'Integracao D2L (Valence)',
   SENHAS_QUIZ: 'Senhas dos questionarios (admin)',
+  INTEGRACAO: 'Integracao com outros sistemas',
 } as const;
 
 const DESCRICAO = `
@@ -40,12 +43,13 @@ presenciais, e **administradores** gerenciam polos, salas, horarios, turmas e o
 periodo de agendamento. Ao confirmar um agendamento, o sistema libera o acesso as
 provas (*special access*) no Brightspace (D2L) via Valence API.
 
-## Os dois perfis
+## Os perfis
 
 | Perfil | Como autentica | Token |
 |---|---|---|
 | **Aluno** | LTI 1.3 a partir do Brightspace — **nao tem senha** | JWT curto (2h), so para navegacao |
 | **Admin** | E-mail + senha (bcrypt) | Access token (15min) + refresh token (7d) |
+| **Integracao** (outro sistema) | Chave no header \`X-API-Key\` | Chave fixa por sistema, em \`INTEGRACAO_API_KEYS\`; so abre as rotas de integracao |
 
 Nao ha niveis dentro do admin: um JWT de admin valido da acesso total.
 
@@ -99,6 +103,16 @@ export function construirDocumento(app: INestApplication): OpenAPIObject {
       },
       AUTH_ALUNO,
     )
+    .addApiKey(
+      {
+        type: 'apiKey',
+        in: 'header',
+        name: 'X-API-Key',
+        description:
+          'Chave de OUTRO SISTEMA, cadastrada em INTEGRACAO_API_KEYS. So abre as rotas de integracao.',
+      },
+      AUTH_INTEGRACAO,
+    )
     .addTag(TAGS.SISTEMA, 'Health check e metadados da API')
     .addTag(TAGS.AUTH_ADMIN, 'Login, refresh e troca de senha do administrador')
     .addTag(
@@ -149,6 +163,10 @@ export function construirDocumento(app: INestApplication): OpenAPIObject {
     .addTag(
       TAGS.D2L,
       'Autorizacao OAuth 2.0 da Valence — obter e persistir o refresh token do Brightspace',
+    )
+    .addTag(
+      TAGS.INTEGRACAO,
+      'Dados para outros sistemas da instituicao, por API key — hoje, o emissor da declaracao assinada',
     )
     .build();
 

@@ -29,6 +29,14 @@ process.env.THROTTLE_NOS_TESTES = 'false';
 process.env.D2L_HABILITADO = 'false';
 
 /**
+ * A chave de integracao do e2e. Precisa estar aqui, e nao no arquivo da suite:
+ * o `ConfigModule` valida e le o ambiente quando o `AppModule` e importado, e o
+ * guard le as chaves quando a aplicacao sobe. Definida depois disso, a suite
+ * veria a integracao fechada (401 em tudo).
+ */
+process.env.INTEGRACAO_API_KEYS = `emissor-e2e:${'e2e0integracao0'.repeat(3)}`;
+
+/**
  * ============================================================================
  * POR QUE `maxWorkers: 1` EM test/jest-e2e.json
  * ============================================================================

@@ -802,7 +802,12 @@ function motivoStatus(curso: string, statusCurso: string): string {
   );
 }
 
-const INCLUDE_COMPLETO = {
+/**
+ * Exportado para a integracao (`src/integracao/`): o sistema emissor da
+ * declaracao ve a prova com os MESMOS campos que o aluno ve no portal, e duas
+ * copias desta montagem divergiriam na primeira vez que alguem mexesse numa.
+ */
+export const INCLUDE_COMPLETO = {
   aluno: { select: { curso: true } },
   disciplinas: { select: { orgUnitId: true, nomeDisciplina: true } },
   salaFaixa: {
@@ -816,7 +821,7 @@ const INCLUDE_COMPLETO = {
   },
 } satisfies Prisma.AgendamentoInclude;
 
-type AgendamentoCompleto = {
+export type AgendamentoCompleto = {
   id: number;
   alunoId: number;
   matricula: string;
@@ -837,7 +842,7 @@ type AgendamentoCompleto = {
   };
 };
 
-function montarConfirmado(
+export function montarConfirmado(
   agendamento: AgendamentoCompleto,
 ): AgendamentoConfirmado {
   const { salaFaixa } = agendamento;

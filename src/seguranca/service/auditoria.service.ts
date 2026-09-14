@@ -94,6 +94,10 @@ export type EventoSeguranca =
   // ticks da janela de tolerancia. Existe porque um cron que encontra trabalho e
   // nao faz nada, calado, e indistinguivel de um cron quebrado.
   | 'DATA_QUIZ_CRON_NADA_A_FAZER'
+  // Outro sistema leu os dados de agendamento de UMA matricula (nome, curso,
+  // polo, sala, disciplinas). Toda leitura de dado pessoal por terceiro fica
+  // rastreavel: "quem consultou o RA tal, e quando?" precisa ter resposta.
+  | 'INTEGRACAO_CONSULTA'
   | 'ACESSO_NEGADO'
   | 'LIMITE_REQUISICOES'
   | 'ROTA_SEM_CONTROLE_DE_ACESSO'

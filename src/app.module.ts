@@ -16,6 +16,7 @@ import { D2lModule } from './d2l/module/d2l.module';
 import { PrismaModule } from './database/prisma.module';
 import { FaixaModule } from './faixa/module/faixa.module';
 import { ImportacaoModule } from './importacao/module/importacao.module';
+import { IntegracaoModule } from './integracao/module/integracao.module';
 import { ModalidadeModule } from './modalidade/module/modalidade.module';
 import { PeriodoModule } from './periodo/module/periodo.module';
 import { PoloModule } from './polo/module/polo.module';
@@ -60,6 +61,8 @@ import { TurmaModule } from './turma/module/turma.module';
     D2lModule,
     // Troca em massa da senha dos questionarios (etapa 10)
     SenhaQuizModule,
+    // Dados para outros sistemas, por API key (emissor da declaracao assinada)
+    IntegracaoModule,
   ],
   controllers: [AppController],
   providers: [

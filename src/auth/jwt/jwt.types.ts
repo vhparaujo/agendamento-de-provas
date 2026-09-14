@@ -64,7 +64,19 @@ export interface AlunoJwtPayload {
   contexto?: ContextoLaunch;
 }
 
+/**
+ * Quem chama pela API key de integracao: um SISTEMA, nao uma pessoa. Nao e JWT —
+ * mora aqui porque e o que o `ApiKeyIntegracaoGuard` grava em `req.user`, ao lado
+ * dos outros dois perfis.
+ */
+export interface IntegracaoPayload {
+  perfil: Perfil.INTEGRACAO;
+  /** O nome dado a chave em `INTEGRACAO_API_KEYS` ("emissor-declaracao"). */
+  sistema: string;
+}
+
 /** Usuario autenticado anexado a request pelos guards. */
 export type UsuarioAutenticado =
   | (AdminJwtPayload & { perfil: Perfil.ADMIN })
-  | (AlunoJwtPayload & { perfil: Perfil.ALUNO });
+  | (AlunoJwtPayload & { perfil: Perfil.ALUNO })
+  | IntegracaoPayload;

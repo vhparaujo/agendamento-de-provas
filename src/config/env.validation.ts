@@ -6,9 +6,14 @@ import {
   IsNumberString,
   IsOptional,
   IsString,
+  Matches,
   MinLength,
   validateSync,
 } from 'class-validator';
+import {
+  FORMATO_DAS_CHAVES,
+  TAMANHO_MINIMO_DA_CHAVE,
+} from '../auth/integracao/chaves-de-integracao';
 
 /**
  * Valida o .env no boot. Se faltar algo essencial, a aplicacao nao sobe — e
@@ -171,6 +176,32 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsNumberString()
   SENHA_QUIZ_MAX_PAGINAS?: string;
+
+  // ==========================================================================
+  // INTEGRACAO COM OUTROS SISTEMAS (API key)
+  // ==========================================================================
+
+  /**
+   * `sistema:chave[,sistema:chave]`. Vazia ou ausente = as rotas de integracao
+   * recusam toda chamada (fail-closed) — por isso nao e obrigatoria: um ambiente
+   * sem integracao sobe normalmente, so que fechado. Duas entradas com o MESMO
+   * sistema e a rotacao da chave. Ver src/auth/integracao/chaves-de-integracao.ts.
+   */
+  @IsOptional()
+  @Matches(FORMATO_DAS_CHAVES, {
+    message:
+      'INTEGRACAO_API_KEYS deve ser `sistema:chave[,sistema:chave]`, com chaves de ' +
+      `ao menos ${TAMANHO_MINIMO_DA_CHAVE} caracteres e sem espaco, virgula ou dois-pontos`,
+  })
+  INTEGRACAO_API_KEYS?: string;
+
+  /**
+   * IPs exatos, separados por virgula. Vazio = qualquer origem (so a chave
+   * decide). So faz sentido com `TRUST_PROXY` correto.
+   */
+  @IsOptional()
+  @IsString()
+  INTEGRACAO_IPS_PERMITIDOS?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {

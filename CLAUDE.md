@@ -303,7 +303,8 @@ launch legítimo passa por essa rota.
 **Nega por padrão.** `AutenticacaoGuard` é global (`APP_GUARD`): rota **sem
 decorator de acesso é recusada com 403** e o fato vai para o log como
 `ROTA_SEM_CONTROLE_DE_ACESSO`. Toda rota nova precisa de `@SomenteAdmin()`,
-`@SomenteAluno()` ou `@Publico()`. Esquecer fecha a rota, nunca abre.
+`@SomenteAluno()`, `@SomenteIntegracao()` ou `@Publico()`. Esquecer fecha a
+rota, nunca abre.
 
 É esse guard que lê o `PERFIL_KEY` — a metadata que antes era gravada e nunca
 consultada. **Não coloque `UseGuards(JwtAdminGuard)` numa rota**: com o guard
@@ -378,6 +379,7 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `PATCH /portal/agendamentos/:id` | aluno | Trocar de horário (atômico). **Não há cancelamento pelo aluno** — só o admin, em `DELETE /agendamentos/:id` |
 | `GET /portal/agendamentos/:id/declaracao` | aluno | Declaração de agendamento em PDF — **só depois de o prazo encerrar** |
 | `GET /agendamentos/:id/historico` | admin | Quem alterou: aluno ou administrador |
+| `GET /integracao/alunos/:matricula/agendamentos` | **API key** | Dados da prova por RA para o emissor da declaração assinada. `?periodo=atual` = só a janela vigente |
 | `GET/PUT /senhas-de-prova` · `GET /:id/revelar` · `DELETE /:id` | admin | A grade dia × turno das senhas das provas. **A listagem nunca devolve o valor** |
 | `GET/PUT /senhas-de-prova/alvo` · `/horarios` · `GET /senhas-de-prova/turmas` | admin | Questionário-alvo, horários do cron, e quais turmas o lote vai tocar |
 | `PUT/DELETE /senhas-de-prova/turmas/:turmaId/modalidade` | admin | Desempata a turma **ambígua** (alunos de duas modalidades). Só nesse caso |
@@ -853,7 +855,8 @@ src/
 - **Erros de negócio** com exceções tipadas do Nest (ex: `ConflictException` para
   vaga esgotada, `ForbiddenException` para período fechado).
 - **Rota nova = decorator de acesso obrigatório.** Sem `@SomenteAdmin()`,
-  `@SomenteAluno()` ou `@Publico()` ela é negada pelo guard global.
+  `@SomenteAluno()`, `@SomenteIntegracao()` ou `@Publico()` ela é negada pelo
+  guard global.
 - **Ação sensível = evento de auditoria.** Login, troca de senha, mudança de
   admin, e o que vier de agendamento/remanejo.
 - **Comentário explica o *porquê*, não o *quê*.** O padrão do repositório é
@@ -1805,6 +1808,74 @@ com `textoDaDeclaracao` exportado para o teste ler a frase sem abrir o PDF); as
 regras ficam em `declaracao.service.ts`. Testes em `pdf-declaracao.spec.ts`
 (frase, meses, fuso) e no bloco `declaracao de agendamento` de
 `test/portal-aluno.e2e-spec.ts` (prazo, prova alheia, cancelada).
+
+## Integração: os dados da declaração para outro sistema (14/09/2026)
+
+A declaração de agendamento **vai passar a ser emitida por outro sistema da
+instituição**, assinada digitalmente e no padrão institucional. Este sistema
+deixa de ser a fonte do documento e passa a ser a fonte dos **dados**:
+`GET /integracao/alunos/:matricula/agendamentos` devolve, por RA, tudo o que a
+declaração em PDF e a tela "Prova agendada" do portal mostram. **O PDF do portal
+continua de pé** até o outro sistema entrar — as duas coisas convivem.
+
+### O terceiro perfil: `INTEGRACAO`, por API key
+
+| | Por que não serve |
+|---|---|
+| JWT do aluno | Nasce de um launch LTI (há uma pessoa logada no AVA) e só enxerga a **própria** matrícula |
+| JWT do admin | Dura 15 min, exige login com senha e dá acesso **total** |
+
+O emissor é um servidor, sem ninguém logado, consultando **qualquer** RA. Por
+isso ganhou credencial própria, que só abre `@SomenteIntegracao()`:
+
+- `Perfil.INTEGRACAO` + `ApiKeyIntegracaoGuard` (`src/auth/integracao/`),
+  chamado pelo `AutenticacaoGuard` como os de JWT. **A autenticação está isolada
+  no guard de propósito**: se o outro lado exigir OAuth2 client credentials, só
+  ele muda — o endpoint não.
+- `INTEGRACAO_API_KEYS` = `sistema:chave[,sistema:chave]`. O **nome** vai para a
+  auditoria; duas entradas do **mesmo** sistema são a **rotação** sem janela de
+  indisponibilidade. Formato validado no boot (`FORMATO_DAS_CHAVES`, o mesmo que o
+  guard usa), chave com 32+ caracteres.
+- **Comparação por SHA-256 + `timingSafeEqual`**, percorrendo todas as chaves:
+  `timingSafeEqual` lança com buffers de tamanhos diferentes (a chave crua viraria
+  500 e vazaria o tamanho pelo tempo), e parar no primeiro acerto vazaria a
+  posição.
+- ⚠️ **Vazia = FAIL-CLOSED.** O ambiente sobe e a rota recusa tudo (401), com
+  aviso no log. Aceitar enquanto não houver chave abriria os dados pessoais de
+  todo aluno num servidor que só esqueceu a variável.
+- `INTEGRACAO_IPS_PERMITIDOS` (opcional, IP exato, sem CIDR) é conferido **antes**
+  da chave: de fora da lista a resposta é 403 com chave certa ou errada, e
+  ninguém de fora testa chaves. **Depende de `TRUST_PROXY`** — sem ele, liberar o
+  IP do proxy libera a internet inteira.
+- 401 com **mensagem única** para chave ausente e inválida. `req.user` vira
+  `{ perfil: INTEGRACAO, sistema }`, e `extrairAtor` escreve `integracao:<sistema>`.
+- **Toda consulta é auditada** (`INTEGRACAO_CONSULTA`, com a matrícula e quantas
+  provas saíram) — inclusive a de RA inexistente, que é justamente o que se quer
+  ver numa varredura. Limite de requisições: o padrão (120/min por IP).
+
+### O recorte e os campos
+
+| Decisão | Por quê |
+|---|---|
+| **Histórico completo** do RA, só `CONFIRMADO` | Segunda via de declaração antiga. Cancelada não reserva cadeira — declará-la afirmaria prova que não existe |
+| `?periodo=atual` = **a janela vigente**, não o semestre | O mesmo `where` de `meusAgendamentos` (sem o filtro de vínculos do token). Durante a SUB, a N2 do mesmo semestre fica de fora. Sem janela: `[]`, nunca o histórico em silêncio. Lido à mão, como os filtros do relatório — outro valor é 400 |
+| **`prazoEncerrado`** em cada prova | É a regra da declaração (`exigirEncerrado`) entregue como **dado**: o emissor não tem como saber que o aluno ainda troca de horário. Janela vigente → `situacaoAtual().encerrado`; qualquer outra → `true` (regra 7: o aluno só mexe na vigente) |
+| A janela da prova sai do **par** `periodoLetivoId + rodada` | `Agendamento` não guarda o id da janela. `janelaDoAgendamento` casa pela rodada e por `idsDaJanela` (principal **ou** mapa) — só o principal perderia os presenciais. Duas linhas do par: a mais recente |
+| `data` em **`AAAA-MM-DD`** | String, e não instante: o consumidor não repete o bug de ler `@db.Date` no fuso de Brasília e recuar um dia |
+| **404** para RA não importado, **200 `[]`** para quem não tem prova | Quem chama é um sistema confiável, e os dois casos pedem ações diferentes. No portal o 404 é único por outro motivo (aluno sondando URL) |
+| Polo **da matrícula** (vínculo) e polo **da prova** (faixa) | São perguntas diferentes, como na tela: "Campus/Polo da Matrícula" é o cadastro de hoje; o da prova é onde a pessoa senta |
+| Fora: **e-mail e notas** | Minimização (LGPD). A declaração não usa nenhum dos dois |
+
+**A montagem da prova é a do portal, não uma cópia**: `INCLUDE_COMPLETO` e
+`montarConfirmado` foram exportados de `agendamento.service.ts`, e
+`descricaoDaRodada` (`agendamento/service/rodada.ts`) espelha `nomeDaRodada` do
+front. Duas montagens divergiriam na primeira mudança.
+
+Testes: `chaves-de-integracao.spec.ts` e `api-key-integracao.guard.spec.ts`
+(chave, rotação, fail-closed, IP), `janela-do-agendamento.spec.ts` e
+`test/integracao.e2e-spec.ts` (401 com JWT de aluno, a chave não abre o portal,
+histórico, cancelada fora, `prazoEncerrado`, `?periodo=atual`). A chave do e2e
+mora em `test/setup-e2e.ts` porque o guard a lê quando a aplicação sobe.
 
 ## Agendamento compulsório (etapa 9)
 

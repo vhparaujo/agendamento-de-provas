@@ -268,6 +268,8 @@ segredo ausente em produção.
 | `SENHA_QUIZ_CRON_TOLERANCIA_MIN` | | default `30` — janela em que um restart ainda aplica o turno |
 | `SENHA_QUIZ_CRON_MAX_TENTATIVAS` | | default `3` — teto de tentativas reais por célula |
 | `SENHA_QUIZ_CONCORRENCIA` / `_DELAY_MS` / `_TIMEOUT_MS` / `_MAX_PAGINAS` | | ritmo do lote contra a Valence (default `4` / `400` / `30000` / `50`) |
+| `INTEGRACAO_API_KEYS` | integração | `sistema:chave[,sistema:chave]`, chaves com 32+ caracteres (`openssl rand -hex 32`). **Vazia = rotas de integração recusam tudo (401).** Duas entradas do mesmo sistema = rotação |
+| `INTEGRACAO_IPS_PERMITIDOS` | | IPs exatos, separados por vírgula. Vazio = qualquer origem. Depende de `TRUST_PROXY` correto |
 
 ⚠️ **Os horários do cron e o questionário-alvo não estão no `.env`** (desde
 19/08/2026): o admin os cadastra na tela, e eles moram em
@@ -1157,6 +1159,41 @@ entra aqui: a substitutiva é outra prova das mesmas matérias.
 quem tem dois vínculos na mesma matrícula recebe as disciplinas dos dois juntas.
 São 2 alunos em 7519 — ver "Turma não pertence a um curso".
 
+### Integração — dados para outros sistemas
+
+Autenticadas por **API key** no header `X-API-Key` (`INTEGRACAO_API_KEYS`), e não
+por JWT. É o terceiro perfil do sistema: quem chama é um **servidor de outro
+sistema**, sem ninguém logado. A chave só abre estas rotas — não vale como admin
+nem como aluno, e nenhum JWT vale aqui.
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `GET` | `/integracao/alunos/:matricula/agendamentos` | Tudo o que a declaração e a tela "Prova agendada" mostram, por RA. `?periodo=atual` restringe à janela vigente |
+
+Existe porque a **declaração de agendamento vai passar a ser emitida por outro
+sistema da instituição**, assinada digitalmente — este deixa de ser a fonte do
+documento e passa a ser a fonte dos dados. O PDF do portal continua de pé até lá.
+
+A resposta traz o aluno (`nome`), os **vínculos** (curso, situação, formato e
+polo da matrícula) e cada **prova confirmada** — rodada (`N2`/`SUB` e o nome por
+extenso), período letivo, a janela de agendamento com `prazoEncerrado`, data
+(`AAAA-MM-DD`), horário, formato, polo e sala da prova, disciplinas, quando foi
+agendada e se a secretaria alocou.
+
+- **Histórico completo**, só `CONFIRMADO`, da mais recente para a mais antiga.
+  Cancelada não aparece: não reserva cadeira, e declará-la afirmaria uma prova
+  que não existe.
+- **`?periodo=atual`** = a janela vigente (N2 **ou** SUB, a cadastrada por
+  último), o mesmo recorte do portal. Qualquer outro valor responde 400.
+- **Emita a declaração só com `periodo.prazoEncerrado: true`.** Com o prazo
+  aberto o aluno ainda troca de horário. Janela que não é a vigente vem sempre
+  `true`.
+- **404** = RA não importado; **200 com `agendamentos: []`** = existe e não tem
+  prova no recorte.
+- **Fica de fora:** e-mail e notas — a declaração não usa nenhum dos dois.
+- **Toda consulta vai para a auditoria** (`INTEGRACAO_CONSULTA`), com o nome do
+  sistema e a matrícula consultada. A chave nunca.
+
 ---
 
 ## Documentação da API (Swagger)
@@ -1202,7 +1239,8 @@ exceção nomeada no próprio teste, com o motivo escrito.
 
 | Controle | Como está |
 |---|---|
-| **Deny by default** | Guard global: rota sem `@SomenteAdmin()`/`@SomenteAluno()`/`@Publico()` é **negada** |
+| **Deny by default** | Guard global: rota sem `@SomenteAdmin()`/`@SomenteAluno()`/`@SomenteIntegracao()`/`@Publico()` é **negada** |
+| **Integração** | API key por sistema (`X-API-Key`), comparada por hash em tempo constante; vazia = tudo recusado; lista opcional de IPs; cada consulta auditada |
 | **Rate limiting** | 5/min em login, refresh, troca de senha e callback OAuth do D2L · 60/min no launch LTI · 10/5min em uploads · 120/min no resto |
 | **Cabeçalhos** | `helmet` com CSP `default-src 'none'` na API (relaxada só na página do Swagger) |
 | **Auditoria** | Log JSON por evento: login, falhas, troca de senha, ações administrativas, 401/403/429 |

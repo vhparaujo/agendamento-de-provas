@@ -43,7 +43,7 @@ export class TrocarHorarioDto {
   faixaId!: number;
 }
 
-class PoloDoPortalDto {
+export class PoloDoPortalDto {
   @ApiProperty({ example: 6 })
   id!: number;
 
@@ -51,7 +51,7 @@ class PoloDoPortalDto {
   nome!: string;
 }
 
-class SalaDoPortalDto {
+export class SalaDoPortalDto {
   @ApiProperty({ example: 21 })
   id!: number;
 
@@ -59,7 +59,7 @@ class SalaDoPortalDto {
   nome!: string;
 }
 
-class ModalidadeDoPortalDto {
+export class ModalidadeDoPortalDto {
   @ApiProperty({
     example: 'EAD',
     enum: ['EAD', 'SEMI', 'MODULAR', 'PRESENCIAL'],
@@ -73,7 +73,7 @@ class ModalidadeDoPortalDto {
   duracaoMinutos!: number;
 }
 
-class DisciplinaDoPortalDto {
+export class DisciplinaDoPortalDto {
   @ApiProperty({
     example: '6606',
     description: 'orgUnitId da turma no D2L.',

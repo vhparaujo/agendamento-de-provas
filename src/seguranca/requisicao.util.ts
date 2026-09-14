@@ -33,6 +33,10 @@ export function extrairAtor(req: Request): string | undefined {
     return `aluno:${usuario.sub}`;
   }
 
+  if (usuario.perfil === Perfil.INTEGRACAO) {
+    return `integracao:${usuario.sistema}`;
+  }
+
   return undefined;
 }
 

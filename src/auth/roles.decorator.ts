@@ -7,14 +7,16 @@ import {
 import {
   ApiBearerAuth,
   ApiForbiddenResponse,
+  ApiSecurity,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { Request } from 'express';
-import { AUTH_ADMIN, AUTH_ALUNO } from '../config/swagger';
+import { AUTH_ADMIN, AUTH_ALUNO, AUTH_INTEGRACAO } from '../config/swagger';
 import { Perfil } from '../enums/perfil.enum';
 import {
   AdminJwtPayload,
   AlunoJwtPayload,
+  IntegracaoPayload,
   UsuarioAutenticado,
 } from './jwt/jwt.types';
 
@@ -69,6 +71,24 @@ export const SomenteAluno = () =>
     }),
   );
 
+/**
+ * Rota para OUTRO SISTEMA, e nao para pessoa: autentica pela API key do header
+ * `X-API-Key` (`ApiKeyIntegracaoGuard`), nunca por JWT. A chave so abre as rotas
+ * marcadas com este decorator — nao vale como admin nem como aluno, e nenhum
+ * JWT vale aqui.
+ */
+export const SomenteIntegracao = () =>
+  applyDecorators(
+    SetMetadata(PERFIL_KEY, Perfil.INTEGRACAO),
+    ApiSecurity(AUTH_INTEGRACAO),
+    ApiUnauthorizedResponse({
+      description: 'Header X-API-Key ausente ou com chave invalida',
+    }),
+    ApiForbiddenResponse({
+      description: 'Chamada de um IP fora de INTEGRACAO_IPS_PERMITIDOS',
+    }),
+  );
+
 /** Injeta o payload do token na assinatura do handler. */
 export const UsuarioLogado = createParamDecorator(
   (_dado: unknown, ctx: ExecutionContext): UsuarioAutenticado => {
@@ -88,5 +108,13 @@ export const AlunoLogado = createParamDecorator(
   (_dado: unknown, ctx: ExecutionContext): AlunoJwtPayload => {
     const request = ctx.switchToHttp().getRequest<Request>();
     return request.user as AlunoJwtPayload;
+  },
+);
+
+/** O sistema dono da API key que autenticou a chamada. */
+export const IntegracaoLogada = createParamDecorator(
+  (_dado: unknown, ctx: ExecutionContext): IntegracaoPayload => {
+    const request = ctx.switchToHttp().getRequest<Request>();
+    return request.user as IntegracaoPayload;
   },
 );

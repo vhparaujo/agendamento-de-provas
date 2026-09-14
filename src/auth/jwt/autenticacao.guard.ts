@@ -11,6 +11,7 @@ import { Observable } from 'rxjs';
 import { Perfil } from '../../enums/perfil.enum';
 import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 import { extrairIp } from '../../seguranca/requisicao.util';
+import { ApiKeyIntegracaoGuard } from '../integracao/api-key-integracao.guard';
 import { PERFIL_KEY, PUBLICO_KEY } from '../roles.decorator';
 import { JwtAdminGuard } from './jwt-admin.guard';
 import { JwtAlunoGuard } from './jwt-aluno.guard';
@@ -24,6 +25,7 @@ import { JwtAlunoGuard } from './jwt-aluno.guard';
  *   @Publico()        -> libera
  *   @SomenteAdmin()   -> delega ao JwtAdminGuard
  *   @SomenteAluno()   -> delega ao JwtAlunoGuard
+ *   @SomenteIntegracao() -> delega ao ApiKeyIntegracaoGuard (outro sistema)
  *   nenhum decorator  -> 403 (fail-closed)
  *
  * O ultimo caso e o motivo de este guard existir. Antes, proteger era opt-in:
@@ -43,6 +45,7 @@ export class AutenticacaoGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly jwtAdminGuard: JwtAdminGuard,
     private readonly jwtAlunoGuard: JwtAlunoGuard,
+    private readonly apiKeyIntegracaoGuard: ApiKeyIntegracaoGuard,
     private readonly auditoria: AuditoriaService,
   ) {}
 
@@ -61,6 +64,8 @@ export class AutenticacaoGuard implements CanActivate {
       return this.jwtAdminGuard.canActivate(contexto);
     if (perfil === Perfil.ALUNO)
       return this.jwtAlunoGuard.canActivate(contexto);
+    if (perfil === Perfil.INTEGRACAO)
+      return this.apiKeyIntegracaoGuard.canActivate(contexto);
 
     return this.recusarRotaSemControle(contexto);
   }
@@ -77,13 +82,13 @@ export class AutenticacaoGuard implements CanActivate {
     this.auditoria.registrar('ROTA_SEM_CONTROLE_DE_ACESSO', {
       rota,
       ip: extrairIp(req),
-      detalhe: `${contexto.getClass().name}.${contexto.getHandler().name} sem @Publico/@SomenteAdmin/@SomenteAluno`,
+      detalhe: `${contexto.getClass().name}.${contexto.getHandler().name} sem @Publico/@SomenteAdmin/@SomenteAluno/@SomenteIntegracao`,
     });
 
     this.logger.error(
       `Rota sem decorator de acesso: ${rota} ` +
         `(${contexto.getClass().name}.${contexto.getHandler().name}). ` +
-        'Adicione @SomenteAdmin(), @SomenteAluno() ou @Publico().',
+        'Adicione @SomenteAdmin(), @SomenteAluno(), @SomenteIntegracao() ou @Publico().',
     );
 
     throw new ForbiddenException('Rota sem controle de acesso configurado');

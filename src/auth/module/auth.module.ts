@@ -14,6 +14,7 @@ import { LtiService } from '../lti/lti.service';
 import { AuthService } from '../service/auth.service';
 import { JwtAdminGuard } from '../jwt/jwt-admin.guard';
 import { JwtAlunoGuard } from '../jwt/jwt-aluno.guard';
+import { ApiKeyIntegracaoGuard } from '../integracao/api-key-integracao.guard';
 
 @Module({
   imports: [ConfigModule, PassportModule, JwtModule.register({}), AlunoModule],
@@ -26,11 +27,12 @@ import { JwtAlunoGuard } from '../jwt/jwt-aluno.guard';
     // declarado no AppModule) os injeta para delegar a decisao.
     JwtAdminGuard,
     JwtAlunoGuard,
+    ApiKeyIntegracaoGuard,
     LtiService,
     LtiStateStore,
     LtiCodeStore,
     LtiKeysService,
   ],
-  exports: [AuthService, JwtAdminGuard, JwtAlunoGuard],
+  exports: [AuthService, JwtAdminGuard, JwtAlunoGuard, ApiKeyIntegracaoGuard],
 })
 export class AuthModule {}

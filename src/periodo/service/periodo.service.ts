@@ -1099,7 +1099,7 @@ type JanelaComMapa = {
  * gravada com ele. Deixa-lo de fora faria essa prova sumir de toda consulta pela
  * janela — e ela existe.
  */
-function idsDaJanela(periodo: {
+export function idsDaJanela(periodo: {
   periodoLetivoId: string;
   letivosPorModalidade: { periodoLetivoId: string }[];
 }): string[] {
