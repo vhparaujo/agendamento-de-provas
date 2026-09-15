@@ -70,6 +70,13 @@ import { SenhaQuizService } from '../service/senha-quiz.service';
     SenhaQuizService,
     SenhaQuizCron,
   ],
-  exports: [SenhaQuizService, GradeSenhasService],
+  // Grade de grupos e modalidade da turma: o modulo de grupos do Brightspace
+  // grava os nomes na MESMA grade e escolhe a categoria pela MESMA derivacao.
+  exports: [
+    SenhaQuizService,
+    GradeSenhasService,
+    GradeGruposService,
+    ModalidadeDaTurmaService,
+  ],
 })
 export class SenhaQuizModule {}

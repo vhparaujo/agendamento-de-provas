@@ -167,6 +167,15 @@ export class EnvironmentVariables {
   @IsNumberString()
   SENHA_QUIZ_DELAY_MS?: string;
 
+  // Ritmo dos lotes de grupos do Brightspace (criar e inscrever).
+  @IsOptional()
+  @IsNumberString()
+  GRUPOS_D2L_DELAY_MS?: string;
+
+  @IsOptional()
+  @IsNumberString()
+  GRUPOS_D2L_TIMEOUT_MS?: string;
+
   /** Maior que o timeout do enrollments: objetos de quiz sao grandes. */
   @IsOptional()
   @IsNumberString()

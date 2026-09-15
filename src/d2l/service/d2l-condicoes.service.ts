@@ -180,7 +180,7 @@ export class D2lCondicoesService {
    * aplicacao por causa de um recurso que talvez nem seja usado seria pior que
    * recusar na primeira chamada dele.
    */
-  private exigirLpSuficiente() {
+  exigirLpSuficiente() {
     const cfg = this.http.exigirConfigurado();
     const versao = Number(cfg.apiVersaoLp);
 

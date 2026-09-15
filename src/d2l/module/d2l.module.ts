@@ -4,6 +4,7 @@ import { D2lController } from '../controller/d2l.controller';
 import { D2lCondicoesService } from '../service/d2l-condicoes.service';
 import { D2lEnrollmentsService } from '../service/d2l-enrollments.service';
 import { D2lGradesService } from '../service/d2l-grades.service';
+import { D2lGruposService } from '../service/d2l-grupos.service';
 import { D2lHttpService } from '../service/d2l-http.service';
 import { D2lOauthService } from '../service/d2l-oauth.service';
 import { D2lQuizzesService } from '../service/d2l-quizzes.service';
@@ -29,6 +30,9 @@ import { D2lQuizzesService } from '../service/d2l-quizzes.service';
  * condicoes nao sao campo do `QuizData`: sao um recurso do LP, com numeracao de
  * versao independente da do LE.
  *
+ * Desde 14/09/2026 contem tambem a ESCRITA de grupos (`D2lGruposService`):
+ * criar categoria e grupos e inscrever/remover alunos — ver src/grupos-d2l.
+ *
  * PrismaService e AuditoriaService vem de modulos globais.
  */
 @Module({
@@ -40,6 +44,7 @@ import { D2lQuizzesService } from '../service/d2l-quizzes.service';
     D2lQuizzesService,
     D2lCondicoesService,
     D2lGradesService,
+    D2lGruposService,
   ],
   exports: [
     D2lOauthService,
@@ -48,6 +53,7 @@ import { D2lQuizzesService } from '../service/d2l-quizzes.service';
     D2lQuizzesService,
     D2lCondicoesService,
     D2lGradesService,
+    D2lGruposService,
   ],
 })
 export class D2lModule {}

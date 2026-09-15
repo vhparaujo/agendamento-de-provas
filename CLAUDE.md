@@ -386,6 +386,8 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `GET/PUT /senhas-de-prova/janelas` | admin | O calendário de abertura/fechamento do questionário, por modalidade |
 | `GET/PUT /senhas-de-prova/grupos` | admin | A grade **dia × janela** do grupo que libera a prova. PUT em lote; nome vazio apaga a célula |
 | `POST /senhas-de-prova/execucoes` · `GET /:id` · `/:id/relatorio` | admin | Troca a **senha** (`tipo: SENHA`) ou a **janela de datas** (`tipo: DATA`) dos questionários no Brightspace; acompanha e baixa o CSV |
+| `GET /grupos-d2l/painel` · `PUT /grupos-d2l/nomes` · `POST /grupos-d2l/horarios/resolver` | admin | Grupos do Brightspace: os nomes por bloco (EaD, Semi/Modular, Presencial) e a faixa sem janela de mesmo horário |
+| `POST /grupos-d2l/execucoes` · `GET /:id` · `/:id/relatorio` | admin | **Cria** categorias e grupos em todas as turmas, ou **inscreve** os alunos (remanejado sai do grupo antigo). Simula por padrão |
 | `GET /d2l/callback` | — | Callback OAuth da Valence: troca o `code` e grava o refresh token |
 
 Pendente: special access no quiz (adiado pelo cliente). OAuth, leitura de
@@ -720,6 +722,10 @@ tudo misturado.
   (26/08/2026), a pedido do cliente.** Roda no mesmo disparo que move as datas —
   ver "O grupo que libera a prova troca no MESMO disparo", abaixo. Exige o escopo
   `groups:group:read` **no consentimento** (reautorize) e LP ≥ 1.49.
+- **Valence API — CRIAR grupos e INSCREVER alunos**: ✅ **implementado
+  (14/09/2026), a pedido do cliente.** `src/grupos-d2l/` — ver "Grupos no
+  Brightspace pela API". Exige `groups:group:create`, `groups:enrollment:create`
+  e `groups:enrollment:delete` **no consentimento** (reautorize).
 - **Valence API — special access nos quizzes**: ⬜ **ADIADA (decisão de
   03/08/2026).** O sistema hoje agenda, emite relatório e troca a senha da prova;
   a liberação individual por aluno fica para uma fase posterior. Não implemente
@@ -834,6 +840,11 @@ src/
                relogio.ts · resolucao-orgunit.service.ts (CSV ∩ ofertas do
                semestre) · resolucao-grupo.service.ts (nome de grupo → GroupId,
                turma a turma)
+  grupos-d2l/  ✅ grupos de prova no Brightspace pela API: nomes por bloco
+               (nomes-dos-grupos.service, grava na grade de grupos) · os dois
+               lotes (grupos-d2l.service) · puras: bloco.ts (categorias),
+               plano.ts (o que criar/inscrever/remover), resultado.ts. O cliente
+               REST fica em d2l/service/d2l-grupos.service.ts
 
   app.module.ts  app.controller.ts (health)  main.ts
 ```
@@ -1483,6 +1494,10 @@ lugar só, `relatorio/service/csv-grupos-d2l.ts`.
 
 ## Grupos do Brightspace: um arquivo por HORÁRIO **e** TURMA
 
+> Desde 14/09/2026 os grupos são **criados e preenchidos pela API** (ver "Grupos
+> no Brightspace pela API", abaixo). Os CSVs continuam de pé para conferência e
+> como plano B — e as regras de recorte desta seção valem para os dois caminhos.
+
 `GET /relatorios/grupos-d2l` lista os grupos do recorte com quantos alunos cada
 um tem; `/:faixaId/:orgUnitId` baixa o CSV de um; `/zip` baixa todos de uma vez.
 É a aba **Relatorios** do painel.
@@ -1581,6 +1596,153 @@ Duas consequências no contrato, ambas testadas:
 O front usa o `nomeArquivo` que vem do backend: resposta em blob não expõe o
 `Content-Disposition`, e montar o nome no cliente deixaria a regra em dois
 lugares.
+
+## Grupos no Brightspace pela API (14/09/2026)
+
+Tela **Grupos D2L** (`GruposBrightspaceView.vue`), módulo `src/grupos-d2l/`.
+Substitui o import manual, turma a turma, dos CSVs de `/relatorios/grupos-d2l` —
+que continuam existindo para conferência e como plano B. Três passos, na ordem da
+operação real, **depois do fim do prazo de agendamento**:
+
+1. **Escrever os nomes** dos grupos de cada bloco, uma linha por sessão (dia +
+   horário de uma janela + nome). O "+" já traz a próxima sessão; Enter no nome
+   da última linha abre a seguinte.
+2. **Criar categorias e grupos** em todas as turmas com prova no intervalo.
+3. **Inscrever os alunos** — quem foi remanejado sai do grupo antigo.
+
+Os passos 2 e 3 são **dois botões e duas execuções**, por decisão do cliente: um
+clique não acumula as requisições dos dois.
+
+### Os nomes moram na GRADE DE GRUPOS, não numa tabela nova
+
+Cada linha vira uma célula de `GrupoDaJanela` com `categoriaGrupo` = a categoria
+do bloco. É o que garante um nome só para as três coisas que o usam: **criar** o
+grupo, **inscrever** o aluno e o **disparo do quiz** procurar o grupo da sessão.
+Com duas fontes, um erro de digitação faria o disparo não achar o grupo no dia da
+prova. Consequência visível: as linhas também aparecem na grade da aba "Senhas e
+datas", e vice-versa.
+
+- **Semi/Modular grava nas DUAS modalidades** — elas dividem a categoria e o
+  calendário, e o disparo de cada uma lê a própria janela.
+- `PUT /grupos-d2l/nomes` **substitui o bloco inteiro no intervalo**: o que não
+  vier é apagado. A gravação passa por `GradeGruposService.salvar` (transação,
+  `versao`, auditoria), nunca direto no Prisma.
+- Recusas, todas com a linha na mensagem: horário que não é de janela ativa do
+  bloco, dia fora do intervalo, duas linhas para a mesma sessão, **o mesmo nome em
+  duas sessões** (cairiam no mesmo grupo do Brightspace e a prova abriria para as
+  duas) e nomes que gerariam o mesmo `Code`.
+- Só as **células** entram. O nome padrão da janela (`JanelaDeProva.nomeGrupo`)
+  não é criado nem usado na inscrição.
+
+### As categorias são cravadas no código (`bloco.ts`)
+
+| Bloco | Modalidades | Categoria |
+|---|---|---|
+| `EAD` | EAD | `Provas Presenciais - EAD` |
+| `SEMI_MODULAR` | SEMI, MODULAR | `Provas Presenciais - Semi e Modular` |
+| `PRESENCIAL` | PRESENCIAL | `Provas Presenciais - Presencial` (15/09/2026) |
+
+Não é configuração de tela de propósito: o nome é a chave com que o lote reencontra
+a categoria em cada turma, e renomeá-lo aqui faria o próximo lote criar **outra**
+categoria em 150 turmas. Mudar exige renomear no Brightspace antes.
+
+A categoria de cada turma sai da **mesma derivação de modalidade do lote de
+datas** (`ModalidadeDaTurmaService`), com uma diferença: **Semi + Modular na mesma
+turma não é ambígua aqui** (mesma categoria, mesmos horários). Modalidades de blocos
+diferentes na mesma turma (EaD com Semi/Modular, qualquer uma com Presencial)
+são `TURMA_AMBIGUA` e se resolvem no desempate da aba "Senhas e datas".
+
+### A Valence não tem inscrição em lote — o que economiza chamada
+
+É um `POST .../enrollments/` por aluno por grupo, e isso não tem atalho. O que o
+lote evita é todo o resto:
+
+- **Sem classlist**: o `userIdD2L` já está no `Agendamento` (convertido para
+  número na fronteira — `Enrollments` e `UserId` são numéricos).
+- **Uma leitura por turma**: `GET .../groups/` traz os `Enrollments` de todos os
+  grupos da categoria. Só a **diferença** vira escrita (`plano.ts`, puro).
+- **Nada mudou = nenhuma chamada.** Cada execução grava uma `assinatura` (hash do
+  que quis aplicar: nomes, turmas e, na inscrição, quem vai para qual grupo). Se a
+  última execução REAL terminou sem pendência com a mesma assinatura, o botão
+  responde `nadaAFazer: true` sem abrir lote. `forcar` confere no Brightspace
+  mesmo assim, para quando alguém mexeu direto lá.
+- **Simulação faz as leituras e nenhuma escrita** — responde "quantas inscrições
+  sairiam?" com o estado real, não com estimativa.
+- Sequencial, com `GRUPOS_D2L_DELAY_MS` (400 ms) antes de cada chamada e um retry
+  de 429.
+
+### Criar categorias e grupos
+
+- **Todos os nomes do bloco em toda turma do bloco**, não só os das sessões em que
+  a turma tem aluno: o disparo do quiz procura o grupo da sessão em toda turma da
+  modalidade (decisão do cliente, "toda turma tem todos os grupos").
+- ⚠️ **A categoria é assíncrona**: o POST responde 202, e grupo criado antes de
+  `GET .../status` voltar `Complete` toma 409. O lote espera até 30 s
+  (15 × 2 s); passando disso, `CATEGORIA_EM_PROCESSAMENTO` e rodar de novo depois.
+- **A categoria nasce com N grupos genéricos**: o tipo "número de grupos, sem
+  inscrição" exige `NumberOfGroups` não nulo, e zero não é garantido pela
+  documentação. Os genéricos viram os grupos da prova por **renomeação**.
+- **Grupo vazio com nome fora da lista é reaproveitado** antes de criar outro — é
+  a mesma regra que absorve os genéricos e que corrige no Brightspace um nome
+  corrigido na tela. **Grupo com aluno nunca é tocado** (`GRUPO_SOBRANDO`,
+  informativo): pode ser o de uma prova que já aconteceu.
+- `Code` derivado do nome (`codigoDoGrupo`): os caracteres que a API recusa viram
+  `-`, corte em 50. O lote nunca procura pelo código — só pelo nome normalizado,
+  com a mesma função do disparo (`normalizarNomeDeGrupo`).
+
+### Inscrever os alunos
+
+O grupo de cada reserva sai da cadeia que o disparo usa:
+**horário da faixa → janela da modalidade (horário EXATO) → célula do dia → grupo
+pelo nome**. As reservas CANCELADAS entram na leitura: são elas que dizem quem
+tirar de um grupo.
+
+**O remanejo depois do prazo** (decisão do cliente): o aluno entra no grupo do
+horário novo e sai do antigo. As três travas da remoção, testadas em
+`plano.spec.ts`:
+
+1. só sai quem o portal conhece (reserva nesta turma) — tutor ou inclusão manual
+   da secretaria **nunca** é removido;
+2. quem tem pendência de resolução (sem janela, sem célula) não sai de lugar
+   nenhum — trocaria "grupo possivelmente certo" por "grupo nenhum";
+3. quem tem grupo desejado inexistente também não sai.
+
+404 na inscrição é `ALUNO_NAO_ENCONTRADO` (em geral, aluno fora da turma no
+Brightspace), e não falha de rede. Para isso o canal HTTP ganhou
+`NaoEncontradoNoBrightspace` — que **não** estende `RecusaDoBrightspace` de
+propósito: `recusaDefinitiva` sempre tratou 404 como não definitivo.
+
+### Pendência de horário: faixa × janela
+
+Faixa sem janela ativa **idêntica** na modalidade deixa os alunos dela sem grupo.
+A comparação é exata, por modalidade (a faixa é neutra). O painel lista, sugere a
+janela correspondente (a sem faixa casada e mais próxima) e o admin escolhe **qual
+dos dois horários vale**:
+
+| `vale` | O que muda | Por onde |
+|---|---|---|
+| `FAIXA` | a JANELA ganha o horário das faixas | `GradeSenhasService.salvarJanelas` (valida, sobe a `versao`, audita). **Recusado se a nova abertura inverter o `diaSeguinte`** — a hora do disparo é decisão da aba "Senhas e datas" |
+| `JANELA` | as FAIXAS do intervalo ganham o horário da janela | `FaixaService.atualizar`, uma a uma, com as recusas da tela de faixas. **Os agendamentos mudam de horário junto**; uma recusa não desfaz as outras |
+
+Na operação real faixa e janela são iguais; isto existe para teste e para erro de
+cadastro. Auditado como `GRUPOS_D2L_HORARIO_RESOLVIDO`.
+
+### Detalhes que vão custar tempo se esquecidos
+
+- **Escopos no consentimento**: `groups:group:create groups:enrollment:create
+  groups:enrollment:delete` (além do `groups:group:read` que já existia). Sem
+  reautorizar (`npm run d2l:autorizar`), cada turma vira `FALHA_NA_API` com 403 —
+  o detalhe do item diz isso.
+- **Um lote de grupos por vez**, entre os dois tipos (mesma tabela). Ele não
+  conversa com o guard do lote de senhas/datas: são recursos diferentes da API.
+- ⚠️ **Antes do primeiro uso real, rode numa turma de teste**: a criação de
+  categoria com `NumberOfGroups` e os nomes que a D2L dá aos grupos genéricos não
+  foram exercitados contra o tenant — os testes cobrem as rotas e o corpo, não a
+  resposta real. É para isso que existe o `orgUnitId` da execução ("Só uma
+  turma", na tela): a simulação não cria categoria, então o primeiro teste de
+  verdade precisa ser pequeno.
+- O relatório CSV sai com **as pendências primeiro** e não lista quem já estava
+  no grupo certo (`jaInscritos` só conta).
 
 ## Lista de presença: um PDF com uma página por SALA
 
@@ -2726,6 +2888,10 @@ lista os grupos que existem naquela turma, para distinguir os dois casos.
    `StartDate`/`EndDate` do questionário, por **modalidade**, em até 6 janelas
    por dia. A modalidade da turma é **derivada dos agendamentos** — não há, e não
    deve haver, coluna para ela. Ver "Datas das provas".
+12. ✅ Grupos no Brightspace pela API (14/09/2026): nomes por bloco na grade de
+   grupos, e dois lotes — criar categorias e grupos, inscrever alunos (com o
+   remanejo tirando do grupo antigo). **Exige `D2L_HABILITADO`** e os escopos
+   `groups:group:create groups:enrollment:create groups:enrollment:delete`.
 
 **Bloqueios externos:** o consentimento OAuth precisa incluir
 `quizzing:quizzes:read quizzing:quizzes:write` — acrescentar ao `D2L_SCOPES` não

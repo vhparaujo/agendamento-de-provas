@@ -836,6 +836,51 @@ no cabeçalho e `Nome de usuário` deixa de casar com a coluna esperada. O
 montador é o mesmo (`csv-relatorio.ts`), parametrizado por `{ separador, bom }`,
 com **default no formato do Excel**.
 
+### Grupos no Brightspace — criar e inscrever pela API
+
+Tela **Grupos D2L**. Substitui o import manual dos CSVs da seção anterior (que
+continuam disponíveis). O admin escreve os nomes dos grupos de cada bloco — **EaD**
+(categoria `Provas Presenciais - EAD`), **Semipresencial/Modular** (categoria
+`Provas Presenciais - Semi e Modular`) e **Presencial** (categoria
+`Provas Presenciais - Presencial`) —, uma linha por sessão, e usa dois botões:
+**Criar categorias e grupos** e **Inscrever alunos**.
+
+| Método | Rota | O que faz |
+|---|---|---|
+| `GET` | `/grupos-d2l/painel?de=&ate=` | Nomes por bloco, horários válidos, pendências de horário e as últimas execuções. Sem intervalo, usa os dias de prova já agendados |
+| `PUT` | `/grupos-d2l/nomes` | Substitui os nomes de **um** bloco no intervalo — o que não vier é apagado. Grava na grade de grupos (a mesma do disparo do quiz) |
+| `POST` | `/grupos-d2l/horarios/resolver` | Faixa sem janela de mesmo horário: escolhe se vale o horário da faixa ou o da janela |
+| `POST` | `/grupos-d2l/execucoes` | `CRIAR_GRUPOS` ou `INSCREVER_ALUNOS`. Responde na hora com um `id`; **simula por padrão** |
+| `GET` | `/grupos-d2l/execucoes/:id` | Andamento e contagem por resultado |
+| `GET` | `/grupos-d2l/execucoes/:id/relatorio` | CSV da execução, com as pendências primeiro |
+
+```jsonc
+// PUT /api/grupos-d2l/nomes
+{
+  "bloco": "SEMI_MODULAR",
+  "de": "2026-09-14",
+  "ate": "2026-09-19",
+  "linhas": [
+    { "data": "2026-09-16", "horaInicio": "08:30", "horaFim": "10:00", "nomeGrupo": "16/09 - 8h30 as 10h" }
+  ]
+}
+
+// POST /api/grupos-d2l/execucoes
+{ "tipo": "INSCREVER_ALUNOS", "simulacao": true, "de": "2026-09-14", "ate": "2026-09-19" }
+```
+
+- **A Valence não tem inscrição em lote**: é um POST por aluno. O lote lê os
+  inscritos de cada turma numa chamada e só escreve a diferença; rodar de novo sem
+  mudança nenhuma responde `nadaAFazer: true` sem chamar o Brightspace
+  (`forcar: true` confere mesmo assim).
+- **Remanejo**: na inscrição, o aluno entra no grupo do horário novo e sai do
+  antigo. Usuário que o portal não conhece nunca é removido.
+- **`orgUnitId` (opcional) roda só numa turma.** Use no primeiro uso real: a
+  simulação não cria categoria, então o primeiro teste de verdade deve ser pequeno.
+- **Escopos** (reautorize com `npm run d2l:autorizar` depois de acrescentar):
+  `groups:group:create groups:enrollment:create groups:enrollment:delete`.
+- Ritmo: `GRUPOS_D2L_DELAY_MS` (400) e `GRUPOS_D2L_TIMEOUT_MS` (30000).
+
 ### Listas de presença (PDF) — o papel que vai para a sala
 
 O documento que a secretaria imprime, o fiscal leva para a sala e volta assinado.

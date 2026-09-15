@@ -34,6 +34,7 @@ export const TAGS = {
   RELATORIOS: 'Relatorios e exportacoes (admin)',
   D2L: 'Integracao D2L (Valence)',
   SENHAS_QUIZ: 'Senhas dos questionarios (admin)',
+  GRUPOS_D2L: 'Grupos do Brightspace (admin)',
   INTEGRACAO: 'Integracao com outros sistemas',
 } as const;
 
@@ -163,6 +164,10 @@ export function construirDocumento(app: INestApplication): OpenAPIObject {
     .addTag(
       TAGS.D2L,
       'Autorizacao OAuth 2.0 da Valence — obter e persistir o refresh token do Brightspace',
+    )
+    .addTag(
+      TAGS.GRUPOS_D2L,
+      'Nomes dos grupos de prova por bloco (EaD, Semi/Modular, Presencial), pendencias de horario e os lotes que criam os grupos e inscrevem os alunos pela Valence',
     )
     .addTag(
       TAGS.INTEGRACAO,

@@ -43,7 +43,7 @@ const TETO_RETRY_AFTER_MS = 60_000;
 
 export interface OpcoesChamadaD2L {
   /** GET por default: e o que 90% das chamadas fazem. */
-  metodo?: 'GET' | 'PUT' | 'POST';
+  metodo?: 'GET' | 'PUT' | 'POST' | 'DELETE';
   corpo?: unknown;
   query?: Record<string, string>;
   /** Entra na mensagem de erro: "nao foi possivel ler {oQue} no Brightspace". */
@@ -81,6 +81,22 @@ export class RecusaDoBrightspace extends BadGatewayException {
   ) {
     super(mensagem);
   }
+}
+
+/**
+ * O tenant respondeu 404.
+ *
+ * Continua sendo `BadGatewayException`, com a mesma mensagem de antes, para
+ * quem so devolve o erro. Existe para o lote de grupos, onde 404 na inscricao
+ * tem significado proprio — "usuario inexistente ou fora da turma" — e precisa
+ * virar pendencia do aluno, nao falha de rede.
+ *
+ * Nao estende `RecusaDoBrightspace` de proposito: `recusaDefinitiva` sempre
+ * tratou 404 como NAO definitivo, e herdar mudaria isso em silencio para quem ja
+ * depende dela.
+ */
+export class NaoEncontradoNoBrightspace extends BadGatewayException {
+  readonly statusHttp = 404;
 }
 
 /** O tenant recusou de forma determinística: repetir nao muda o resultado. */
@@ -224,7 +240,7 @@ export class D2lHttpService {
       if (resposta.status === 404 && opcoes.nuloEm404) return null;
 
       if (resposta.status === 404) {
-        throw new BadGatewayException(
+        throw new NaoEncontradoNoBrightspace(
           `O Brightspace nao encontrou ${opcoes.oQue} (404).` +
             (opcoes.dicaDe404 ? ` ${opcoes.dicaDe404}` : ''),
         );

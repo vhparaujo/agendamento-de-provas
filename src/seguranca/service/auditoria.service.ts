@@ -101,6 +101,13 @@ export type EventoSeguranca =
   // ticks da janela de tolerancia. Existe porque um cron que encontra trabalho e
   // nao faz nada, calado, e indistinguivel de um cron quebrado.
   | 'DATA_QUIZ_CRON_NADA_A_FAZER'
+  // Grupos de prova no Brightspace pela API (14/09/2026). O horario resolvido e
+  // auditavel porque move FAIXAS (e os agendamentos nelas) ou a JANELA do quiz;
+  // os lotes, porque criam grupos e poem/tiram alunos em 150 turmas.
+  | 'GRUPOS_D2L_HORARIO_RESOLVIDO'
+  | 'GRUPOS_D2L_INICIADO'
+  | 'GRUPOS_D2L_CONCLUIDO'
+  | 'GRUPOS_D2L_FALHOU'
   // Outro sistema leu os dados de agendamento de UMA matricula (nome, curso,
   // polo, sala, disciplinas). Toda leitura de dado pessoal por terceiro fica
   // rastreavel: "quem consultou o RA tal, e quando?" precisa ter resposta.

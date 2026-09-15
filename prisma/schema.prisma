@@ -1502,3 +1502,133 @@ model ModalidadeEscolhidaDaTurma {
   @@index([modalidadeId])
   @@map("modalidade_escolhida_turma")
 }
+
+// ----------------------------------------------------------------------------
+// GRUPOS NO BRIGHTSPACE — criar e inscrever pela API (14/09/2026)
+// ----------------------------------------------------------------------------
+//
+// Substitui o import manual dos CSVs de `GET /relatorios/grupos-d2l`. Os NOMES
+// dos grupos continuam na grade `GrupoDaJanela` (dia x janela) — a mesma que o
+// disparo do quiz usa para trocar a condicao de liberacao. Sao duas acoes
+// SEPARADAS de proposito (pedido do cliente): criar as categorias e os grupos, e
+// inscrever os alunos. Juntar as duas numa execucao so acumularia as requisicoes
+// num botao e misturaria duas filas de pendencia diferentes.
+//
+// A Valence NAO tem inscricao em lote: e um POST por aluno por grupo. O que o
+// lote economiza e o que ja se sabe — o `userIdD2L` gravado no agendamento (sem
+// classlist) e UM `GET .../groups/` por turma, que traz os inscritos de todos os
+// grupos da categoria. So sai escrita para quem falta ou mudou de horario.
+
+enum TipoExecucaoGruposD2L {
+  CRIAR_GRUPOS
+  INSCREVER_ALUNOS
+}
+
+/// O que aconteceu em cada item do lote. As PENDENCIAS sao as que pedem acao —
+/// ver `PENDENCIAS_GRUPOS_D2L` em src/grupos-d2l/service/resultado.ts, que e a
+/// unica lista de quais sao.
+enum ResultadoGruposD2L {
+  // Escritas (ou, em simulacao, as que seriam feitas)
+  CATEGORIA_CRIADA
+  GRUPO_CRIADO
+  /// Grupo VAZIO da categoria, com nome fora da lista, reaproveitado para um
+  /// nome que faltava. E como os grupos genericos que a D2L cria junto com a
+  /// categoria viram os grupos da prova — e como um nome corrigido na tela
+  /// corrige o grupo no Brightspace sem deixar o antigo para tras.
+  GRUPO_RENOMEADO
+  ALUNO_INSCRITO
+  /// Remanejo depois do prazo: o aluno saiu do grupo do horario antigo.
+  ALUNO_REMOVIDO
+
+  // Informativo — nao pede acao
+  /// Grupo COM alunos na categoria, com nome fora da lista. Nunca e tocado.
+  GRUPO_SOBRANDO
+
+  // Pendencias
+  TURMA_AMBIGUA
+  CATEGORIA_AUSENTE
+  /// Duas categorias com o nome do bloco na mesma turma: escolher uma no chute
+  /// poria metade dos grupos numa e a condicao do quiz procurando na outra.
+  CATEGORIA_DUPLICADA
+  CATEGORIA_EM_PROCESSAMENTO
+  GRUPO_NAO_ENCONTRADO
+  HORARIO_SEM_JANELA
+  SEM_GRUPO_NO_DIA
+  ALUNO_DE_OUTRA_MODALIDADE
+  USER_ID_INVALIDO
+  ALUNO_NAO_ENCONTRADO
+  /// 409 da D2L: grupo na capacidade maxima, ou categoria ainda processando.
+  CONFLITO_NO_GRUPO
+  FALHA_NA_API
+}
+
+model ExecucaoGruposD2L {
+  id        Int                   @id @default(autoincrement())
+  tipo      TipoExecucaoGruposD2L
+  status    StatusExecucao        @default(EM_ANDAMENTO)
+  /// true = nenhuma escrita saiu para o Brightspace. As leituras saem.
+  simulacao Boolean               @default(true)
+
+  /// O recorte, congelado no inicio — a janela vigente pode mudar no meio.
+  /// Separados por virgula: a janela cobre as duas grades (modulo e semestre).
+  periodoLetivoIds String   @db.VarChar(500)
+  rodada           String
+  /// O intervalo de DIAS DE PROVA cujos grupos o lote considera.
+  de               DateTime @db.Date
+  ate              DateTime @db.Date
+
+  iniciadoPor String
+
+  /// Resumo do que o lote quis aplicar (nomes por bloco, turmas, e no de
+  /// inscricao tambem quem vai em qual grupo). Duas execucoes REAIS com a mesma
+  /// assinatura e sem pendencia na anterior = nada mudou, e o botao nao gasta
+  /// nenhuma chamada. `forcar` confere no Brightspace mesmo assim.
+  assinatura String? @db.VarChar(64)
+
+  totalTurmas       Int @default(0)
+  turmasProcessadas Int @default(0)
+  categoriasCriadas Int @default(0)
+  gruposCriados     Int @default(0)
+  gruposRenomeados  Int @default(0)
+  inscricoes        Int @default(0)
+  remocoes          Int @default(0)
+  /// Quem ja estava no grupo certo. Nao vira item — seriam milhares de linhas
+  /// dizendo "nada a fazer".
+  jaInscritos       Int @default(0)
+  pendencias        Int @default(0)
+
+  /// So quando a execucao INTEIRA falha. Problema de uma turma vira item.
+  erro String? @db.Text
+
+  iniciadoEm   DateTime  @default(now())
+  concluidoEm  DateTime?
+  /// Batido a cada turma — distingue lote lento de lote morto, como no
+  /// compulsorio.
+  atualizadoEm DateTime  @updatedAt
+
+  itens ItemGruposD2L[]
+
+  @@index([status])
+  @@index([tipo, status])
+  @@map("execucao_grupos_d2l")
+}
+
+model ItemGruposD2L {
+  id         Int                @id @default(autoincrement())
+  execucaoId Int
+  orgUnitId  String
+  /// Desnormalizados: o relatorio precisa ser legivel sem join, e a turma pode
+  /// sair do CSV do semestre seguinte.
+  codigoTurma    String?
+  nomeDisciplina String?
+  nomeGrupo      String?            @db.VarChar(200)
+  matricula      String?
+  userIdD2L      String?
+  resultado      ResultadoGruposD2L
+  detalhe        String?            @db.Text
+
+  execucao ExecucaoGruposD2L @relation(fields: [execucaoId], references: [id], onDelete: Cascade)
+
+  @@index([execucaoId, resultado])
+  @@map("item_grupos_d2l")
+}
