@@ -23,7 +23,12 @@ import {
   DisciplinaComNota,
   ElegibilidadeDeNotaService,
 } from './elegibilidade-de-nota.service';
-import { AUTOR_ADMIN, descreverOferta, registrarHistorico } from './historico';
+import {
+  AUTOR_ADMIN,
+  descreverOferta,
+  IDENTIFICACAO_COMPULSORIO,
+  registrarHistorico,
+} from './historico';
 import {
   CONFIRMADO,
   escolherOfertaComLock,
@@ -955,7 +960,7 @@ export class CompulsorioService {
             evento: EventoAgendamento.CRIADO,
             // ADMIN, e nao ALUNO: quando ele perguntar no balcao por que tem
             // prova marcada sem ter marcado, esta linha e a resposta.
-            autor: AUTOR_ADMIN('compulsorio'),
+            autor: AUTOR_ADMIN(IDENTIFICACAO_COMPULSORIO),
             para: await descreverOferta(tx, criado.salaFaixaId),
           });
 

@@ -8,6 +8,7 @@ import { hojeUtc } from '../../components/utc.util';
 import { PrismaService } from '../../database/prisma.service';
 import { D2lEnrollmentsService } from '../../d2l/service/d2l-enrollments.service';
 import {
+  AutorDaAlteracao,
   EventoAgendamento,
   Prisma,
   StatusAgendamento,
@@ -17,7 +18,12 @@ import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 import { dataBr, dataDaProva, montarCsv } from './csv-relatorio';
 import { DisciplinasDoAlunoService } from './disciplinas-do-aluno.service';
 import type { DisciplinaComNota } from './elegibilidade-de-nota.service';
-import { AUTOR_ADMIN, descreverOferta, registrarHistorico } from './historico';
+import {
+  AUTOR_ADMIN,
+  descreverOferta,
+  IDENTIFICACAO_COMPULSORIO,
+  registrarHistorico,
+} from './historico';
 import {
   CONFIRMADO,
   escolherOfertaComLock,
@@ -1099,6 +1105,7 @@ export class AgendamentoAdminService {
         nome: true,
         email: true,
         curso: true,
+        statusCurso: true,
         modalidade: { select: { nome: true } },
         polo: { select: { nome: true } },
         agendamentos: {
@@ -1106,6 +1113,14 @@ export class AgendamentoAdminService {
           select: {
             createdAt: true,
             rodada: true,
+            // Quem criou a reserva: o evento CRIADO e gravado na mesma transacao
+            // do agendamento, entao existe um por reserva.
+            historico: {
+              where: { evento: EventoAgendamento.CRIADO },
+              select: { autorTipo: true, autor: true },
+              orderBy: { createdAt: 'asc' },
+              take: 1,
+            },
             // A modalidade e o polo DA EPOCA da reserva, nao os de hoje — ver
             // `dadosDoAluno` abaixo.
             modalidade: { select: { nome: true } },
@@ -1137,6 +1152,9 @@ export class AgendamentoAdminService {
         aluno.nome,
         aluno.email,
         aluno.curso,
+        // Valor BRUTO do CSV importado ("Ativo", "Trancado"...), e o de HOJE:
+        // a pergunta da cobranca e se ainda vale a pena ligar para a pessoa.
+        aluno.statusCurso,
       ];
 
       if (aluno.agendamentos.length === 0) {
@@ -1157,6 +1175,9 @@ export class AgendamentoAdminService {
             null,
             NAO_AGENDADO,
             null,
+            // Quem ainda nao agendou nao foi agendado por ninguem. Baixar o
+            // arquivo antes do compulsorio deixa a coluna vazia para ele.
+            null,
           ],
         ];
       }
@@ -1175,7 +1196,14 @@ export class AgendamentoAdminService {
        * mais de um, cada um vira uma linha em vez de sumir do arquivo.
        */
       return aluno.agendamentos.map(
-        ({ salaFaixa, createdAt, modalidade, polo, rodada: daLinha }) => [
+        ({
+          salaFaixa,
+          createdAt,
+          modalidade,
+          polo,
+          rodada: daLinha,
+          historico,
+        }) => [
           ...identificacao,
           modalidade.nome,
           polo.nome,
@@ -1186,6 +1214,7 @@ export class AgendamentoAdminService {
           salaFaixa.sala.nome,
           AGENDADO,
           dataBr(createdAt, true),
+          quemAgendou(historico[0]),
         ],
       );
     });
@@ -1244,6 +1273,7 @@ const CABECALHOS_EXPORTACAO = [
   'Aluno',
   'E-mail',
   'Curso',
+  'Situação do Curso',
   'Modalidade',
   'Polo',
   'Rodada',
@@ -1253,6 +1283,7 @@ const CABECALHOS_EXPORTACAO = [
   'Sala',
   'Status',
   'Agendado em',
+  'Agendado por',
 ];
 
 /**
@@ -1264,6 +1295,30 @@ const CABECALHOS_EXPORTACAO = [
  */
 const AGENDADO = 'Agendado';
 const NAO_AGENDADO = 'Não Agendado';
+
+/**
+ * A coluna "Agendado por": quem CRIOU a reserva, lido do evento `CRIADO` do
+ * historico.
+ *
+ * `alocadoManual` nao serve para isto: o remanejo tambem o liga, e uma reserva
+ * feita pelo aluno e depois movida pela secretaria sairia como "nao foi ele".
+ *
+ * Tres valores, e nao dois: alem do aluno e do lote compulsorio, a secretaria
+ * agenda uma pessoa no balcao ("Agendar aluno"). Juntar esse caso ao
+ * compulsorio diria que o lote rodou para quem foi atendido pessoalmente.
+ *
+ * Sem o evento (reserva anterior ao historico), a coluna fica vazia em vez de
+ * chutar.
+ */
+function quemAgendou(
+  criado: { autorTipo: AutorDaAlteracao; autor: string } | undefined,
+): string | null {
+  if (!criado) return null;
+
+  if (criado.autorTipo === AutorDaAlteracao.ALUNO) return 'Aluno';
+
+  return criado.autor === IDENTIFICACAO_COMPULSORIO ? 'Compulsório' : 'Admin';
+}
 
 /**
  * Recorte de datas da prova, compartilhado com o modulo de relatorios: e a

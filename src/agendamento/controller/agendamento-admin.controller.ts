@@ -181,8 +181,11 @@ export class AgendamentoAdminController {
       'quem ainda nao marcou prova sai no arquivo com as colunas da prova vazias ' +
       'e `Status = Não Agendado`. E essa a lista que a secretaria usa para cobrar ' +
       'quem falta.\n\n' +
-      'Colunas: Matricula, Aluno, E-mail, Curso, Modalidade, Polo, Data da prova, ' +
-      'Inicio, Fim, Sala, Status (`Agendado` | `Não Agendado`) e Agendado em.\n\n' +
+      'Colunas: Matricula, Aluno, E-mail, Curso, Situação do Curso (o STATUS ' +
+      'CURSO importado: `Ativo`, `Trancado`...), Modalidade, Polo, Rodada, ' +
+      'Data da prova, Inicio, Fim, Sala, Status (`Agendado` | `Não Agendado`), ' +
+      'Agendado em e Agendado por (`Aluno` | `Compulsório` | `Admin`; vazia ' +
+      'para quem nao agendou).\n\n' +
       'O arquivo baixa como **`Lista Agendamento-<data>.csv`**.\n\n' +
       'O recorte e **uma prova** — `periodoLetivoId` + `rodada`, os da URL ou os ' +
       'do periodo vigente. Sem a rodada no recorte, quem ja fez a regular sairia ' +

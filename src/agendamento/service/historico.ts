@@ -80,3 +80,12 @@ export const AUTOR_ADMIN = (email = 'administrador'): AutorDaOperacao => ({
   tipo: AutorDaAlteracao.ADMIN,
   identificacao: email,
 });
+
+/**
+ * O "e-mail" que o lote compulsorio grava no historico.
+ *
+ * Constante, e nao string solta nos dois lados, porque a exportacao LE este
+ * valor para separar "agendado pelo compulsorio" de "agendado pela secretaria
+ * no balcao" — os dois sao `ADMIN`, e so a identificacao os distingue.
+ */
+export const IDENTIFICACAO_COMPULSORIO = 'compulsorio';

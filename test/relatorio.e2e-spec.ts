@@ -436,8 +436,8 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
       // Sem o BOM, o Excel em Windows le "Câmpus" como "CÃ¢mpus".
       expect(res.text.charCodeAt(0)).toBe(0xfeff);
       expect(res.text.split('\r\n')[0]).toBe(
-        '﻿Matricula;Aluno;E-mail;Curso;Modalidade;Polo;Rodada;Data da prova;' +
-          'Inicio;Fim;Sala;Status;Agendado em',
+        '﻿Matricula;Aluno;E-mail;Curso;Situação do Curso;Modalidade;Polo;' +
+          'Rodada;Data da prova;Inicio;Fim;Sala;Status;Agendado em;Agendado por',
       );
     });
 
@@ -456,6 +456,76 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
       expect(linha).toContain('12/11/2026'); // data da prova, no fuso certo
       expect(linha).toContain('08:30');
       expect(linha).toContain(';Agendado;');
+      expect(linha).toContain('NUTRIÇÃO;Ativo;');
+      // A reserva saiu do portal, pelo proprio aluno.
+      expect(linha.endsWith(';Aluno')).toBe(true);
+    });
+
+    /**
+     * A origem vem do evento CRIADO do historico, e nao de `alocadoManual` —
+     * que o remanejo tambem liga. Aqui a identificacao e trocada direto no
+     * banco para simular os dois caminhos do admin sem montar o lote inteiro.
+     */
+    it('"Agendado por" separa o compulsorio do admin de balcao', async () => {
+      const agendamento = await prisma.agendamento.findFirstOrThrow({
+        where: { matricula: MATRICULA, status: 'CONFIRMADO' },
+      });
+      const criado = await prisma.historicoAgendamento.findFirstOrThrow({
+        where: { agendamentoId: agendamento.id, evento: 'CRIADO' },
+      });
+
+      const linhaCom = async (autor: string) => {
+        await prisma.historicoAgendamento.update({
+          where: { id: criado.id },
+          data: { autorTipo: 'ADMIN', autor },
+        });
+
+        return linhaDe(
+          (
+            await comoAdmin(
+              api().get(`/api/agendamentos/exportacao?poloId=${poloId}`),
+            ).expect(200)
+          ).text,
+          MATRICULA,
+        );
+      };
+
+      try {
+        expect((await linhaCom('compulsorio')).endsWith(';Compulsório')).toBe(
+          true,
+        );
+        expect((await linhaCom(EMAIL)).endsWith(';Admin')).toBe(true);
+      } finally {
+        await prisma.historicoAgendamento.update({
+          where: { id: criado.id },
+          data: { autorTipo: criado.autorTipo, autor: criado.autor },
+        });
+      }
+    });
+
+    it('"Situação do Curso" traz o STATUS CURSO importado, qualquer que seja', async () => {
+      await prisma.alunoImportado.updateMany({
+        where: { matricula: SEM_PROVA },
+        data: { statusCurso: 'Trancado', ativo: false },
+      });
+
+      try {
+        const linha = linhaDe(
+          (
+            await comoAdmin(
+              api().get(`/api/agendamentos/exportacao?poloId=${poloId}`),
+            ).expect(200)
+          ).text,
+          SEM_PROVA,
+        );
+
+        expect(linha).toContain('NUTRIÇÃO;Trancado;');
+      } finally {
+        await prisma.alunoImportado.updateMany({
+          where: { matricula: SEM_PROVA },
+          data: { statusCurso: 'Ativo', ativo: true },
+        });
+      }
     });
 
     // O motivo de o relatorio existir: a secretaria liga para quem falta.
@@ -467,9 +537,10 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
       const linha = linhaDe(res.text, SEM_PROVA);
 
       expect(linha).toBeDefined();
-      // As colunas da prova ficam vazias — nao ha o que preencher.
+      // As colunas da prova ficam vazias — nao ha o que preencher. "Agendado
+      // por" tambem: ninguem agendou por ele.
       expect(linha).toContain(`${SEM_PROVA};FULANO SEM PROVA;`);
-      expect(linha.endsWith(';Não Agendado;')).toBe(true);
+      expect(linha.endsWith(';Não Agendado;;')).toBe(true);
     });
 
     /**
