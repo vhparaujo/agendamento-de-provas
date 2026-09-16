@@ -229,6 +229,77 @@ export function trocarGrupoNasCondicoes(
   };
 }
 
+export interface ResultadoDaRemocao {
+  /**
+   * `null` = **a prova nao tem condicao de grupo, e nenhum PUT deve sair** — mesma
+   * regra de `ResultadoDaTroca.corpo`.
+   */
+  corpo: CorpoDeCondicoes | null;
+  /** Quantos operandos `EnrolledInGroup` sairam (por GroupId ou por categoria). */
+  removidas: number;
+  /** Operandos de outros tipos, que voltam verbatim. */
+  preservadas: number;
+}
+
+/**
+ * O corpo do PUT SEM as condicoes de grupo — o preparo para o special access
+ * (15/09/2026).
+ *
+ * Com o questionario restrito a quem tem special access, a condicao de grupo
+ * deixa de ser o que libera a prova e passa a ser o que a TRANCA: o
+ * special access nao passa por cima de uma condicao de liberacao, e o aluno
+ * agendado ficaria sem acesso por nao estar no grupo da sessao.
+ *
+ * Saem TODOS os `EnrolledInGroup`, inclusive os por categoria: todos restringem
+ * por grupo, que e o que o special access substitui. Qualquer outro operando
+ * volta verbatim, com `Type` e `State` intactos — ver o cabecalho.
+ *
+ * Lista de operandos VAZIA e valida: a documentacao da Valence diz que e assim
+ * que se removem todas as condicoes do alvo.
+ */
+export function removerGruposDasCondicoes(
+  condicoes: CondicoesLidas | null | undefined,
+): ResultadoDaRemocao {
+  const expressao = condicoes?.Expression ?? null;
+  const params = expressao?.ExpressionParams ?? {};
+  const originais = Array.isArray(params.Operands) ? params.Operands : [];
+
+  const mantidos: OperandoLido[] = [];
+  let removidas = 0;
+
+  for (const operando of originais) {
+    if (operando?.Type === TIPO_GRUPO) {
+      removidas += 1;
+      continue;
+    }
+
+    const copia = clonar(operando ?? {});
+    // Gerado pelo servidor e ignorado na escrita — ver TextoDoServidor.
+    delete copia.Text;
+    mantidos.push(copia);
+  }
+
+  if (removidas === 0) {
+    return { corpo: null, removidas: 0, preservadas: mantidos.length };
+  }
+
+  return {
+    corpo: {
+      Expression: {
+        Type: 'Expression',
+        State: expressao?.State !== undefined ? expressao.State : null,
+        ExpressionParams: {
+          // Verbatim, como na troca: inventar `Any` afrouxaria o que sobrou.
+          Operator: params.Operator ?? 'All',
+          Operands: mantidos,
+        },
+      },
+    },
+    removidas,
+    preservadas: mantidos.length,
+  };
+}
+
 /**
  * Os `GroupId` de grupo que a prova exige hoje — sem trocar nada.
  *

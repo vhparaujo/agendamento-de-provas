@@ -20,11 +20,13 @@ import {
   ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
-import { SomenteAdmin } from '../../auth/roles.decorator';
+import type { AdminJwtPayload } from '../../auth/jwt/jwt.types';
+import { AdminLogado, SomenteAdmin } from '../../auth/roles.decorator';
 import { TAGS } from '../../config/swagger';
 import {
   AtualizarPoloDto,
   CriarPoloDto,
+  FusoDto,
   PoloComContagensDto,
   PoloDto,
   RemocaoPoloDto,
@@ -60,6 +62,20 @@ export class PoloController {
     return this.poloService.listar(apenasAtivos);
   }
 
+  /** Antes de `:id` de proposito: senao "fusos" cairia no ParseIntPipe. */
+  @Get('fusos')
+  @ApiOperation({
+    summary: 'Fusos aceitos para um polo',
+    description:
+      'Os fusos do Brasil, pelo nome IANA. Popula o dropdown do cadastro. O ' +
+      'rotulo traz o deslocamento de hoje so para orientar: quem calcula o ' +
+      'instante de cada data e o servidor.',
+  })
+  @ApiOkResponse({ type: [FusoDto] })
+  fusos() {
+    return this.poloService.listarFusos();
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Detalha um polo' })
   @ApiParam({ name: 'id', type: Number, example: 6 })
@@ -87,11 +103,13 @@ export class PoloController {
 
   @Patch(':id')
   @ApiOperation({
-    summary: 'Atualiza cidade e situacao do polo',
+    summary: 'Atualiza cidade, situacao e fuso do polo',
     description:
       'O NOME nao pode ser alterado: renomear quebraria em silencio o casamento ' +
       'com o CSV, e o proximo upload rejeitaria o campus inteiro. Se o nome estiver ' +
-      'errado, corrija na planilha e cadastre o polo certo.',
+      'errado, corrija na planilha e cadastre o polo certo.\n\n' +
+      'O `fuso` muda a que horas o special access abre e fecha a prova de quem ' +
+      'faz prova no polo, a partir do proximo lote. A troca e auditada.',
   })
   @ApiParam({ name: 'id', type: Number, example: 6 })
   @ApiOkResponse({ type: PoloDto })
@@ -99,8 +117,9 @@ export class PoloController {
   atualizar(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: AtualizarPoloDto,
+    @AdminLogado() admin: AdminJwtPayload,
   ) {
-    return this.poloService.atualizar(id, dto);
+    return this.poloService.atualizar(id, dto, admin.email);
   }
 
   @Delete(':id')

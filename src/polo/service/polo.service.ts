@@ -4,12 +4,16 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
+import { AuditoriaService } from '../../seguranca/service/auditoria.service';
+import { FUSOS_DO_BRASIL } from './fusos';
 
 export interface Polo {
   id: number;
   nome: string;
   cidade: string | null;
   ativo: boolean;
+  /** Fuso IANA em que as faixas do polo sao lidas pelo special access. */
+  fuso: string;
 }
 
 export interface PoloComContagens extends Polo {
@@ -30,11 +34,20 @@ const SELECAO = {
   nome: true,
   cidade: true,
   ativo: true,
+  fuso: true,
 } as const;
 
 @Injectable()
 export class PoloService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditoria: AuditoriaService,
+  ) {}
+
+  /** Os fusos aceitos no cadastro, para o dropdown da tela. */
+  listarFusos() {
+    return FUSOS_DO_BRASIL;
+  }
 
   async listar(apenasAtivos?: boolean): Promise<PoloComContagens[]> {
     const polos = await this.prisma.polo.findMany({
@@ -115,19 +128,32 @@ export class PoloService {
    */
   async atualizar(
     id: number,
-    dados: { cidade?: string | null; ativo?: boolean },
+    dados: { cidade?: string | null; ativo?: boolean; fuso?: string },
+    adminEmail?: string,
   ): Promise<Polo> {
-    await this.buscar(id);
+    const antes = await this.buscar(id);
 
-    return this.prisma.polo.update({
+    const polo = await this.prisma.polo.update({
       where: { id },
       data: {
         cidade:
           dados.cidade === undefined ? undefined : dados.cidade?.trim() || null,
         ativo: dados.ativo,
+        fuso: dados.fuso,
       },
       select: SELECAO,
     });
+
+    // O fuso decide a que horas o special access abre a prova de TODO aluno do
+    // polo — "quem mudou isso?" precisa ter resposta. Vale no proximo lote.
+    if (dados.fuso !== undefined && dados.fuso !== antes.fuso) {
+      this.auditoria.registrar('POLO_FUSO_ALTERADO', {
+        ator: adminEmail,
+        detalhe: `polo ${id} (${antes.nome}): ${antes.fuso} -> ${dados.fuso}`,
+      });
+    }
+
+    return polo;
   }
 
   /**

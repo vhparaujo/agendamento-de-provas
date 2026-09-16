@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import type { SituacaoNiop } from '../service/niop.service';
 import type {
   AgendamentoDoAluno,
   AlunoImportadoDetalhe,
@@ -55,6 +56,32 @@ export class AlunoImportadoDto implements AlunoImportadoResumo {
       'Agendamentos CONFIRMADOS deste vinculo. 0 = ainda nao marcou prova.',
   })
   totalAgendamentos!: number;
+
+  @ApiProperty({
+    example: false,
+    description:
+      'A MATRICULA e do NIOP: o special access da o tempo de prova da ' +
+      'modalidade mais o extra configurado. Vale para todos os vinculos do RA.',
+  })
+  niop!: boolean;
+}
+
+export class SituacaoNiopDto implements SituacaoNiop {
+  @ApiProperty({ example: 'UC24424289' })
+  matricula!: string;
+
+  @ApiProperty({ example: true })
+  niop!: boolean;
+
+  @ApiProperty({ example: 'secretaria@ucb.br', nullable: true, type: String })
+  marcadoPor!: string | null;
+
+  @ApiProperty({
+    example: '2026-09-15T18:00:00.000Z',
+    nullable: true,
+    type: Date,
+  })
+  marcadoEm!: Date | null;
 }
 
 export class PaginaDeAlunosDto implements PaginaDeAlunos {
@@ -171,4 +198,10 @@ export class AlunoImportadoDetalheDto
       'atendimento, "cancelou dia 12" e uma resposta; sumir nao e.',
   })
   agendamentos!: AgendamentoDoAlunoDto[];
+
+  @ApiProperty({ example: null, nullable: true, type: String })
+  niopMarcadoPor!: string | null;
+
+  @ApiProperty({ example: null, nullable: true, type: Date })
+  niopMarcadoEm!: Date | null;
 }

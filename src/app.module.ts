@@ -27,6 +27,7 @@ import { SalaModule } from './sala/module/sala.module';
 import { ExcecoesFilter } from './seguranca/filter/excecoes.filter';
 import { SegurancaModule } from './seguranca/module/seguranca.module';
 import { SenhaQuizModule } from './senha-quiz/module/senha-quiz.module';
+import { SpecialAccessModule } from './special-access/module/special-access.module';
 import { TurmaModule } from './turma/module/turma.module';
 
 @Module({
@@ -63,6 +64,8 @@ import { TurmaModule } from './turma/module/turma.module';
     // Troca em massa da senha dos questionarios (etapa 10)
     SenhaQuizModule,
     GruposD2lModule,
+    // Special access por agendamento (15/09/2026)
+    SpecialAccessModule,
     // Dados para outros sistemas, por API key (emissor da declaracao assinada)
     IntegracaoModule,
   ],

@@ -65,6 +65,8 @@ describe('SenhaQuizCron', () => {
     janelas?: Record<string, unknown>[];
     /** A celula da grade de GRUPOS do dia alvo. Ausente = sem celula. */
     celulaDeGrupo?: Record<string, unknown> | null;
+    /** A configuracao do special access. Ausente = nunca salva. */
+    specialAccess?: { substituiJanelas: boolean } | null;
   }) => {
     jest.useFakeTimers().setSystemTime(opcoes.agora ?? NA_HORA);
 
@@ -90,6 +92,9 @@ describe('SenhaQuizCron', () => {
       grupoDaJanela: {
         findUnique: jest.fn().mockResolvedValue(opcoes.celulaDeGrupo ?? null),
         count: jest.fn().mockResolvedValue(0),
+      },
+      configuracaoSpecialAccess: {
+        findUnique: jest.fn().mockResolvedValue(opcoes.specialAccess ?? null),
       },
     } as unknown as PrismaService;
 
@@ -117,6 +122,52 @@ describe('SenhaQuizCron', () => {
   };
 
   afterEach(() => jest.useRealTimers());
+
+  describe('special access substituindo as janelas (15/09/2026)', () => {
+    /** Uma janela EaD que dispara exatamente as 07:30 — o horario do teste. */
+    const JANELA_AS_0730 = {
+      id: 31,
+      modalidadeId: 1,
+      horaDisparo: '07:30',
+      horaInicio: '09:00',
+      horaFim: '12:00',
+      turno: Turno.MANHA,
+      diaSeguinte: false,
+      ativo: true,
+      versao: 1,
+      nomeGrupo: null,
+      categoriaGrupo: null,
+      modalidade: { codigo: 'EAD' },
+    };
+
+    it('sem a opcao, a janela do horario dispara as datas', async () => {
+      const cron = montar({ janelas: [JANELA_AS_0730] });
+
+      await cron.tick();
+
+      expect(iniciar).toHaveBeenCalledTimes(1);
+      expect(iniciar.mock.calls[0][0]).toMatchObject({ janelaId: 31 });
+    });
+
+    /**
+     * O questionario preparado nao tem data. Uma janela aplicada pelo cron o
+     * abriria no horario de UMA modalidade para todos — e a senha precisa
+     * continuar trocando, porque ela nao mexe na data.
+     */
+    it('com a opcao, nao aplica a janela e segue para a senha', async () => {
+      const cron = montar({
+        janelas: [JANELA_AS_0730],
+        specialAccess: { substituiJanelas: true },
+      });
+
+      await cron.tick();
+
+      expect(eventos).toContain('DATA_QUIZ_CRON_SUBSTITUIDO');
+      expect(iniciar).toHaveBeenCalledTimes(1);
+      expect(iniciar.mock.calls[0][0]).toMatchObject({ turno: Turno.MANHA });
+      expect(iniciar.mock.calls[0][0]).not.toHaveProperty('janelaId');
+    });
+  });
 
   it('dispara no horario, SEM simulacao e com origem CRON', async () => {
     await montar({}).tick();

@@ -127,6 +127,9 @@ describe('SenhaQuizService', () => {
     execucao = { id: 7, status: StatusExecucao.EM_ANDAMENTO };
 
     const prisma = {
+      configuracaoSpecialAccess: {
+        findUnique: jest.fn().mockResolvedValue(null),
+      },
       senhaDeProva: {
         findUnique: jest.fn().mockResolvedValue(
           opcoes.celula === undefined
@@ -601,6 +604,9 @@ describe('SenhaQuizService', () => {
         .mockResolvedValue(recente ? { id: recente.id } : null);
 
       const prisma = {
+        configuracaoSpecialAccess: {
+          findUnique: jest.fn().mockResolvedValue(null),
+        },
         execucaoSenhaQuiz: {
           findFirst,
           findUnique: jest.fn().mockResolvedValue(recente),

@@ -35,6 +35,7 @@ export const TAGS = {
   D2L: 'Integracao D2L (Valence)',
   SENHAS_QUIZ: 'Senhas dos questionarios (admin)',
   GRUPOS_D2L: 'Grupos do Brightspace (admin)',
+  SPECIAL_ACCESS: 'Special access nos questionarios (admin)',
   INTEGRACAO: 'Integracao com outros sistemas',
 } as const;
 

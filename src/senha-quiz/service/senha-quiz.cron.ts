@@ -114,7 +114,12 @@ export class SenhaQuizCron {
     // (0) A DATA VEM PRIMEIRO. Ver o cabecalho: sem a janela nova o
     // questionario nao abre, e ai ninguem faz a prova. `true` = disparou algo,
     // e o tick para por aqui — um lote por minuto.
-    if (await this.decidirDatas(data, hhmm, cfg)) return;
+    //
+    // (0a) ...a menos que o SPECIAL ACCESS substitua as janelas (15/09/2026). O
+    // questionario preparado nao tem data, e aplicar uma janela aqui o abriria
+    // no horario de UMA modalidade. A senha continua, logo abaixo.
+    const substituidas = await this.janelasSubstituidas(data);
+    if (!substituidas && (await this.decidirDatas(data, hhmm, cfg))) return;
 
     // (2) Os horarios vem do BANCO, escolhidos pelo admin. Ler a cada tick e o
     // que faz uma correcao pela tela as 07:25 valer as 07:30.
@@ -184,6 +189,28 @@ export class SenhaQuizCron {
     );
 
     this.avisadas.delete(chave);
+  }
+
+  /**
+   * O special access substitui as janelas? Le do BANCO a cada tick, como os
+   * horarios: ligar a opcao na tela as 11:59 precisa valer no disparo das 12:01.
+   */
+  private async janelasSubstituidas(data: Date): Promise<boolean> {
+    const config = await this.prisma.configuracaoSpecialAccess.findUnique({
+      where: { id: 1 },
+      select: { substituiJanelas: true },
+    });
+
+    if (!config?.substituiJanelas) return false;
+
+    this.avisarUmaVez(
+      `${isoDeDataUtc(data)}#special-access`,
+      'DATA_QUIZ_CRON_SUBSTITUIDO',
+      data,
+      null,
+    );
+
+    return true;
   }
 
   /**
@@ -463,7 +490,8 @@ export class SenhaQuizCron {
       | 'DATA_QUIZ_CRON_SEM_GRADE'
       | 'DATA_QUIZ_CRON_SEM_JANELA'
       | 'DATA_QUIZ_CRON_IGNORADO'
-      | 'DATA_QUIZ_CRON_NADA_A_FAZER',
+      | 'DATA_QUIZ_CRON_NADA_A_FAZER'
+      | 'DATA_QUIZ_CRON_SUBSTITUIDO',
     data: Date,
     turno: Turno | null,
     extra?: string,
@@ -495,12 +523,18 @@ export class SenhaQuizCron {
       // estado normal. Existe para responder "editei o horario e nada
       // aconteceu" sem abrir o banco.
       DATA_QUIZ_CRON_NADA_A_FAZER: `${celula}: havia janela no horario, e nenhuma precisou disparar — ${extra ?? ''}`,
+      DATA_QUIZ_CRON_SUBSTITUIDO:
+        `${celula}: as janelas nao sao aplicadas — o special access substitui ` +
+        'a troca de data e grupo (Special access > Configuracao). A senha segue.',
     }[evento];
 
     // `NADA_A_FAZER` sai como LOG e nao WARN: warn e para o que precisa de acao,
     // e aqui o comportamento normal e nao fazer nada. Amarelo demais ensina o
     // time a ignorar o amarelo que importa.
-    if (evento === 'DATA_QUIZ_CRON_NADA_A_FAZER')
+    if (
+      evento === 'DATA_QUIZ_CRON_NADA_A_FAZER' ||
+      evento === 'DATA_QUIZ_CRON_SUBSTITUIDO'
+    )
       this.logger.log(`Cron: ${detalhe}.`);
     else this.logger.warn(`Cron: ${detalhe}.`);
 

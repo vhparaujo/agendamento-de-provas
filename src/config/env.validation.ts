@@ -176,6 +176,15 @@ export class EnvironmentVariables {
   @IsNumberString()
   GRUPOS_D2L_TIMEOUT_MS?: string;
 
+  // Ritmo do lote de special access (um PUT por aluno por questionario).
+  @IsOptional()
+  @IsNumberString()
+  SPECIAL_ACCESS_DELAY_MS?: string;
+
+  @IsOptional()
+  @IsNumberString()
+  SPECIAL_ACCESS_TIMEOUT_MS?: string;
+
   /** Maior que o timeout do enrollments: objetos de quiz sao grandes. */
   @IsOptional()
   @IsNumberString()

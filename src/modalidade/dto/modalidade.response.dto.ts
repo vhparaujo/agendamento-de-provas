@@ -23,4 +23,13 @@ export class ModalidadeDto implements Modalidade {
       'receber uma sala desta modalidade.',
   })
   duracaoMinutos!: number;
+
+  @ApiProperty({
+    example: 180,
+    description:
+      'O tempo do questionario gravado no special access de quem e desta ' +
+      'modalidade. Nao muda a faixa. O aluno do NIOP recebe este valor mais o ' +
+      'tempo extra configurado.',
+  })
+  tempoDeProvaMinutos!: number;
 }

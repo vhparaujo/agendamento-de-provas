@@ -1,6 +1,7 @@
 import {
   CondicoesLidas,
   gruposDasCondicoes,
+  removerGruposDasCondicoes,
   trocarGrupoNasCondicoes,
 } from './condicoes';
 
@@ -259,5 +260,79 @@ describe('gruposDasCondicoes', () => {
     ).toEqual([]);
 
     expect(gruposDasCondicoes(null)).toEqual([]);
+  });
+});
+
+/**
+ * O preparo para o special access (15/09/2026). O mesmo risco da troca: o PUT
+ * substitui a lista inteira, e o que nao voltar some da prova.
+ */
+describe('removerGruposDasCondicoes', () => {
+  const outroTipo = () => ({
+    Type: 'RoundTrip',
+    State: 'opaco-que-o-servidor-precisa-de-volta',
+    Text: { Text: 'Concluiu o modulo 3', Html: null },
+  });
+
+  const porCategoria = {
+    Type: 'EnrolledInGroup',
+    State: '991',
+    EnrolledInGroupParams: { GroupId: null, GroupCategoryId: 77 },
+  };
+
+  it('tira TODO operando de grupo e devolve os outros verbatim', () => {
+    const r = removerGruposDasCondicoes(
+      condicoesCom(
+        [operandoDeGrupo(156988), outroTipo(), porCategoria],
+        'All',
+        'estado-da-expressao',
+      ),
+    );
+
+    expect(r.removidas).toBe(2);
+    expect(r.preservadas).toBe(1);
+    expect(r.corpo).toEqual({
+      Expression: {
+        Type: 'Expression',
+        State: 'estado-da-expressao',
+        ExpressionParams: {
+          Operator: 'All',
+          // Sem `Text`, que o servidor gera; `Type` e `State` intactos.
+          Operands: [
+            {
+              Type: 'RoundTrip',
+              State: 'opaco-que-o-servidor-precisa-de-volta',
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  it('so condicao de grupo: lista VAZIA, que e como a Valence remove todas', () => {
+    const r = removerGruposDasCondicoes(
+      condicoesCom([operandoDeGrupo(156988)], 'Any'),
+    );
+
+    expect(r.corpo?.Expression.ExpressionParams).toEqual({
+      Operator: 'Any',
+      Operands: [],
+    });
+  });
+
+  it('sem condicao de grupo: nenhum PUT', () => {
+    expect(
+      removerGruposDasCondicoes(condicoesCom([outroTipo()])).corpo,
+    ).toBeNull();
+    expect(removerGruposDasCondicoes(null).corpo).toBeNull();
+  });
+
+  it('nao altera o objeto lido', () => {
+    const lidas = condicoesCom([operandoDeGrupo(1), outroTipo()]);
+    const antes = JSON.stringify(lidas);
+
+    removerGruposDasCondicoes(lidas);
+
+    expect(JSON.stringify(lidas)).toBe(antes);
   });
 });

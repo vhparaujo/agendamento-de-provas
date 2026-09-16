@@ -14,6 +14,8 @@ export interface FiltroAlunos {
   importacaoId?: number;
   /** true = so quem ja tem prova marcada; false = so quem ainda nao marcou. */
   agendado?: boolean;
+  /** true = so quem e do NIOP; false = so quem nao e. */
+  niop?: boolean;
   pagina?: number;
   porPagina?: number;
 }
@@ -32,6 +34,8 @@ export interface AlunoImportadoResumo {
   polo: string;
   /** Agendamentos CONFIRMADOS deste vinculo — 0 significa "ainda nao marcou". */
   totalAgendamentos: number;
+  /** A MATRICULA e do NIOP: o special access da uma hora a mais. */
+  niop: boolean;
 }
 
 export interface PaginaDeAlunos {
@@ -67,6 +71,9 @@ export interface AlunoImportadoDetalhe extends AlunoImportadoResumo {
    */
   outrosVinculos: { id: number; curso: string; modalidade: string }[];
   agendamentos: AgendamentoDoAluno[];
+  /** Quem marcou o NIOP, e quando. Nulos quando `niop` e false. */
+  niopMarcadoPor: string | null;
+  niopMarcadoEm: Date | null;
 }
 
 const PADRAO_POR_PAGINA = 50;
@@ -88,7 +95,10 @@ export class AlunoAdminService {
    * na base real, e uma listagem sem limite derrubaria a tela do admin.
    */
   async listar(filtro: FiltroAlunos): Promise<PaginaDeAlunos> {
-    const where = montarWhere(filtro);
+    const where = montarWhere(
+      filtro,
+      filtro.niop === undefined ? undefined : await this.matriculasNiop(),
+    );
 
     const porPagina = Math.min(
       Math.max(filtro.porPagina ?? PADRAO_POR_PAGINA, 1),
@@ -109,12 +119,16 @@ export class AlunoAdminService {
       }),
     ]);
 
+    const marcados = new Set(
+      await this.matriculasNiop(registros.map((r) => r.matricula)),
+    );
+
     return {
       total,
       pagina,
       porPagina,
       totalPaginas: Math.max(1, Math.ceil(total / porPagina)),
-      itens: registros.map(montarResumo),
+      itens: registros.map((r) => montarResumo(r, marcados.has(r.matricula))),
     };
   }
 
@@ -150,6 +164,10 @@ export class AlunoAdminService {
 
     if (!aluno) throw new NotFoundException(`Aluno ${id} nao encontrado`);
 
+    const niop = await this.prisma.alunoNiop.findUnique({
+      where: { matricula: aluno.matricula },
+    });
+
     const outros = await this.prisma.alunoImportado.findMany({
       where: { matricula: aluno.matricula, id: { not: aluno.id } },
       include: { modalidade: { select: { nome: true } } },
@@ -157,8 +175,10 @@ export class AlunoAdminService {
     });
 
     return {
-      ...montarResumo(aluno),
+      ...montarResumo(aluno, niop !== null),
       importacao: aluno.importacao,
+      niopMarcadoPor: niop?.marcadoPor ?? null,
+      niopMarcadoEm: niop?.createdAt ?? null,
       outrosVinculos: outros.map((v) => ({
         id: v.id,
         curso: v.curso,
@@ -193,9 +213,27 @@ export class AlunoAdminService {
 
     return linhas.map((l) => l.curso);
   }
+
+  /** As matriculas do NIOP — todas, ou so as de uma pagina da listagem. */
+  private async matriculasNiop(entre?: string[]): Promise<string[]> {
+    const linhas = await this.prisma.alunoNiop.findMany({
+      where: entre ? { matricula: { in: entre } } : undefined,
+      select: { matricula: true },
+    });
+
+    return linhas.map((l) => l.matricula);
+  }
 }
 
-function montarWhere(filtro: FiltroAlunos): Prisma.AlunoImportadoWhereInput {
+/**
+ * `niop` e a lista de matriculas do NIOP, lida so quando o filtro existe. E um
+ * `in`/`notIn` e nao uma relacao porque a marca e da MATRICULA, que nao e unica
+ * em `aluno_importado` — sao poucas dezenas de linhas.
+ */
+function montarWhere(
+  filtro: FiltroAlunos,
+  niop?: string[],
+): Prisma.AlunoImportadoWhereInput {
   const busca = filtro.busca?.trim();
 
   return {
@@ -211,6 +249,9 @@ function montarWhere(filtro: FiltroAlunos): Prisma.AlunoImportadoWhereInput {
             ? { some: { status: StatusAgendamento.CONFIRMADO } }
             : { none: { status: StatusAgendamento.CONFIRMADO } },
         }),
+    ...(niop === undefined
+      ? {}
+      : { matricula: filtro.niop ? { in: niop } : { notIn: niop } }),
     ...(busca
       ? {
           OR: [
@@ -247,7 +288,10 @@ type RegistroResumo = {
   _count: { agendamentos: number };
 };
 
-function montarResumo(registro: RegistroResumo): AlunoImportadoResumo {
+function montarResumo(
+  registro: RegistroResumo,
+  niop: boolean,
+): AlunoImportadoResumo {
   return {
     id: registro.id,
     matricula: registro.matricula,
@@ -259,5 +303,6 @@ function montarResumo(registro: RegistroResumo): AlunoImportadoResumo {
     modalidade: registro.modalidade.nome,
     polo: registro.polo.nome,
     totalAgendamentos: registro._count.agendamentos,
+    niop,
   };
 }

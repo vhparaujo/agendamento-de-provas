@@ -201,6 +201,7 @@ describe('Senhas de prova: a grade dia x turno (e2e)', () => {
           codigo: MODALIDADE_CODIGO,
           nome: 'E2E Janelas',
           duracaoMinutos: 180,
+          tempoDeProvaMinutos: 180,
         },
       });
 

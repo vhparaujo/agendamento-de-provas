@@ -1,7 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { carregarD2lApiConfig } from '../config/d2l.config';
-import { D2lHttpService, OpcoesChamadaD2L } from './d2l-http.service';
+import {
+  D2lHttpService,
+  NaoEncontradoNoBrightspace,
+  OpcoesChamadaD2L,
+} from './d2l-http.service';
 
 /**
  * ============================================================================
@@ -21,11 +25,29 @@ import { D2lHttpService, OpcoesChamadaD2L } from './d2l-http.service';
 export interface QuizDaLista {
   QuizId?: number | string;
   Name?: string;
+  /**
+   * A listagem traz o `QuizReadData` inteiro. O lote de special access so le
+   * este campo dela, para avisar quando a prova ainda esta aberta a turma toda.
+   */
+  AllowOnlyUsersWithSpecialAccess?: unknown;
+}
+
+/** `Quiz.SpecialAccessUserData`, como a listagem de special access devolve. */
+export interface AcessoEspecialDaLista {
+  UserId?: number | string | null;
+  SpecialAccess?: {
+    StartDate?: string | null;
+    EndDate?: string | null;
+    SubmissionTimeLimit?: {
+      IsEnforced?: boolean | null;
+      TimeLimitValue?: number | null;
+    } | null;
+  } | null;
 }
 
 /** Uma pagina de `ObjectListPage`. */
-interface PaginaDeQuizzes {
-  Objects?: QuizDaLista[];
+interface Pagina<T> {
+  Objects?: T[];
   /** URL/caminho da proxima pagina; carrega o bookmark na query string. */
   Next?: string | null;
 }
@@ -64,44 +86,100 @@ export class D2lQuizzesService {
     orgUnitId: string,
     ritmo: OpcoesDeRitmo = {},
   ): Promise<QuizDaLista[]> {
-    const cfg = this.http.exigirConfigurado();
-    const maxPaginas = ritmo.maxPaginas ?? 50;
-
-    const encontrados: QuizDaLista[] = [];
-    let queryString = '';
-
-    for (let pagina = 0; pagina < maxPaginas; pagina += 1) {
-      const url =
-        this.http.url(cfg, 'le', `${encodeURIComponent(orgUnitId)}/quizzes/`) +
-        queryString;
-
-      const dados = await this.http.chamarUrl<
-        PaginaDeQuizzes | QuizDaLista[] | null
-      >(url, this.opcoes(`os questionarios da turma ${orgUnitId}`, ritmo));
-
-      // Resposta sem paginacao: algumas versoes devolvem o array direto.
-      if (Array.isArray(dados)) return encontrados.concat(dados);
-      if (!dados) return encontrados;
-
-      encontrados.push(...(dados.Objects ?? []));
-
-      const proxima = dados.Next;
-      if (!proxima) return encontrados;
-
-      const inicioDaQuery = String(proxima).indexOf('?');
-      if (inicioDaQuery === -1) return encontrados;
-
-      const seguinte = String(proxima).slice(inicioDaQuery);
-      if (seguinte === queryString) return encontrados; // bookmark travado
-      queryString = seguinte;
-    }
-
-    this.logger.warn(
-      `Listagem de questionarios da turma ${orgUnitId} interrompida em ` +
-        `${maxPaginas} paginas. A prova pode nao ter sido alcancada.`,
+    return this.paginar<QuizDaLista>(
+      `${encodeURIComponent(orgUnitId)}/quizzes/`,
+      `os questionarios da turma ${orgUnitId}`,
+      ritmo,
     );
+  }
 
-    return encontrados;
+  /**
+   * TODOS os special access de um questionario, seguindo a paginacao.
+   *
+   * E a leitura que faz o lote gravar so a diferenca: sem ela, cada execucao
+   * reescreveria o acesso de todos os alunos de novo.
+   */
+  async listarAcessosEspeciais(
+    orgUnitId: string,
+    quizId: string,
+    ritmo: OpcoesDeRitmo = {},
+  ): Promise<AcessoEspecialDaLista[]> {
+    return this.paginar<AcessoEspecialDaLista>(
+      `${encodeURIComponent(orgUnitId)}/quizzes/${encodeURIComponent(quizId)}/specialaccess/`,
+      `os special access do questionario ${quizId} da turma ${orgUnitId}`,
+      ritmo,
+    );
+  }
+
+  /**
+   * Cria ou substitui o special access de UM aluno. E um recurso separado do
+   * questionario: nao passa por `montarCorpoDoQuiz` e nao apaga senha nem data.
+   *
+   * 404 sobe como `NaoEncontradoNoBrightspace`. Com o questionario ja achado na
+   * listagem, quase sempre e "este usuario nao e aluno da turma".
+   */
+  async gravarAcessoEspecial(
+    orgUnitId: string,
+    quizId: string,
+    userId: number,
+    corpo: unknown,
+    ritmo: OpcoesDeRitmo = {},
+  ): Promise<void> {
+    const cfg = this.http.exigirConfigurado();
+
+    await this.http.chamar(
+      cfg,
+      'le',
+      this.caminhoDoAcesso(orgUnitId, quizId, userId),
+      {
+        ...this.opcoes(
+          `o special access do usuario ${userId} no questionario ${quizId} da turma ${orgUnitId}`,
+          ritmo,
+        ),
+        dicaDe404:
+          'Com o questionario ja encontrado, isto costuma ser o aluno fora da ' +
+          'turma no Brightspace.',
+        metodo: 'PUT',
+        corpo,
+      },
+    );
+  }
+
+  /**
+   * Remove o special access de UM aluno. `false` quando nao havia o que remover.
+   *
+   * ⚠️ Escopo proprio: `quizzing:quizzes:delete`, que o `read,write` da troca de
+   * senha NAO cobre. Sem reautorizar, toda remocao volta 403.
+   *
+   * O 404 nao usa `nuloEm404` de proposito: o DELETE bem-sucedido tambem
+   * responde sem corpo, e os dois virariam o mesmo `null`.
+   */
+  async removerAcessoEspecial(
+    orgUnitId: string,
+    quizId: string,
+    userId: number,
+    ritmo: OpcoesDeRitmo = {},
+  ): Promise<boolean> {
+    const cfg = this.http.exigirConfigurado();
+
+    try {
+      await this.http.chamar(
+        cfg,
+        'le',
+        this.caminhoDoAcesso(orgUnitId, quizId, userId),
+        {
+          ...this.opcoes(
+            `o special access do usuario ${userId} no questionario ${quizId} da turma ${orgUnitId}`,
+            ritmo,
+          ),
+          metodo: 'DELETE',
+        },
+      );
+      return true;
+    } catch (erro) {
+      if (erro instanceof NaoEncontradoNoBrightspace) return false;
+      throw erro;
+    }
   }
 
   /** O `QuizReadData` completo — a base obrigatoria do PUT. */
@@ -138,6 +216,76 @@ export class D2lQuizzesService {
         metodo: 'PUT',
         corpo,
       },
+    );
+  }
+
+  /**
+   * Uma listagem inteira de `ObjectListPage`, seguindo o `Next` ate o fim.
+   *
+   * ⚠️ **Nao simplifique isto para uma chamada so.** Foi exatamente essa a
+   * diferenca entre o CLI de origem e o projeto irmao `brightspace-bulk-dates`:
+   * la o `asList` lia apenas `Objects` e ignorava o `Next`, entao uma turma com
+   * muitos questionarios simplesmente NAO trazia a prova — sem erro, sem aviso,
+   * e a turma ficava sem senha no dia.
+   *
+   * Do `Next` reaproveitamos so a QUERY STRING (que carrega o bookmark), para a
+   * chamada seguinte continuar passando pelo mesmo caminho de token, atraso e
+   * retry de 429. Duas travas contra laco infinito: o teto de paginas e o
+   * bookmark repetido — o segundo importa porque o laco so termina quando o
+   * SERVIDOR diz que terminou.
+   */
+  private async paginar<T>(
+    caminho: string,
+    oQue: string,
+    ritmo: OpcoesDeRitmo,
+  ): Promise<T[]> {
+    const cfg = this.http.exigirConfigurado();
+    const maxPaginas = ritmo.maxPaginas ?? 50;
+
+    const encontrados: T[] = [];
+    let queryString = '';
+
+    for (let pagina = 0; pagina < maxPaginas; pagina += 1) {
+      const url = this.http.url(cfg, 'le', caminho) + queryString;
+
+      const dados = await this.http.chamarUrl<Pagina<T> | T[] | null>(
+        url,
+        this.opcoes(oQue, ritmo),
+      );
+
+      // Resposta sem paginacao: algumas versoes devolvem o array direto.
+      if (Array.isArray(dados)) return encontrados.concat(dados);
+      if (!dados) return encontrados;
+
+      encontrados.push(...(dados.Objects ?? []));
+
+      const proxima = dados.Next;
+      if (!proxima) return encontrados;
+
+      const inicioDaQuery = String(proxima).indexOf('?');
+      if (inicioDaQuery === -1) return encontrados;
+
+      const seguinte = String(proxima).slice(inicioDaQuery);
+      if (seguinte === queryString) return encontrados; // bookmark travado
+      queryString = seguinte;
+    }
+
+    this.logger.warn(
+      `Listagem de ${oQue} interrompida em ${maxPaginas} paginas. ` +
+        'Parte dela pode nao ter sido alcancada.',
+    );
+
+    return encontrados;
+  }
+
+  private caminhoDoAcesso(
+    orgUnitId: string,
+    quizId: string,
+    userId: number,
+  ): string {
+    return (
+      `${encodeURIComponent(orgUnitId)}/quizzes/${encodeURIComponent(quizId)}` +
+      `/specialaccess/${encodeURIComponent(String(userId))}`
     );
   }
 

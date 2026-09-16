@@ -3,6 +3,8 @@ import {
   CAMPOS_DO_CORPO_DO_QUIZ,
   casarPorNome,
   converterBlocoDeTexto,
+  jaPreparado,
+  montarCorpoDoPreparo,
   montarCorpoDoQuiz,
   paraRichTextInput,
   QuizLido,
@@ -341,5 +343,50 @@ describe('casarPorNome', () => {
     expect(
       casarPorNome(comNulo, (q) => q.Name, 'Prova N1', TipoMatchQuiz.EXATO),
     ).toEqual([{ Name: 'Prova N1' }]);
+  });
+});
+
+describe('montarCorpoDoPreparo', () => {
+  it('produz exatamente os campos congelados — nenhum a mais, nenhum a menos', () => {
+    const corpo = montarCorpoDoPreparo(quizLido(), 'nova');
+    expect(Object.keys(corpo).sort()).toEqual(
+      [...CAMPOS_DO_CORPO_DO_QUIZ].sort(),
+    );
+  });
+
+  it('apaga as datas, restringe a special access e define a senha', () => {
+    const lido = quizLido();
+    const corpo = montarCorpoDoPreparo(lido, 'manha1609');
+
+    expect(corpo.StartDate).toBeNull();
+    expect(corpo.EndDate).toBeNull();
+    expect(corpo.AllowOnlyUsersWithSpecialAccess).toBe(true);
+    expect(corpo.Password).toBe('manha1609');
+
+    // O resto sai como veio: o prazo de entrega e o tempo sao outra pergunta.
+    expect(corpo.DueDate).toBe(lido.DueDate);
+    expect(corpo.SubmissionTimeLimit).toBe(lido.SubmissionTimeLimit);
+    expect(corpo.Name).toBe(lido.Name);
+  });
+});
+
+describe('jaPreparado', () => {
+  it('so quando esta restrito E sem as duas datas', () => {
+    expect(
+      jaPreparado(
+        quizLido({
+          AllowOnlyUsersWithSpecialAccess: true,
+          StartDate: null,
+          EndDate: null,
+        }),
+      ),
+    ).toBe(true);
+
+    expect(
+      jaPreparado(quizLido({ AllowOnlyUsersWithSpecialAccess: true })),
+    ).toBe(false);
+    expect(jaPreparado(quizLido({ StartDate: null, EndDate: null }))).toBe(
+      false,
+    );
   });
 });

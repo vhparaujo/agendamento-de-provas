@@ -24,6 +24,12 @@ export const MODALIDADES = [
   { codigo: 'PRESENCIAL', nome: 'Presencial', duracaoMinutos: 120 },
 ] as const;
 
+/*
+ * O tempo de prova do special access nasce igual a duracao, e so na CRIACAO:
+ * depois disso quem manda e a tela (Special access > Configuracao). Um `update`
+ * aqui desfaria a escolha do admin a cada seed.
+ */
+
 export async function seedModalidades(prisma: PrismaClient): Promise<void> {
   for (const modalidade of MODALIDADES) {
     await prisma.modalidade.upsert({
@@ -32,7 +38,10 @@ export async function seedModalidades(prisma: PrismaClient): Promise<void> {
         nome: modalidade.nome,
         duracaoMinutos: modalidade.duracaoMinutos,
       },
-      create: modalidade,
+      create: {
+        ...modalidade,
+        tempoDeProvaMinutos: modalidade.duracaoMinutos,
+      },
     });
   }
 

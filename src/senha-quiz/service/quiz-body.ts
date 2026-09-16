@@ -296,6 +296,41 @@ export function montarCorpoDoQuiz(
 }
 
 /**
+ * O corpo do PREPARO para o special access (15/09/2026): o questionario fica SEM
+ * data e visivel so para quem tem special access.
+ *
+ * E `montarCorpoDoQuiz` com tres campos sobrescritos, e nao uma segunda montagem:
+ * a lista congelada de campos continua valendo aqui pelo mesmo teste.
+ *
+ * ⚠️ `null` nas datas e o PEDIDO, nao descuido: e o unico jeito de apagar a data
+ * na Valence (`''` responde 500). Quem abre e fecha a prova passa a ser o
+ * special access de cada aluno.
+ *
+ * `DueDate` continua preservado, como nos outros lotes. `novaSenha` continua
+ * obrigatoria, pelo motivo do cabecalho.
+ */
+export function montarCorpoDoPreparo(
+  quiz: QuizLido,
+  novaSenha: string,
+): QuizParaGravar {
+  return {
+    ...montarCorpoDoQuiz(quiz, novaSenha),
+    StartDate: null,
+    EndDate: null,
+    AllowOnlyUsersWithSpecialAccess: true,
+  };
+}
+
+/** O questionario ja esta como o preparo o deixa? So para o relatorio dizer. */
+export function jaPreparado(quiz: QuizLido): boolean {
+  return (
+    quiz.AllowOnlyUsersWithSpecialAccess === true &&
+    quiz.StartDate == null &&
+    quiz.EndDate == null
+  );
+}
+
+/**
  * Os itens cujo nome casa com o alvo configurado.
  *
  * `CONTEM` pode casar VARIOS quizzes da mesma turma — e isso e aceito: "Prova"

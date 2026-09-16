@@ -69,6 +69,13 @@ export class SenhaQuizController {
       '`janelaId`. A modalidade de cada turma e DERIVADA dos agendamentos ' +
       'confirmados; turma sem modalidade derivavel fica de fora e vira linha de ' +
       'relatorio (`SEM_AGENDAMENTO` / `MODALIDADE_AMBIGUA`).\n\n' +
+      '`tipo: PREPARO` deixa o questionario pronto para o **special access** em ' +
+      'todas as turmas do CSV (ou so nas de `orgUnitIds`): apaga `StartDate`/`EndDate`, ' +
+      'liga `AllowOnlyUsersWithSpecialAccess` e tira as condicoes de liberacao ' +
+      'por grupo (com backup). O quiz e gravado ANTES das condicoes: se ele ' +
+      'falhar, elas nao sao tocadas. Grava a senha da celula `data` + `turno`.\n\n' +
+      'Com o special access substituindo as janelas (Special access > ' +
+      'Configuracao), `tipo: DATA` recusa com 400.\n\n' +
       '**`DATA` grava a senha tambem.** Nao e escopo a mais: o PUT do ' +
       'questionario substitui o objeto inteiro, e a leitura da API pode devolver ' +
       '`Password` nulo num quiz que TEM senha — preservar essa leitura apagaria ' +
@@ -119,6 +126,24 @@ export class SenhaQuizController {
 
       return this.service.iniciar(
         { ...comum, tipo: TipoExecucaoQuiz.DATA, janelaId: dto.janelaId },
+        admin.email,
+      );
+    }
+
+    if (dto.tipo === TipoExecucaoQuiz.PREPARO) {
+      if (dto.turno === undefined) {
+        throw new BadRequestException(
+          'Informe `turno`: o preparo grava a senha de UMA celula da grade junto.',
+        );
+      }
+
+      return this.service.iniciar(
+        {
+          ...comum,
+          tipo: TipoExecucaoQuiz.PREPARO,
+          turno: dto.turno,
+          orgUnitIds: dto.orgUnitIds ?? [],
+        },
         admin.email,
       );
     }

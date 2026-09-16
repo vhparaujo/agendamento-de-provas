@@ -87,6 +87,12 @@ model Modalidade {
   codigo         String @unique // EAD | SEMI | MODULAR | PRESENCIAL
   nome           String
   duracaoMinutos Int
+  /// O `TimeLimitValue` que o special access grava para quem e desta modalidade
+  /// (15/09/2026). NAO e `duracaoMinutos`: aquela decide o tamanho da faixa que
+  /// aceita a modalidade, e muda-la invalidaria faixas publicadas; esta e o
+  /// tempo do questionario, e o admin a ajusta na tela. Nasce igual a duracao.
+  /// O aluno do NIOP recebe esta mais `ConfiguracaoSpecialAccess.tempoExtraNiopMinutos`.
+  tempoDeProvaMinutos Int
 
   alunos       AlunoImportado[]
   salaFaixas   SalaFaixa[]
@@ -115,6 +121,15 @@ model Polo {
   nome   String  @unique // igual ao valor bruto do CSV de alunos
   cidade String?
   ativo  Boolean @default(true)
+  /// O fuso IANA em que as FAIXAS deste polo sao lidas. "09:00" numa faixa de
+  /// Cruzeiro do Sul (America/Rio_Branco) e 09:00 no relogio do Acre — 11:00 de
+  /// Brasilia. E daqui que o special access tira o instante UTC da prova.
+  ///
+  /// Nome do fuso, nunca deslocamento ("-5"): o ICU sabe o offset de cada data, e
+  /// um numero cravado so falharia se o horario de verao voltasse — em silencio,
+  /// uma hora errada em toda prova do polo. A lista aceita esta em
+  /// src/polo/service/fusos.ts.
+  fuso   String  @default("America/Sao_Paulo") @db.VarChar(64)
 
   salas        Sala[]
   faixas       Faixa[]
@@ -479,6 +494,12 @@ model AgendamentoDisciplina {
 // ----------------------------------------------------------------------------
 // PUT specialaccess por disciplina. 404 (nao matriculado) = NAO_MATRICULADO,
 // estado esperado, nao erro.
+//
+// ⚠️ SEM USO. O special access e gravado pelo LOTE de `src/special-access`
+// (ExecucaoSpecialAccess), que le o estado do Brightspace e grava so a diferenca.
+// `quizIds`, `startDateAplicado`, `endDateAplicado` e `DISPENSADO` vieram da
+// migration 20260915120000, de uma fila por agendamento que nao seguiu; ficam
+// porque ja estao aplicados.
 
 model SyncD2L {
   id            Int        @id @default(autoincrement())
@@ -489,6 +510,10 @@ model SyncD2L {
   ultimoErro    String?    @db.Text
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
+
+  quizIds           String?   @db.VarChar(500)
+  startDateAplicado DateTime?
+  endDateAplicado   DateTime?
 
   agendamento Agendamento @relation(fields: [agendamentoId], references: [id], onDelete: Cascade)
 
@@ -502,6 +527,7 @@ enum StatusSync {
   CONCLUIDO
   FALHOU
   NAO_MATRICULADO
+  DISPENSADO
 }
 
 // ----------------------------------------------------------------------------
@@ -826,6 +852,13 @@ enum OrigemExecucao {
 enum TipoExecucaoQuiz {
   SENHA
   DATA
+  /// Prepara o questionario para o SPECIAL ACCESS (15/09/2026): apaga
+  /// `StartDate`/`EndDate`, liga `AllowOnlyUsersWithSpecialAccess` e tira as
+  /// condicoes de liberacao por GRUPO. Grava a senha de uma celula da grade junto,
+  /// pelo mesmo motivo do lote de datas. Mora aqui, e nao em
+  /// `ExecucaoSpecialAccess`, porque faz PUT no MESMO questionario que os outros
+  /// dois — ver o aviso acima.
+  PREPARO
 }
 
 /// UMA celula da grade: dia x turno -> senha.
@@ -1128,6 +1161,12 @@ enum ResultadoGrupoQuiz {
 
   FALHA_AO_LER_CONDICOES
   FALHA_AO_GRAVAR_CONDICOES
+
+  /// So no PREPARO: as condicoes `EnrolledInGroup` foram retiradas. As de outros
+  /// tipos voltaram verbatim.
+  REMOVIDO
+  /// So no PREPARO, em simulacao: havia condicao de grupo e ela teria sido retirada.
+  REMOCAO_SIMULADA
 }
 
 /// Uma linha por (turma, quiz casado). Turma sem quiz casado gera UMA linha
@@ -1631,4 +1670,147 @@ model ItemGruposD2L {
 
   @@index([execucaoId, resultado])
   @@map("item_grupos_d2l")
+}
+
+// ----------------------------------------------------------------------------
+// SPECIAL ACCESS POR AGENDAMENTO (15/09/2026)
+// ----------------------------------------------------------------------------
+// A alternativa a troca diaria de data e grupo: o questionario fica SEM data e
+// restrito a quem tem special access (`TipoExecucaoQuiz.PREPARO`), e o lote
+// abaixo grava, para cada aluno agendado, a janela da faixa dele e o tempo de
+// prova. Os dois caminhos convivem ate o novo substituir o antigo.
+
+/// Quem e do NIOP (Nucleo de Inclusao — pessoas com deficiencia): recebe o tempo
+/// de prova da modalidade mais `tempoExtraNiopMinutos`.
+///
+/// POR MATRICULA, e fora de `AlunoImportado`, de proposito: a importacao
+/// sobrescreve o vinculo a cada upload, e a marca feita na tela sumiria no
+/// proximo CSV. O direito e da PESSOA — os dois cursos de um RA valem igual.
+model AlunoNiop {
+  matricula  String   @id
+  /// Fotografia do e-mail, como `HistoricoAgendamento.autor`.
+  marcadoPor String
+  createdAt  DateTime @default(now())
+
+  @@map("aluno_niop")
+}
+
+/// Linha unica (id = 1), mesmo idioma de `ConfiguracaoSenhaQuiz`.
+model ConfiguracaoSpecialAccess {
+  id Int @id @default(1)
+
+  /// Somado ao tempo de prova E ao fim da janela de quem e do NIOP.
+  tempoExtraNiopMinutos Int @default(60)
+
+  /// true = o special access SUBSTITUI a troca de data e grupo: o cron para de
+  /// aplicar as janelas (a senha continua) e o lote manual de datas recusa. Sem
+  /// isto, o cron das 12:01 poria data de volta num questionario preparado.
+  substituiJanelas Boolean @default(false)
+
+  atualizadoPor String?
+  atualizadoEm  DateTime @updatedAt
+
+  @@map("configuracao_special_access")
+}
+
+/// UMA rodada do lote de special access. Molde: `ExecucaoGruposD2L`.
+///
+/// NAO faz PUT no objeto do questionario — so no recurso `specialaccess`, que e
+/// separado —, e por isso pode rodar ao lado dos lotes de senha e data sem a
+/// trava deles.
+model ExecucaoSpecialAccess {
+  id        Int            @id @default(autoincrement())
+  status    StatusExecucao @default(EM_ANDAMENTO)
+  /// true = nenhuma escrita saiu para o Brightspace. As leituras saem.
+  simulacao Boolean        @default(true)
+
+  /// O recorte, congelado no inicio.
+  periodoLetivoIds String  @db.VarChar(500)
+  rodada           String
+  /// As turmas escolhidas, separadas por virgula. Nulo = todas as que tem
+  /// reserva na rodada. Serve para fatiar a carga contra o Brightspace — o lote
+  /// e uma chamada por aluno em cada questionario.
+  orgUnitIds       String?  @db.VarChar(1000)
+
+  nomeQuizAlvo          String
+  matchQuizAlvo         TipoMatchQuiz
+  tempoExtraNiopMinutos Int
+
+  iniciadoPor String
+
+  totalTurmas       Int @default(0)
+  turmasProcessadas Int @default(0)
+  gravados          Int @default(0)
+  atualizados       Int @default(0)
+  removidos         Int @default(0)
+  /// Quem ja tinha o acesso certo. Nao vira item — seriam milhares de linhas.
+  jaCorretos        Int @default(0)
+  pendencias        Int @default(0)
+
+  erro String? @db.Text
+
+  iniciadoEm   DateTime  @default(now())
+  concluidoEm  DateTime?
+  atualizadoEm DateTime  @updatedAt
+
+  itens ItemSpecialAccess[]
+
+  @@index([status])
+  @@map("execucao_special_access")
+}
+
+/// O que aconteceu com cada aluno (ou turma) do lote. As PENDENCIAS sao as de
+/// `PENDENCIAS_SPECIAL_ACCESS` em src/special-access/service/resultado.ts.
+enum ResultadoSpecialAccess {
+  ACESSO_GRAVADO
+  /// O aluno ja tinha special access, com outro horario ou outro tempo — o
+  /// remanejo cai aqui.
+  ACESSO_ATUALIZADO
+  /// Prova cancelada: o acesso que o portal tinha dado saiu.
+  ACESSO_REMOVIDO
+  /// Special access de alguem sem reserva nesta turma. Nunca e tocado — pode ser
+  /// um acesso dado a mao no AVA.
+  ACESSO_DE_OUTRO_USUARIO
+
+  QUIZ_NAO_ENCONTRADO
+  /// O questionario NAO esta restrito a quem tem special access: a prova esta
+  /// aberta para a turma toda. Rode o preparo.
+  QUESTIONARIO_NAO_RESTRITO
+  /// O mesmo usuario com duas reservas confirmadas, em horarios diferentes, na
+  /// mesma turma. Nada e escolhido.
+  RESERVA_DUPLICADA
+  USER_ID_INVALIDO
+  /// 404 da D2L: em geral o aluno nao esta matriculado nesta turma.
+  ALUNO_NAO_ENCONTRADO
+  FALHA_NA_API
+}
+
+model ItemSpecialAccess {
+  id         Int @id @default(autoincrement())
+  execucaoId Int
+
+  orgUnitId      String
+  /// Desnormalizados: o relatorio precisa ser legivel sem join.
+  codigoTurma    String?
+  nomeDisciplina String?
+  quizId         String?
+  nomeQuiz       String?
+  matricula      String?
+  userIdD2L      String?
+
+  resultado ResultadoSpecialAccess
+
+  /// A janela e o tempo gravados (ou que seriam, na simulacao), em UTC —
+  /// fotografia, para "por que a prova dele abriu as 11h?" ter resposta depois.
+  startDate DateTime?
+  endDate   DateTime?
+  minutos   Int?
+  niop      Boolean   @default(false)
+
+  detalhe String? @db.Text
+
+  execucao ExecucaoSpecialAccess @relation(fields: [execucaoId], references: [id], onDelete: Cascade)
+
+  @@index([execucaoId, resultado])
+  @@map("item_special_access")
 }

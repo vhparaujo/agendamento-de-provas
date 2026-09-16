@@ -28,6 +28,7 @@ import { carregarRitmo, RitmoDoLote } from '../config/senha-quiz.config';
 import {
   CondicoesLidas,
   gruposDasCondicoes,
+  removerGruposDasCondicoes,
   trocarGrupoNasCondicoes,
 } from './condicoes';
 import { GradeGruposService } from './grade-grupos.service';
@@ -39,7 +40,9 @@ import {
 } from './resolucao-grupo.service';
 import {
   casarPorNome,
+  jaPreparado,
   JanelaDoQuiz,
+  montarCorpoDoPreparo,
   montarCorpoDoQuiz,
   QuizLido,
 } from './quiz-body';
@@ -158,7 +161,53 @@ export interface OpcoesDeData {
   forcar: boolean;
 }
 
-export type OpcoesDoLote = OpcoesDeSenha | OpcoesDeData;
+/**
+ * O PREPARO para o special access (15/09/2026): UMA celula da grade (a senha
+ * que vai junto, pelo motivo do lote de datas) em TODAS as turmas do CSV — ou
+ * numa so, para o primeiro teste.
+ */
+export interface OpcoesDePreparo {
+  tipo: typeof TipoExecucaoQuiz.PREPARO;
+  data: string;
+  turno: Turno;
+  simulacao: boolean;
+  /** Ignorado: o preparo nao tem trava de "ja aplicado". */
+  forcar: boolean;
+  /**
+   * So estas turmas. **Vazio = todas as turmas do CSV no periodo vigente.**
+   *
+   * Fatiar o preparo e o que evita mandar a instituicao inteira ao Brightspace
+   * de uma vez — e o que permite trancar a prova de uma turma so, conferir, e
+   * seguir.
+   */
+  orgUnitIds: string[];
+}
+
+export type OpcoesDoLote = OpcoesDeSenha | OpcoesDeData | OpcoesDePreparo;
+
+/**
+ * O evento de auditoria de cada fase, pelo tipo do lote. Quem investiga "por que
+ * a prova ficou sem data?" procura o PREPARO, e nao quer as trocas de senha no
+ * meio.
+ */
+function eventoDoLote(
+  tipo: TipoExecucaoQuiz,
+  fase: 'INICIADA' | 'CONCLUIDA' | 'FALHOU',
+) {
+  if (tipo === TipoExecucaoQuiz.PREPARO) {
+    return (
+      {
+        INICIADA: 'PREPARO_QUIZ_INICIADO',
+        CONCLUIDA: 'PREPARO_QUIZ_CONCLUIDO',
+        FALHOU: 'PREPARO_QUIZ_FALHOU',
+      } as const
+    )[fase];
+  }
+
+  return tipo === TipoExecucaoQuiz.DATA
+    ? (`DATA_QUIZ_${fase}` as const)
+    : (`SENHA_QUIZ_${fase}` as const);
+}
 
 export interface ExecucaoIniciada {
   id: number;
@@ -206,6 +255,7 @@ export class SenhaQuizService {
     origem: OrigemExecucao = OrigemExecucao.MANUAL,
   ): Promise<ExecucaoIniciada> {
     const tipo = opcoes.tipo ?? TipoExecucaoQuiz.SENHA;
+    const preparo = tipo === TipoExecucaoQuiz.PREPARO;
 
     if (!this.quizzes.habilitado()) {
       // Sem a Valence nao ha como resolver o orgUnitId das turmas do CSV nem
@@ -215,6 +265,10 @@ export class SenhaQuizService {
           '(D2L_HABILITADO). Sem ela nao ha como descobrir o orgUnitId das ' +
           'turmas do CSV nem gravar no questionario.',
       );
+    }
+
+    if (tipo === TipoExecucaoQuiz.DATA) {
+      await this.recusarSeSpecialAccessSubstitui();
     }
 
     // A janela inteira: as turmas dos presenciais vivem sob o org unit do
@@ -271,7 +325,7 @@ export class SenhaQuizService {
     // janela, no de datas.
     const turnoDaSenha = janela
       ? janela.turno
-      : (opcoes as OpcoesDeSenha).turno;
+      : (opcoes as OpcoesDeSenha | OpcoesDePreparo).turno;
 
     const celula = await this.prisma.senhaDeProva.findUnique({
       where: { data_turno: { data: dataAlvo, turno: turnoDaSenha } },
@@ -294,7 +348,9 @@ export class SenhaQuizService {
 
     await this.recusarSeJaRodando();
 
-    if (!opcoes.simulacao && !opcoes.forcar) {
+    // O preparo nao tem trava de "ja aplicado": repeti-lo produz o mesmo estado,
+    // e numa turma so ele e o teste que se repete ate dar certo.
+    if (!preparo && !opcoes.simulacao && !opcoes.forcar) {
       if (janela) {
         await this.recusarSeJaAplicadaAJanela(
           janela.id,
@@ -327,13 +383,42 @@ export class SenhaQuizService {
           codigoDaModalidade: null as string | null,
         };
 
+    // O preparo aceita UMA turma: o primeiro uso real nao pode trancar a prova de
+    // toda a instituicao de uma vez. Numa turma so, as nao resolvidas do CSV
+    // inteiro ficam fora do relatorio — seriam ruido de outra pergunta.
+    const escolhidas = new Set(
+      preparo ? (opcoes as OpcoesDePreparo).orgUnitIds : [],
+    );
+    const turmasDoLote =
+      escolhidas.size > 0
+        ? recorte.turmas.filter((t) => escolhidas.has(t.orgUnitId))
+        : recorte.turmas;
+    const naoResolvidasDoLote =
+      escolhidas.size > 0 ? [] : resolvidas.naoResolvidas;
+
+    if (escolhidas.size > 0) {
+      const encontradas = new Set(turmasDoLote.map((t) => t.orgUnitId));
+      const faltando = [...escolhidas].filter((id) => !encontradas.has(id));
+
+      // A lista inteira e recusada quando UMA turma nao casa: preparar quatro de
+      // cinco deixaria a quinta com a prova aberta, e isso so apareceria no dia.
+      if (faltando.length > 0) {
+        throw new BadRequestException(
+          `Turma(s) ${faltando.join(', ')} fora das turmas do CSV resolvidas no ` +
+            'periodo vigente. Confira em Senhas e datas > Conferir.',
+        );
+      }
+    }
+
     const execucao = await this.prisma.execucaoSenhaQuiz.create({
       data: {
         tipo,
         simulacao: opcoes.simulacao,
         origem,
         iniciadoPor,
-        senhaDeProvaId: celula.id,
+        // NULO no preparo: o cron e a trava de "senha ja aplicada" procuram
+        // execucoes por celula, e um preparo nao pode passar por troca de senha.
+        senhaDeProvaId: preparo ? null : celula.id,
         data: dataAlvo,
         // Nulo no lote de datas: turno e a chave da GRADE, e uma execucao de
         // datas nao "pertence" a um turno — ela pertence a uma janela.
@@ -345,7 +430,7 @@ export class SenhaQuizService {
         // A versao do que foi REALMENTE aplicado: da celula no lote de senhas, da
         // janela no de datas. E ela que faz a idempotencia liberar um novo
         // disparo quando o admin corrige o horario ou a senha.
-        versaoAplicada: janela ? janela.versao : celula.versao,
+        versaoAplicada: preparo ? null : janela ? janela.versao : celula.versao,
         // A celula da grade de grupos e a versao dela, pelo mesmo motivo da
         // linha acima: corrigir o grupo de hoje precisa liberar um novo disparo.
         // Nulas quando o grupo veio do nome fixo da janela, ou nao houve grupo.
@@ -357,7 +442,7 @@ export class SenhaQuizService {
         nomeQuizAlvo: alvo.nomeQuiz,
         matchQuizAlvo: alvo.matchQuiz,
         turmasNoCsv: resolvidas.totalNoCsv,
-        turmasResolvidas: recorte.turmas.length,
+        turmasResolvidas: turmasDoLote.length,
         orgUnitsAprendidos: resolvidas.aprendidos,
         semModalidade: recorte.semModalidade,
         modalidadeAmbigua: recorte.modalidadeAmbigua,
@@ -370,22 +455,23 @@ export class SenhaQuizService {
         // De ONDE veio o grupo entra no log: "por que a prova abriu para o
         // grupo de ontem?" so tem resposta sabendo se foi a grade ou o padrao.
         `; grupo ${grupoDoDia?.nome ? `"${grupoDoDia.nome}" (${grupoDoDia.origem === 'GRADE' ? 'grade do dia' : 'padrao da janela'})` : grupoDoDia?.origem === 'SEM_GRUPO_NO_DIA' ? 'AUSENTE na grade do dia' : 'nao troca'}`
-      : `celula ${opcoes.data} ${rotuloDoTurno(celula.turno)}`;
+      : preparo
+        ? `preparo para special access com a senha de ${opcoes.data} ` +
+          `(${rotuloDoTurno(celula.turno)})` +
+          (escolhidas.size > 0
+            ? `, so ${escolhidas.size} turma(s): ${[...escolhidas].join(', ')}`
+            : '')
+        : `celula ${opcoes.data} ${rotuloDoTurno(celula.turno)}`;
 
-    this.auditoria.registrar(
-      tipo === TipoExecucaoQuiz.DATA
-        ? 'DATA_QUIZ_INICIADA'
-        : 'SENHA_QUIZ_INICIADA',
-      {
-        ator: iniciadoPor,
-        // Sem a senha, por definicao — so o recorte e o tamanho do trabalho.
-        detalhe:
-          `execucao ${execucao.id}; ${descricao}; ` +
-          `${opcoes.simulacao ? 'SIMULACAO' : 'APLICANDO'}; origem ${origem}; ` +
-          `${recorte.turmas.length} de ${resolvidas.totalNoCsv} turma(s) do CSV; ` +
-          `alvo "${alvo.nomeQuiz}" (${alvo.matchQuiz})`,
-      },
-    );
+    this.auditoria.registrar(eventoDoLote(tipo, 'INICIADA'), {
+      ator: iniciadoPor,
+      // Sem a senha, por definicao — so o recorte e o tamanho do trabalho.
+      detalhe:
+        `execucao ${execucao.id}; ${descricao}; ` +
+        `${opcoes.simulacao ? 'SIMULACAO' : 'APLICANDO'}; origem ${origem}; ` +
+        `${turmasDoLote.length} de ${resolvidas.totalNoCsv} turma(s) do CSV; ` +
+        `alvo "${alvo.nomeQuiz}" (${alvo.matchQuiz})`,
+    });
 
     // O dia esquecido na grade. NAO recusa: a data precisa entrar (decisao de
     // 26/08/2026 — falha de grupo nao bloqueia a data). Mas vira evento de falha,
@@ -404,8 +490,9 @@ export class SenhaQuizService {
     // na tabela, em vez de um unhandled rejection derrubando o processo.
     void this.executar({
       execucaoId: execucao.id,
-      turmas: recorte.turmas,
-      naoResolvidas: resolvidas.naoResolvidas,
+      tipo,
+      turmas: turmasDoLote,
+      naoResolvidas: naoResolvidasDoLote,
       foraDaModalidade: recorte.foraDaModalidade,
       senha: celula.senha,
       alvo,
@@ -437,8 +524,8 @@ export class SenhaQuizService {
       tipo,
       simulacao: opcoes.simulacao,
       turmasNoCsv: resolvidas.totalNoCsv,
-      totalTurmas: recorte.turmas.length,
-      naoResolvidas: resolvidas.naoResolvidas.length,
+      totalTurmas: turmasDoLote.length,
+      naoResolvidas: naoResolvidasDoLote.length,
       semModalidade: recorte.semModalidade,
       modalidadeAmbigua: recorte.modalidadeAmbigua,
     };
@@ -699,6 +786,13 @@ export class SenhaQuizService {
       return `datas-${dia}${modalidade}${janela ? `-${janela}` : ''}-execucao-${execucao.id}.csv`;
     }
 
+    if (execucao.tipo === TipoExecucaoQuiz.PREPARO) {
+      const turno = execucao.turno
+        ? rotuloDoTurno(execucao.turno)
+        : 'sem-turno';
+      return `preparo-special-access-${dia}-${turno}-execucao-${execucao.id}.csv`;
+    }
+
     // `turno` so e nulo em execucoes DATA, tratadas acima. O fallback existe
     // para nao produzir "undefined" no nome se essa invariante mudar.
     const turno = execucao.turno ? rotuloDoTurno(execucao.turno) : 'sem-turno';
@@ -729,6 +823,29 @@ export class SenhaQuizService {
   }
 
   // ------------------------------------------------------------------ interno
+
+  /**
+   * O lote de DATAS nao roda quando o special access substitui as janelas.
+   *
+   * Nao e cortesia: ele gravaria `StartDate`/`EndDate` num questionario que o
+   * preparo deixou sem data, e procuraria uma condicao de grupo que nao existe
+   * mais — cada turma viraria pendencia, e a prova ganharia a janela de UMA
+   * modalidade.
+   */
+  private async recusarSeSpecialAccessSubstitui(): Promise<void> {
+    const config = await this.prisma.configuracaoSpecialAccess.findUnique({
+      where: { id: 1 },
+      select: { substituiJanelas: true },
+    });
+
+    if (!config?.substituiJanelas) return;
+
+    throw new BadRequestException(
+      'O special access esta substituindo as janelas (Special access > ' +
+        'Configuracao). Desligue essa opcao para voltar a aplicar datas nos ' +
+        'questionarios.',
+    );
+  }
 
   /**
    * Uma execucao por vez. Enterra a que morreu com o processo, para um restart
@@ -972,6 +1089,7 @@ export class SenhaQuizService {
   /** O trabalho de verdade. NUNCA lanca: toda falha vira estado na tabela. */
   private async executar(entrada: {
     execucaoId: number;
+    tipo: TipoExecucaoQuiz;
     turmas: TurmaResolvida[];
     naoResolvidas: TurmaNaoResolvida[];
     /** Turmas descartadas por falta de modalidade — so no lote de DATAS. */
@@ -992,6 +1110,7 @@ export class SenhaQuizService {
   }): Promise<void> {
     const {
       execucaoId,
+      tipo,
       turmas,
       naoResolvidas,
       foraDaModalidade,
@@ -1005,6 +1124,7 @@ export class SenhaQuizService {
     } = entrada;
 
     const ritmo = carregarRitmo(this.config);
+    const preparo = tipo === TipoExecucaoQuiz.PREPARO;
 
     // A sessao (e o cache de grupos por turma) nasce e morre com ESTE lote — ver
     // o cabecalho de `resolucao-grupo.service.ts`. Um grupo criado no
@@ -1065,6 +1185,7 @@ export class SenhaQuizService {
           fatia.map((turma) =>
             this.aplicarNaTurma({
               turma,
+              preparo,
               senha,
               alvo,
               janela: janelaDoQuiz,
@@ -1093,7 +1214,15 @@ export class SenhaQuizService {
             case ResultadoGrupoQuiz.TROCADO:
             case ResultadoGrupoQuiz.SIMULADO:
             case ResultadoGrupoQuiz.JA_ERA_O_GRUPO:
+            case ResultadoGrupoQuiz.REMOVIDO:
+            case ResultadoGrupoQuiz.REMOCAO_SIMULADA:
               contagem.gruposTrocados += 1;
+              break;
+            case ResultadoGrupoQuiz.SEM_CONDICAO_DE_GRUPO:
+              // No PREPARO, nao ter condicao de grupo e o estado desejado. Na
+              // troca de grupo, e a prova aberta para a sessao anterior.
+              if (preparo) contagem.gruposTrocados += 1;
+              else contagem.gruposPendentes += 1;
               break;
             default:
               // Todo o resto e pendencia, inclusive os casos "esperados" como
@@ -1132,29 +1261,26 @@ export class SenhaQuizService {
         data: { status: StatusExecucao.CONCLUIDA, concluidoEm: new Date() },
       });
 
-      this.auditoria.registrar(
-        janela ? 'DATA_QUIZ_CONCLUIDA' : 'SENHA_QUIZ_CONCLUIDA',
-        {
-          ator: iniciadoPor,
-          detalhe:
-            `execucao ${execucaoId}: ${contagem.definidas} questionario(s) ` +
-            `${simulacao ? 'simulado(s)' : 'atualizado(s)'}, ` +
-            `${contagem.naoEncontradas} sem questionario, ${contagem.falhas} falha(s), ` +
-            `${naoResolvidas.length} turma(s) nao resolvida(s)` +
-            (janela
-              ? `, ${foraDaModalidade.length} sem modalidade derivavel`
-              : '') +
-            // O grupo entra no log so quando havia grupo a trocar: numa janela
-            // sem `nomeGrupo` os dois numeros seriam zero em toda execucao, e
-            // zero permanente e o ruido que ensina o time a ignorar a linha.
-            (grupoDoLote
-              ? `; grupo "${grupoDoLote.nome}": ${contagem.gruposTrocados} ` +
-                `trocado(s), ${contagem.gruposPendentes} pendente(s)`
-              : semGrupoNoDia
-                ? `; SEM grupo na grade do dia: ${contagem.gruposPendentes} pendente(s)`
-                : ''),
-        },
-      );
+      this.auditoria.registrar(eventoDoLote(tipo, 'CONCLUIDA'), {
+        ator: iniciadoPor,
+        detalhe:
+          `execucao ${execucaoId}: ${contagem.definidas} questionario(s) ` +
+          `${simulacao ? 'simulado(s)' : 'atualizado(s)'}, ` +
+          `${contagem.naoEncontradas} sem questionario, ${contagem.falhas} falha(s), ` +
+          `${naoResolvidas.length} turma(s) nao resolvida(s)` +
+          (janela
+            ? `, ${foraDaModalidade.length} sem modalidade derivavel`
+            : '') +
+          // O grupo entra no log so quando havia grupo a trocar: numa janela
+          // sem `nomeGrupo` os dois numeros seriam zero em toda execucao, e
+          // zero permanente e o ruido que ensina o time a ignorar a linha.
+          (grupoDoLote
+            ? `; grupo "${grupoDoLote.nome}": ${contagem.gruposTrocados} ` +
+              `trocado(s), ${contagem.gruposPendentes} pendente(s)`
+            : semGrupoNoDia
+              ? `; SEM grupo na grade do dia: ${contagem.gruposPendentes} pendente(s)`
+              : ''),
+      });
     } catch (erro) {
       const motivo = erro instanceof Error ? erro.message : String(erro);
 
@@ -1169,10 +1295,10 @@ export class SenhaQuizService {
         })
         .catch(() => undefined);
 
-      this.auditoria.registrar(
-        janela ? 'DATA_QUIZ_FALHOU' : 'SENHA_QUIZ_FALHOU',
-        { ator: iniciadoPor, detalhe: `execucao ${execucaoId}: ${motivo}` },
-      );
+      this.auditoria.registrar(eventoDoLote(tipo, 'FALHOU'), {
+        ator: iniciadoPor,
+        detalhe: `execucao ${execucaoId}: ${motivo}`,
+      });
 
       this.logger.error(`Execucao ${execucaoId} falhou: ${motivo}`);
     }
@@ -1187,6 +1313,8 @@ export class SenhaQuizService {
    */
   private async aplicarNaTurma(entrada: {
     turma: TurmaResolvida;
+    /** O PREPARO: sem janela, sem grupo, e as condicoes de grupo saem. */
+    preparo: boolean;
     senha: string;
     alvo: { nomeQuiz: string; matchQuiz: TipoMatchQuiz };
     janela?: JanelaDoQuiz;
@@ -1198,6 +1326,7 @@ export class SenhaQuizService {
   }): Promise<ItemParaGravar[]> {
     const {
       turma,
+      preparo,
       senha,
       alvo,
       janela,
@@ -1304,6 +1433,22 @@ export class SenhaQuizService {
 
     for (const casado of casados) {
       const quizId = String(casado.QuizId ?? '');
+
+      if (preparo) {
+        itens.push(
+          await this.prepararQuiz({
+            base,
+            turma,
+            quizId,
+            nomeQuiz: casado.Name ?? null,
+            senha,
+            simulacao,
+            ritmo,
+          }),
+        );
+        continue;
+      }
+
       itens.push(
         await this.aplicarNoQuiz({
           base,
@@ -1600,6 +1745,190 @@ export class SenhaQuizService {
     }
 
     return { ...comum, resultadoGrupo: ResultadoGrupoQuiz.TROCADO };
+  }
+
+  /**
+   * O PREPARO de UM questionario para o special access (15/09/2026): sem data,
+   * restrito a quem tem special access, e sem condicao de liberacao por grupo.
+   *
+   * ⚠️ O QUIZ VEM ANTES DAS CONDICOES — o inverso da troca de grupo, pelo mesmo
+   * raciocinio de escolher o estado intermediario menos perigoso. Gravando o
+   * quiz primeiro, o intermediario e "restrito + condicao de grupo ainda la": a
+   * prova fica FECHADA para quem nao tem as duas coisas. Na ordem inversa, seria
+   * "sem condicao + aberto a turma", a prova liberada para todos nas datas
+   * antigas. Por isso, se o PUT do quiz falhar, as condicoes nao sao tocadas.
+   *
+   * **NUNCA lanca**, como `aplicarNoQuiz`.
+   */
+  private async prepararQuiz(entrada: {
+    base: Omit<ItemParaGravar, 'quizId' | 'nomeQuiz' | 'resultado' | 'detalhe'>;
+    turma: TurmaResolvida;
+    quizId: string;
+    nomeQuiz: string | null;
+    senha: string;
+    simulacao: boolean;
+    ritmo: RitmoDoLote;
+  }): Promise<ItemParaGravar> {
+    const { base, turma, quizId, nomeQuiz, senha, simulacao, ritmo } = entrada;
+
+    let quiz: QuizLido;
+
+    try {
+      quiz = await this.quizzes.lerQuiz<QuizLido>(
+        turma.orgUnitId,
+        quizId,
+        ritmo,
+      );
+    } catch (erro) {
+      return {
+        ...base,
+        quizId,
+        nomeQuiz,
+        resultado: ResultadoSenhaQuiz.FALHA_AO_LER,
+        detalhe: this.motivo(erro),
+      };
+    }
+
+    const comum = {
+      ...base,
+      quizId,
+      nomeQuiz: quiz.Name ?? nomeQuiz,
+      senhaAnteriorLida: quiz.Password != null && quiz.Password !== '',
+    };
+
+    const situacao = jaPreparado(quiz)
+      ? 'Ja estava sem data e restrito a special access.'
+      : null;
+
+    if (!simulacao) {
+      try {
+        await this.quizzes.gravarQuiz(
+          turma.orgUnitId,
+          quizId,
+          montarCorpoDoPreparo(quiz, senha),
+          ritmo,
+        );
+      } catch (erro) {
+        return {
+          ...comum,
+          resultado: ResultadoSenhaQuiz.FALHA_AO_GRAVAR,
+          detalhe:
+            `${this.motivo(erro)} As condicoes de liberacao NAO foram tocadas.`.slice(
+              0,
+              900,
+            ),
+        };
+      }
+    }
+
+    const { detalheGrupo, ...camposDeGrupo } = await this.removerGruposDoQuiz({
+      turma,
+      quizId,
+      simulacao,
+      ritmo,
+    });
+
+    return {
+      ...comum,
+      ...camposDeGrupo,
+      resultado: simulacao
+        ? ResultadoSenhaQuiz.SIMULADA
+        : ResultadoSenhaQuiz.DEFINIDA,
+      detalhe: this.juntarDetalhe(situacao, detalheGrupo),
+    };
+  }
+
+  /**
+   * Tira as condicoes de liberacao por GRUPO de UM questionario — o outro lado
+   * do preparo. Com a prova restrita a special access, a condicao de grupo deixa
+   * de liberar e passa a TRANCAR: o special access nao passa por cima dela.
+   *
+   * **NUNCA lanca.** O backup das condicoes e gravado antes de qualquer escrita,
+   * tambem na simulacao — ver `trocarGrupoDoQuiz`.
+   */
+  private async removerGruposDoQuiz(entrada: {
+    turma: TurmaResolvida;
+    quizId: string;
+    simulacao: boolean;
+    ritmo: RitmoDoLote;
+  }): Promise<{
+    resultadoGrupo: ResultadoGrupoQuiz;
+    grupoAnterior: string | null;
+    grupoAplicado: string | null;
+    condicoesAnteriores: string | null;
+    detalheGrupo: string | null;
+  }> {
+    const { turma, quizId, simulacao, ritmo } = entrada;
+
+    const vazio = {
+      grupoAnterior: null,
+      grupoAplicado: null,
+      condicoesAnteriores: null,
+      detalheGrupo: null,
+    };
+
+    let condicoes: CondicoesLidas | null;
+
+    try {
+      condicoes = await this.condicoes.lerCondicoes<CondicoesLidas>(
+        turma.orgUnitId,
+        quizId,
+        ritmo,
+      );
+    } catch (erro) {
+      return {
+        ...vazio,
+        resultadoGrupo: ResultadoGrupoQuiz.FALHA_AO_LER_CONDICOES,
+        detalheGrupo: this.motivo(erro),
+      };
+    }
+
+    const condicoesAnteriores = this.serializarCondicoes(condicoes);
+    const anteriores = gruposDasCondicoes(condicoes);
+    const remocao = removerGruposDasCondicoes(condicoes);
+
+    if (!remocao.corpo) {
+      return {
+        ...vazio,
+        condicoesAnteriores,
+        resultadoGrupo: ResultadoGrupoQuiz.SEM_CONDICAO_DE_GRUPO,
+      };
+    }
+
+    const comum = {
+      condicoesAnteriores,
+      grupoAnterior: anteriores.length
+        ? anteriores.map((id) => `#${id}`).join(' + ')
+        : 'condicao por categoria',
+      grupoAplicado: null,
+      detalheGrupo:
+        remocao.preservadas > 0
+          ? `${remocao.preservadas} condicao(oes) de outro tipo mantida(s).`
+          : null,
+    };
+
+    if (simulacao) {
+      return { ...comum, resultadoGrupo: ResultadoGrupoQuiz.REMOCAO_SIMULADA };
+    }
+
+    try {
+      await this.condicoes.gravarCondicoes(
+        turma.orgUnitId,
+        quizId,
+        remocao.corpo,
+        ritmo,
+      );
+    } catch (erro) {
+      return {
+        ...comum,
+        resultadoGrupo: ResultadoGrupoQuiz.FALHA_AO_GRAVAR_CONDICOES,
+        detalheGrupo: [comum.detalheGrupo, this.motivo(erro)]
+          .filter(Boolean)
+          .join(' '),
+      };
+    }
+
+    return { ...comum, resultadoGrupo: ResultadoGrupoQuiz.REMOVIDO };
   }
 
   /**

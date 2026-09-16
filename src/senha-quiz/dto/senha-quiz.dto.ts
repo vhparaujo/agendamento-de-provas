@@ -1,10 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
   IsDateString,
   IsEnum,
   IsInt,
   IsOptional,
+  Matches,
   Min,
   ValidateIf,
 } from 'class-validator';
@@ -26,7 +29,9 @@ export class IniciarSenhaQuizDto {
       '`turno`). `DATA` aplica UMA janela de horario nas turmas de UMA ' +
       'modalidade (exige `janelaId`), e grava junto a senha da celula daquele ' +
       'turno — o PUT do questionario substitui o objeto inteiro e nao pode ' +
-      'preservar a senha lida.',
+      'preservar a senha lida. `PREPARO` deixa o questionario pronto para o ' +
+      'special access (sem data, restrito, sem condicao de grupo), com a senha ' +
+      'da celula de `data` + `turno`.',
   })
   @IsOptional()
   @IsEnum(TipoExecucaoQuiz)
@@ -63,6 +68,23 @@ export class IniciarSenhaQuizDto {
   @IsInt()
   @Min(1)
   janelaId?: number;
+
+  @ApiPropertyOptional({
+    type: [String],
+    example: ['156979', '156980'],
+    description:
+      'So em `PREPARO`: prepara so estas turmas. **Vazio ou ausente = todas as ' +
+      'turmas do CSV do periodo vigente.** Fatiar evita mandar a instituicao ' +
+      'inteira ao Brightspace de uma vez, e permite conferir uma turma antes de ' +
+      'trancar a prova de todas.\n\n' +
+      'Se alguma nao estiver entre as turmas resolvidas, a execucao inteira e ' +
+      'recusada.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(1000)
+  @Matches(/^\d+$/, { each: true, message: 'orgUnitIds deve ter so numeros' })
+  orgUnitIds?: string[];
 
   /**
    * `true` e o PADRAO, como no compulsorio: a simulacao percorre tudo e nao
@@ -326,6 +348,13 @@ export class AndamentoDaSenhaQuizDto {
 
   @ApiProperty({ example: '2026-09-16T10:36:00.000Z', nullable: true })
   concluidoEm!: Date | null;
+  @ApiProperty({
+    example: '2026-09-20T13:09:00.000Z',
+    description:
+      'Sinal de vida, batido a cada fatia de turmas. Distingue lote lento de ' +
+      'lote morto, e e dele que a tela tira a duracao enquanto a execucao roda.',
+  })
+  atualizadoEm!: Date;
 }
 
 export class UltimaDataPorModalidadeDto {

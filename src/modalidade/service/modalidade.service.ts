@@ -6,6 +6,8 @@ export interface Modalidade {
   codigo: string;
   nome: string;
   duracaoMinutos: number;
+  /** O `TimeLimitValue` do special access. Editado em Special access > Configuracao. */
+  tempoDeProvaMinutos: number;
 }
 
 @Injectable()

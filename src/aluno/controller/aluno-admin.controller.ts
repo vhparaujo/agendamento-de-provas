@@ -1,10 +1,12 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
   Post,
+  Put,
   Query,
 } from '@nestjs/common';
 import {
@@ -23,6 +25,7 @@ import { TAGS } from '../../config/swagger';
 import {
   AlunoImportadoDetalheDto,
   PaginaDeAlunosDto,
+  SituacaoNiopDto,
 } from '../dto/aluno-admin.response.dto';
 import {
   MesclarVinculosDto,
@@ -30,6 +33,7 @@ import {
 } from '../dto/mesclar-vinculos.dto';
 import { AlunoAdminService } from '../service/aluno-admin.service';
 import { MesclagemVinculosService } from '../service/mesclagem-vinculos.service';
+import { NiopService } from '../service/niop.service';
 
 /**
  * A consulta do admin sobre quem os CSVs trouxeram.
@@ -43,6 +47,10 @@ import { MesclagemVinculosService } from '../service/mesclagem-vinculos.service'
  * `[matricula, curso]` muda com ela, o upsert cria uma segunda linha e a
  * primeira some do arquivo — e a importacao nunca apaga. Sem uma acao explicita,
  * a duplicata fica no banco para sempre. Ver `MesclagemVinculosService`.
+ *
+ * A outra excecao e a marca do NIOP (15/09/2026), e ela NAO toca o que veio do
+ * CSV: mora em `aluno_niop`, por matricula, justamente para o proximo upload nao
+ * apaga-la. Ver `NiopService`.
  */
 @ApiTags(TAGS.ALUNOS)
 @Controller('alunos')
@@ -51,6 +59,7 @@ export class AlunoAdminController {
   constructor(
     private readonly service: AlunoAdminService,
     private readonly mesclagem: MesclagemVinculosService,
+    private readonly niop: NiopService,
   ) {}
 
   @Get()
@@ -104,6 +113,12 @@ export class AlunoAdminController {
       'true = so quem ja tem prova confirmada; false = a lista de quem ainda ' +
       'nao marcou, que e a de quem precisa ser cobrado.',
   })
+  @ApiQuery({
+    name: 'niop',
+    required: false,
+    type: Boolean,
+    description: 'true = so quem e do NIOP; false = so quem nao e.',
+  })
   @ApiQuery({ name: 'pagina', required: false, type: Number, example: 1 })
   @ApiQuery({
     name: 'porPagina',
@@ -126,6 +141,44 @@ export class AlunoAdminController {
   @ApiOkResponse({ type: [String] })
   cursos() {
     return this.service.cursos();
+  }
+
+  @Put('niop/:matricula')
+  @ApiOperation({
+    summary: 'Marca a matricula como NIOP',
+    description:
+      'Quem e do NIOP recebe, no special access, o tempo de prova da modalidade ' +
+      'mais o tempo extra configurado, e a janela fecha esse tanto depois do fim ' +
+      'da faixa. Vale para TODOS os vinculos da matricula, e sobrevive a ' +
+      'reimportacao do CSV.\n\n' +
+      'Idempotente. Vale no proximo lote de special access. Auditado.',
+  })
+  @ApiParam({ name: 'matricula', type: String, example: 'UC24424289' })
+  @ApiOkResponse({ type: SituacaoNiopDto })
+  @ApiNotFoundResponse({
+    description: 'Nenhum aluno importado com a matricula',
+  })
+  marcarNiop(
+    @Param('matricula') matricula: string,
+    @AdminLogado() admin: AdminJwtPayload,
+  ) {
+    return this.niop.marcar(matricula, admin.email);
+  }
+
+  @Delete('niop/:matricula')
+  @ApiOperation({
+    summary: 'Tira a marca do NIOP da matricula',
+    description:
+      'Idempotente. O acesso ja gravado no Brightspace so volta ao tempo normal ' +
+      'no proximo lote de special access. Auditado.',
+  })
+  @ApiParam({ name: 'matricula', type: String, example: 'UC24424289' })
+  @ApiOkResponse({ type: SituacaoNiopDto })
+  desmarcarNiop(
+    @Param('matricula') matricula: string,
+    @AdminLogado() admin: AdminJwtPayload,
+  ) {
+    return this.niop.desmarcar(matricula, admin.email);
   }
 
   @Get(':id')
@@ -205,6 +258,7 @@ function lerFiltro(query: Record<string, string>) {
     ativo: booleano(query.ativo),
     importacaoId: inteiro(query.importacaoId),
     agendado: booleano(query.agendado),
+    niop: booleano(query.niop),
     pagina: inteiro(query.pagina),
     porPagina: inteiro(query.porPagina),
   };

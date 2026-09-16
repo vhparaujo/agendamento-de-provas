@@ -108,6 +108,23 @@ export type EventoSeguranca =
   | 'GRUPOS_D2L_INICIADO'
   | 'GRUPOS_D2L_CONCLUIDO'
   | 'GRUPOS_D2L_FALHOU'
+  // Special access por agendamento (15/09/2026). A configuracao e o fuso do polo
+  // sao auditaveis porque decidem A QUE HORAS e POR QUANTO TEMPO cada aluno faz
+  // a prova; a marca do NIOP, porque da uma hora a mais a uma pessoa.
+  | 'SPECIAL_ACCESS_CONFIGURACAO_ALTERADA'
+  | 'SPECIAL_ACCESS_INICIADO'
+  | 'SPECIAL_ACCESS_CONCLUIDO'
+  | 'SPECIAL_ACCESS_FALHOU'
+  | 'NIOP_MARCADO'
+  | 'NIOP_DESMARCADO'
+  | 'POLO_FUSO_ALTERADO'
+  // O lote que deixa o questionario sem data, restrito e sem condicao de grupo.
+  | 'PREPARO_QUIZ_INICIADO'
+  | 'PREPARO_QUIZ_CONCLUIDO'
+  | 'PREPARO_QUIZ_FALHOU'
+  // O cron chegou ao horario de uma janela e nao a aplicou porque o special
+  // access substitui as datas. NAO e falha: e o modo escolhido na tela.
+  | 'DATA_QUIZ_CRON_SUBSTITUIDO'
   // Outro sistema leu os dados de agendamento de UMA matricula (nome, curso,
   // polo, sala, disciplinas). Toda leitura de dado pessoal por terceiro fica
   // rastreavel: "quem consultou o RA tal, e quando?" precisa ter resposta.
@@ -192,6 +209,8 @@ const EVENTOS_DE_FALHA = new Set<EventoSeguranca>([
   // A prova abre no horario certo para o grupo da sessao ANTERIOR — o mesmo
   // peso de `gruposPendentes` na tela.
   'DATA_QUIZ_SEM_GRUPO_NO_DIA',
+  'SPECIAL_ACCESS_FALHOU',
+  'PREPARO_QUIZ_FALHOU',
 ]);
 
 /**

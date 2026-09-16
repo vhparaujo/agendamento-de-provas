@@ -52,6 +52,8 @@ const SEM_CORPO_DE_SUCESSO = new Set([
  * Um @ApiBody vazio aqui so inventaria um campo que o handler ignora.
  */
 const SEM_CORPO_DE_REQUISICAO = new Set([
+  // A matricula vai no caminho: marcar o NIOP nao tem o que mandar no corpo.
+  'PUT /api/alunos/niop/{matricula}',
   'POST /api/admins/{id}/resetar-senha',
 ]);
 

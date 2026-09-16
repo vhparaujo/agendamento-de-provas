@@ -4,9 +4,10 @@ API que permite a **alunos** da UCB agendarem a data e o horário de suas provas
 presenciais, e a **administradores** gerenciarem polos, salas, horários, turmas,
 o período de agendamento e o **relatório de quem agendou o quê**.
 
-A liberação automática das provas no Brightspace (*special access* via Valence
-API) está **adiada** — o sistema hoje agenda e emite relatório. O que já existe é
-a entrada do aluno por **LTI 1.3**, que funciona.
+A liberação das provas no Brightspace por *special access* (Valence API) está
+implementada desde 15/09/2026, ao lado da troca de datas e grupos dos
+questionários — ver [Special access por agendamento](#special-access-por-agendamento).
+A entrada do aluno é por **LTI 1.3**.
 
 - **Stack:** NestJS 11 · TypeScript · Prisma 7 (MySQL 8) · Docker
 - **Autenticação:** LTI 1.3 (aluno, sem senha) · JWT (admin)
@@ -881,6 +882,53 @@ continuam disponíveis). O admin escreve os nomes dos grupos de cada bloco — *
   `groups:group:create groups:enrollment:create groups:enrollment:delete`.
 - Ritmo: `GRUPOS_D2L_DELAY_MS` (400) e `GRUPOS_D2L_TIMEOUT_MS` (30000).
 
+### Special access por agendamento
+
+Tela **Special access**. Em vez de trocar a data e o grupo do questionário a cada
+sessão, a prova fica **sem data** e visível **só para quem tem special access**, e
+cada aluno agendado recebe a janela da faixa dele. Convive com a troca de datas e
+grupos até substituí-la.
+
+| Campo gravado | Valor |
+|---|---|
+| Abertura | início da faixa, no **fuso do polo** (Cruzeiro do Sul = Acre, 2h depois de Brasília) |
+| Fechamento | fim da faixa; **NIOP: + o tempo extra** |
+| Tempo de prova | o da modalidade da reserva (editável na tela); **NIOP: + o tempo extra** (60 min por padrão) |
+
+| Método | Rota | O que faz |
+|---|---|---|
+| `GET`/`PUT` | `/special-access/configuracao` | Tempo de prova por modalidade, extra do NIOP e "substituir as janelas" |
+| `POST` | `/senhas-de-prova/execucoes` (`tipo: PREPARO`) | **Prepara** os questionários: sem data, restritos a special access, sem condição de grupo (com backup), com a senha da célula `data` + `turno` |
+| `POST` | `/special-access/execucoes` | **Grava** o acesso de cada aluno agendado; atualiza remanejados e remove cancelados. Responde com um `id`; **simula por padrão** |
+| `GET` | `/special-access/execucoes/ultima` · `/:id` · `/:id/relatorio` | Andamento, contagem por resultado e CSV (horários no relógio de Brasília) |
+| `GET` | `/special-access/turmas` | As turmas com reserva na rodada, com alunos e acessos de cada uma. Só banco: escolher não custa chamada ao Brightspace |
+| `PUT`/`DELETE` | `/alunos/niop/:matricula` | Marca/desmarca o NIOP da matrícula (todos os cursos dela) |
+| `GET` | `/polos/fusos` | Fusos aceitos; `PATCH /polos/:id` grava `fuso` |
+
+```jsonc
+// POST /api/senhas-de-prova/execucoes — preparar duas turmas
+{ "tipo": "PREPARO", "data": "2026-09-16", "turno": "MANHA", "simulacao": true,
+  "orgUnitIds": ["156979", "156980"] }
+
+// POST /api/special-access/execucoes — vazio ou ausente = todas as turmas
+{ "simulacao": true, "orgUnitIds": ["156979"] }
+```
+
+- **Ordem de teste**: configurar tempos e NIOP → preparar **uma** turma → gravar a
+  mesma turma → conferir no Brightspace → rodar em todas → ligar "substituir as
+  janelas".
+- **Enquanto "substituir as janelas" estiver desligado, o cron continua aplicando
+  data e grupo**, inclusive nas turmas preparadas. Ligado, ele só troca a senha, e
+  o lote manual de datas recusa.
+- **Só a diferença é gravada**: rodar de novo é barato. Special access de quem não
+  tem reserva na turma nunca é tocado.
+- **`orgUnitIds` fatia a carga.** Os dois lotes aceitam uma lista de turmas
+  (vazio = todas), e a tela a monta com `GET /special-access/turmas`, que mostra
+  alunos e acessos por turma. Turma escolhida que não casa **recusa a execução
+  inteira** — rodar nas outras esconderia a que ficou de fora até o dia da prova.
+- **Escopo**: `quizzing:quizzes:read,write,delete` no consentimento (reautorize).
+- Ritmo: `SPECIAL_ACCESS_DELAY_MS` (400) e `SPECIAL_ACCESS_TIMEOUT_MS` (30000).
+
 ### Listas de presença (PDF) — o papel que vai para a sala
 
 O documento que a secretaria imprime, o fiscal leva para a sala e volta assinado.
@@ -1343,7 +1391,10 @@ PeriodoAgendamento ── PeriodoLetivoModalidade ── Modalidade
 | `ImportacaoCsv` | Auditoria: tipo, arquivo, linhas, quem, quando |
 | `Agendamento` | A reserva, apontando para a `SalaFaixa` alocada. Guarda `rodada`, `modalidadeId` e `poloId` **do aluno na época** — ver abaixo |
 | `AgendamentoDisciplina` | As N disciplinas cobertas pela reserva |
-| `SyncD2L` | Fila de gravação do *special access* (PENDENTE/CONCLUIDO/FALHOU/NAO_MATRICULADO) |
+| `SyncD2L` | Fila de *special access* por agendamento — **sem uso** (o acesso é gravado pelo lote de `ExecucaoSpecialAccess`) |
+| `AlunoNiop` | Matrículas do NIOP: tempo extra no special access. Fora do CSV, sobrevive à reimportação |
+| `ConfiguracaoSpecialAccess` | Linha única: extra do NIOP e se o special access substitui as janelas |
+| `ExecucaoSpecialAccess` / `ItemSpecialAccess` | O lote que grava o special access de cada aluno, e o que aconteceu com cada um |
 | `HistoricoAgendamento` | Quem alterou o agendamento: evento, autor (aluno/admin), de → para |
 | `PeriodoAgendamento` | Janela de agendamento; fecha por `dataFechamento`. Identidade = `periodoLetivoId` (o **principal**) + `rodada` |
 | `PeriodoLetivoModalidade` | O mapa `modalidade → periodoLetivoId` de uma janela. Existe porque módulos e semestres correm em paralelo — ver *duas grades no mesmo ano* |
@@ -1994,15 +2045,15 @@ A ordem de implementação segue a prioridade definida para o projeto.
 | 6 | Período de agendamento + relatório (consulta, ocupação por sala, CSV) | ✅ concluída |
 | 7 | Remanejo e cancelamento administrativos + troca de horário pelo aluno | ✅ concluída |
 | 8a | Valence: OAuth + leitura de matrículas (disciplinas do semestre) | ✅ concluída — **ligada por padrão** desde 18/08/2026 |
-| 8b | Valence: special access no quiz | ⬜ **adiada pelo cliente** |
+| 8b | Valence: special access no quiz | ✅ concluída (15/09/2026) — convive com datas e grupos; ver [Special access por agendamento](#special-access-por-agendamento) |
 | 9 | Agendamento compulsório + agendamento administrativo de um aluno | ✅ concluída |
 | 10 | Senha das provas: grade dia × turno + troca em massa no Brightspace (manual e por cron) | ✅ concluída |
 
 **Pendências conhecidas**
 
-- O **special access** no quiz foi **adiado** (decisão de 03/08/2026): o sistema
-  agenda, lê as disciplinas e emite relatório; liberar a prova no Brightspace fica
-  para depois. Referência técnica em `docs/D2L_API_REFERENCE.md`.
+- O **special access** no quiz existe desde 15/09/2026, ao lado da troca de datas
+  e grupos, que continua de pé. Remover acesso de prova cancelada exige
+  `quizzing:quizzes:delete` no consentimento OAuth (reautorize).
 - A **troca de senha dos questionários** exige os escopos
   `quizzing:quizzes:read quizzing:quizzes:write` **no consentimento OAuth** —
   editar `D2L_SCOPES` não basta, é preciso reautorizar pelo browser

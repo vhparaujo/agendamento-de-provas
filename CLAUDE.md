@@ -162,9 +162,12 @@ regra de negócio ou estrutura, atualize os dois.
 8. **Período de agendamento fecha só por data/hora** (`dataFechamento`), nunca por
    esgotamento de vagas. Janela de agendamento e datas das provas são linhas do
    tempo independentes.
-9. **Sync com D2L é assíncrono e tolerante a falha**: enfileira special access por
-   disciplina; 404 (não matriculado) é estado ESPERADO (`NAO_MATRICULADO`), não
-   erro. Falha de rede/token re-tenta.
+9. **Escrita no Brightspace é lote, com simulação, e tolerante a falha**: o
+   special access (15/09/2026) é gravado por um LOTE que lê o estado do
+   questionário e escreve só a diferença — não por uma fila por agendamento
+   (`sync_d2l` existe e está sem uso). 404 ao gravar um aluno é estado esperado
+   (`ALUNO_NAO_ENCONTRADO`, em geral fora da turma), não erro do lote. Ver
+   "Special access por agendamento".
 
 ## Documentação da API (Swagger)
 
@@ -385,14 +388,17 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `PUT/DELETE /senhas-de-prova/turmas/:turmaId/modalidade` | admin | Desempata a turma **ambígua** (alunos de duas modalidades). Só nesse caso |
 | `GET/PUT /senhas-de-prova/janelas` | admin | O calendário de abertura/fechamento do questionário, por modalidade |
 | `GET/PUT /senhas-de-prova/grupos` | admin | A grade **dia × janela** do grupo que libera a prova. PUT em lote; nome vazio apaga a célula |
-| `POST /senhas-de-prova/execucoes` · `GET /:id` · `/:id/relatorio` | admin | Troca a **senha** (`tipo: SENHA`) ou a **janela de datas** (`tipo: DATA`) dos questionários no Brightspace; acompanha e baixa o CSV |
+| `POST /senhas-de-prova/execucoes` · `GET /:id` · `/:id/relatorio` | admin | Troca a **senha** (`tipo: SENHA`) ou a **janela de datas** (`tipo: DATA`) dos questionários no Brightspace, ou **prepara** o questionário para o special access (`tipo: PREPARO`); acompanha e baixa o CSV |
 | `GET /grupos-d2l/painel` · `PUT /grupos-d2l/nomes` · `POST /grupos-d2l/horarios/resolver` | admin | Grupos do Brightspace: os nomes por bloco (EaD, Semi/Modular, Presencial) e a faixa sem janela de mesmo horário |
 | `POST /grupos-d2l/execucoes` · `GET /:id` · `/:id/relatorio` | admin | **Cria** categorias e grupos em todas as turmas, ou **inscreve** os alunos (remanejado sai do grupo antigo). Simula por padrão |
+| `GET/PUT /special-access/configuracao` | admin | Tempo de prova por modalidade, extra do NIOP e o modo "substituir as janelas" |
+| `POST /special-access/execucoes` · `GET /ultima` · `GET /:id` · `/:id/relatorio` | admin | **Grava** o special access de cada aluno agendado (janela da faixa, tempo da modalidade). Só a diferença; simula por padrão |
+| `GET /special-access/turmas` | admin | As turmas com reserva na rodada e o tamanho de cada uma. **Só banco** — é o que deixa escolher as turmas do lote sem gastar chamada |
+| `PUT/DELETE /alunos/niop/:matricula` · `GET /polos/fusos` | admin | Marca do NIOP (por matrícula) e os fusos aceitos no polo (`PATCH /polos/:id` grava `fuso`) |
 | `GET /d2l/callback` | — | Callback OAuth da Valence: troca o `code` e grava o refresh token |
 
-Pendente: special access no quiz (adiado pelo cliente). OAuth, leitura de
-matrículas e troca da senha dos questionários existem — ver "Disciplinas do
-aluno: launch ou enrollments" e "Senha das provas".
+O special access no quiz existe desde 15/09/2026, ao lado da troca de datas e
+grupos — ver "Special access por agendamento".
 
 ## Cadastro: polos, salas e os 2 CSVs
 
@@ -726,10 +732,12 @@ tudo misturado.
   (14/09/2026), a pedido do cliente.** `src/grupos-d2l/` — ver "Grupos no
   Brightspace pela API". Exige `groups:group:create`, `groups:enrollment:create`
   e `groups:enrollment:delete` **no consentimento** (reautorize).
-- **Valence API — special access nos quizzes**: ⬜ **ADIADA (decisão de
-  03/08/2026).** O sistema hoje agenda, emite relatório e troca a senha da prova;
-  a liberação individual por aluno fica para uma fase posterior. Não implemente
-  nada de special access sem o cliente pedir.
+- **Valence API — special access nos quizzes**: ✅ **implementado
+  (15/09/2026), a pedido do cliente**, depois de adiado em 03/08/2026.
+  `src/special-access/` + `tipo: PREPARO` em `src/senha-quiz/` — ver "Special
+  access por agendamento". **Convive** com datas e grupos: nada do caminho antigo
+  foi removido, e a intenção é substituí-lo se o teste der certo. Exige LE ≥ 1.82
+  e `quizzing:quizzes:delete` **no consentimento** (reautorize).
 
 ### Disciplinas do aluno: launch ou enrollments
 
@@ -831,8 +839,8 @@ src/
   d2l/         ✅ autorização OAuth (d2l-oauth) · canal HTTP compartilhado
                (d2l-http) · leitura de matrículas (d2l-enrollments) · cliente de
                questionários (d2l-quizzes) · condições de liberação e grupos
-               (d2l-condicoes, LP ≥ 1.49). Special access continua adiado —
-               não criar sem pedido.
+               (d2l-condicoes, LP ≥ 1.49) · special access (d2l-quizzes:
+               listar, gravar e remover o acesso de um aluno).
   senha-quiz/  ✅ a grade dia × turno (grade-senhas.service) · a grade dia ×
                janela dos grupos (grade-grupos.service + grupo-do-dia.ts) · o lote
                (senha-quiz.service) · o cron (senha-quiz.cron) · puras:
@@ -845,6 +853,12 @@ src/
                lotes (grupos-d2l.service) · puras: bloco.ts (categorias),
                plano.ts (o que criar/inscrever/remover), resultado.ts. O cliente
                REST fica em d2l/service/d2l-grupos.service.ts
+  special-access/ ✅ special access por agendamento (15/09/2026): a
+               configuracao (configuracao-special-access.service) · o lote que
+               grava o acesso de cada aluno (special-access.service) · puras:
+               acesso.ts (janela, tempo, NIOP, plano do que gravar/remover),
+               resultado.ts. O PREPARO do questionario mora no senha-quiz; a
+               marca do NIOP, em aluno/ (niop.service); o fuso, em polo/ (fusos.ts)
 
   app.module.ts  app.controller.ts (health)  main.ts
 ```
@@ -2863,6 +2877,100 @@ lista os grupos que existem naquela turma, para distinguir os dois casos.
   host tirado do claim `tenantid` do JWT. Segunda integração, e o cliente não
   pediu.
 
+## Special access por agendamento (15/09/2026)
+
+Tela **Special access** (`SpecialAccessView.vue`). A alternativa à troca diária de
+data e grupo: o questionário fica **sem data** e visível **só para quem tem
+special access**, e o portal grava em cada aluno agendado a janela da faixa dele.
+**Nada do caminho antigo foi removido** — os dois convivem, e a ideia do cliente é
+que o special access substitua o anterior se o teste funcionar.
+
+### A regra do acesso (`acesso.ts`, pura e testada)
+
+| Campo do `SpecialAccessData` | Valor |
+|---|---|
+| `StartDate` | início da faixa agendada, no fuso do **polo da faixa** |
+| `EndDate` | fim da faixa, **+ o extra do NIOP** |
+| `SubmissionTimeLimit` | `IsEnforced: true`, `Modalidade.tempoDeProvaMinutos` da reserva **+ o extra do NIOP** |
+| `DueDate` · `AttemptsAllowed` | `null` (tentativas continuam as do questionário) |
+
+- **O fim é o da faixa, não início + tempo** (decisão do cliente, 15/09/2026).
+- **`tempoDeProvaMinutos` não é `duracaoMinutos`.** A duração decide o tamanho da
+  faixa que aceita a modalidade e mudá-la invalidaria faixas publicadas; o tempo de
+  prova é o do questionário, editado na tela. Nasce igual (EaD 180, Semi/Modular
+  90, Presencial 120). A modalidade é a da **reserva** (fotografia).
+- **NIOP é por MATRÍCULA**, em `aluno_niop`, fora de `aluno_importado`: a
+  importação sobrescreve o vínculo e apagaria a marca. Vale para os dois cursos do
+  RA. O extra (60 min por padrão) mora em `configuracao_special_access`.
+- **Fuso é nome IANA em `Polo.fuso`**, lista fechada em `polo/service/fusos.ts`.
+  Cruzeiro do Sul = `America/Rio_Branco` (a migration grava). A faixa das 09:00 de
+  lá abre às 11:00 de Brasília. **Nunca some horas**: a conversão é `instanteUtcDe`.
+
+### Dois lotes, em dois lugares — e por quê
+
+1. **Preparar** — `POST /senhas-de-prova/execucoes` com `tipo: PREPARO`. Em cada
+   turma do CSV (ou só em `orgUnitId`): PUT do quiz com `StartDate`/`EndDate`
+   `null`, `AllowOnlyUsersWithSpecialAccess: true` e a senha da célula escolhida;
+   **depois** tira os operandos `EnrolledInGroup` das condições (os outros voltam
+   verbatim, backup em `condicoesAnteriores`).
+   - Mora no `senha-quiz` porque faz PUT no **mesmo questionário** dos lotes de
+     senha e data: precisa da mesma trava de "um lote por vez".
+   - `senhaDeProvaId` e `versaoAplicada` ficam **nulos**: o cron e a trava de
+     "senha já aplicada" procuram execuções por célula, e um preparo não pode
+     passar por troca de senha.
+   - **Quiz antes das condições**: o intermediário "restrito + condição de grupo"
+     fica fechado; o inverso deixaria a prova aberta para a turma. Se o PUT do quiz
+     falha, as condições não são tocadas.
+   - Tira as condições de grupo porque **special access não passa por cima de
+     condição de liberação**: o aluno agendado ficaria trancado pelo grupo.
+2. **Gravar** — `POST /special-access/execucoes`. Para cada turma com reserva na
+   rodada vigente e cada questionário-alvo: `GET .../specialaccess/` e grava **só a
+   diferença** — certo não gera chamada, horário/tempo diferente é atualizado
+   (remanejo), reserva cancelada perde o acesso.
+   - **Usuário sem reserva nunca é tocado** (`ACESSO_DE_OUTRO_USUARIO`, informativo).
+   - **RA com duas reservas confirmadas em horários diferentes** na mesma turma →
+     `RESERVA_DUPLICADA`, nada é escolhido.
+   - Quiz com `AllowOnlyUsersWithSpecialAccess` falso → `QUESTIONARIO_NAO_RESTRITO`
+     (pendência): a prova está aberta para a turma toda.
+   - Não faz PUT no quiz, então roda sem a trava dos lotes de senha e data.
+
+Os dois simulam por padrão e aceitam **`orgUnitIds`, uma lista de turmas** —
+vazio significa todas. É assim que a carga contra o Brightspace é fatiada: o lote
+é uma chamada por aluno em cada questionário, e quem decide quanto o tenant recebe
+de cada vez é a secretaria. A tela monta a lista a partir de
+`GET /special-access/turmas`, que mostra alunos e acessos por turma e **não custa
+chamada nenhuma** — escolher é de graça, rodar é que custa.
+
+⚠️ **Turma escolhida que não casa recusa a execução INTEIRA**, nos dois lotes.
+Rodar nas outras entregaria um resultado verde com uma turma de fora, e isso só
+apareceria no dia da prova.
+
+### O modo "substituir as janelas"
+
+`configuracao_special_access.substituiJanelas = true`: o cron **não aplica
+janela nem grupo** (`DATA_QUIZ_CRON_SUBSTITUIDO`, uma vez por dia) e a senha segue
+trocando; o lote manual `DATA` recusa com 400. **Desligado, o cron continua
+gravando data e trocando grupo — inclusive nas turmas já preparadas.** Ligue só
+depois de preparar e gravar todas as turmas.
+
+### Detalhes que vão custar tempo se esquecidos
+
+- **Escopo `quizzing:quizzes:delete`** para remover acesso — está em `D2L_SCOPES`
+  do `.env.example`, mas vive no consentimento: reautorize. As rotas de special
+  access exigem **LE ≥ 1.82**.
+- **`AllowOnlyUsersWithSpecialAccess` é ignorado em silêncio** se o usuário da
+  integração não puder dar special access. O lote de gravação lê o campo na
+  listagem e acusa `QUESTIONARIO_NAO_RESTRITO` — não trate essa pendência como ruído.
+- **Mudar tempo, NIOP ou fuso não reescreve nada sozinho**: vale no próximo lote,
+  que atualiza só quem mudou.
+- A migration `20260915120000_fuso_do_polo_e_special_access` foi **reescrita**
+  (o arquivo se perdeu com um trabalho descartado, já aplicado no banco de dev).
+  Num ambiente que a aplicou antes, `migrate dev` acusa checksum diferente:
+  realinhe `_prisma_migrations.checksum` com o `sha256` do arquivo — o SQL é o
+  mesmo que rodou.
+- `sync_d2l` (e as colunas `quizIds`/`startDateAplicado`/`endDateAplicado`)
+  continua **sem uso**.
+
 ## Ao implementar, priorize nesta ordem
 
 1. ✅ Prisma schema + migrations + Docker + seed do admin.
@@ -2892,6 +3000,11 @@ lista os grupos que existem naquela turma, para distinguir os dois casos.
    grupos, e dois lotes — criar categorias e grupos, inscrever alunos (com o
    remanejo tirando do grupo antigo). **Exige `D2L_HABILITADO`** e os escopos
    `groups:group:create groups:enrollment:create groups:enrollment:delete`.
+13. ✅ Special access por agendamento (15/09/2026): o questionário
+   sem data e restrito (`tipo: PREPARO`), e o lote que grava a janela da faixa de
+   cada aluno, com o tempo da modalidade, a hora a mais do NIOP e o fuso do polo.
+   Convive com datas e grupos até substituí-los. Ver "Special access por
+   agendamento".
 
 **Bloqueios externos:** o consentimento OAuth precisa incluir
 `quizzing:quizzes:read quizzing:quizzes:write` — acrescentar ao `D2L_SCOPES` não
@@ -2901,7 +3014,8 @@ de senha volta 403. O CSV real de turmas
 turmas têm prova**. Em 07/08/2026 o match passou a usar o **`Code` composto** do
 Brightspace (código da turma + código da disciplina), portado do
 `../brightspace-orgunits` — sem isso o caminho dos enrollments não achava turma
-nenhuma. O special access continua adiado pelo cliente.
+nenhuma. Remover special access (prova cancelada) exige também
+`quizzing:quizzes:delete` no consentimento.
 
 **Aceito conscientemente:** com `D2L_HABILITADO=true`, o aluno de dois vínculos
 na mesma matrícula leva as disciplinas dos dois cursos em cada agendamento — são
