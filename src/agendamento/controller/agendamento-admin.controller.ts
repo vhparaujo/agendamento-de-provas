@@ -33,6 +33,7 @@ import {
   AgendamentoAdminDto,
   AgendamentoPeloAdminDto,
   AgendarPeloAdminDto,
+  EstatisticasDaJanelaDto,
   EventoDoHistoricoDto,
   LinhaDoResumoDto,
   MensagemDto,
@@ -171,6 +172,25 @@ export class AgendamentoAdminController {
   @ApiOkResponse({ type: [LinhaDoResumoDto] })
   resumo(@Query() query: Record<string, string>) {
     return this.service.resumo(this.lerFiltro(query));
+  }
+
+  @Get('estatisticas')
+  @ApiOperation({
+    summary: 'Como esta indo o agendamento da rodada vigente',
+    description:
+      'Os numeros da tela de Inicio: quantos vinculos **ativos** ja tem prova ' +
+      'na rodada vigente, a mesma adesao por modalidade, e quem criou cada ' +
+      'reserva (aluno, compulsorio ou admin — a mesma regra da coluna ' +
+      '"Agendado por" da exportacao).\n\n' +
+      'Modalidade e polo sao os de hoje do vinculo, para o numerador e o ' +
+      'denominador cortarem pelo mesmo campo.',
+  })
+  @ApiQuery({ name: 'poloId', required: false, type: Number, example: 6 })
+  @ApiOkResponse({ type: EstatisticasDaJanelaDto })
+  estatisticas(@Query() query: Record<string, string>) {
+    return this.service.estatisticas({
+      poloId: this.lerFiltro(query).poloId,
+    });
   }
 
   @Get('exportacao')

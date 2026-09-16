@@ -14,6 +14,7 @@ import {
   StatusAgendamento,
 } from '../../generated/prisma/client';
 import { PeriodoService } from '../../periodo/service/periodo.service';
+import { FUSO_DA_OPERACAO } from '../../senha-quiz/service/relogio';
 import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 import { dataBr, dataDaProva, montarCsv } from './csv-relatorio';
 import { DisciplinasDoAlunoService } from './disciplinas-do-aluno.service';
@@ -130,6 +131,67 @@ export interface LinhaDoResumo {
   vagas: number;
   ocupadas: number;
   disponiveis: number;
+}
+
+/** Quem criou a reserva — ver `origemDaReserva`. */
+export type OrigemDaReserva = 'ALUNO' | 'COMPULSORIO' | 'ADMIN';
+
+export interface AdesaoDaModalidade {
+  modalidadeId: number;
+  modalidade: string;
+  /** Vinculos ativos desta modalidade. */
+  total: number;
+  /** Quantos deles tem prova confirmada na rodada vigente. */
+  agendados: number;
+}
+
+export interface EstatisticasDaJanela {
+  /** A rodada vigente, ou `null` sem periodo cadastrado (tudo zera). */
+  rodada: string | null;
+  totalVinculos: number;
+  agendados: number;
+  porModalidade: AdesaoDaModalidade[];
+  porOrigem: {
+    aluno: number;
+    compulsorio: number;
+    admin: number;
+    /** Reservas anteriores ao historico: sem evento CRIADO, sem autor. */
+    semRegistro: number;
+  };
+  /**
+   * Reservas confirmadas de vinculos que HOJE estao inativos (trancou depois
+   * de agendar). Ficam fora da conta acima, que e sobre quem pode fazer prova,
+   * mas aparecem aqui para o numero nao divergir em silencio do "Confirmados"
+   * do periodo.
+   */
+  agendadosInativos: number;
+  /**
+   * Cabe todo mundo? Por polo + modalidade, quem ainda nao tem prova contra as
+   * cadeiras livres nas faixas de hoje em diante. Pior saldo primeiro.
+   */
+  capacidade: CapacidadeDaCombinacao[];
+  /** Reservas confirmadas por dia de CRIACAO (fuso da operacao), por origem. */
+  porDia: AgendamentosDoDia[];
+}
+
+export interface CapacidadeDaCombinacao {
+  poloId: number;
+  polo: string;
+  modalidadeId: number;
+  modalidade: string;
+  /** Vinculos ativos sem prova confirmada na rodada vigente. */
+  pendentes: number;
+  /** Soma de `vagas - confirmados` das ofertas futuras e ativas. */
+  vagasRestantes: number;
+}
+
+export interface AgendamentosDoDia {
+  /** AAAA-MM-DD, no fuso da operacao. */
+  dia: string;
+  aluno: number;
+  compulsorio: number;
+  admin: number;
+  semRegistro: number;
 }
 
 const PADRAO_POR_PAGINA = 50;
@@ -961,6 +1023,216 @@ export class AgendamentoAdminService {
   }
 
   /**
+   * ==========================================================================
+   * COMO ESTA INDO O AGENDAMENTO — a tela de Inicio
+   * ==========================================================================
+   * As perguntas da secretaria durante a janela: quantos ja agendaram, em
+   * qual modalidade esta faltando gente, quanto disso o aluno fez sozinho
+   * versus o compulsorio, em que ritmo, e se as vagas que sobram cabem quem
+   * falta (por polo + modalidade, que e onde a vaga existe de fato).
+   *
+   * A BASE sao os vinculos ATIVOS — os mesmos que o compulsorio considera
+   * elegiveis. Trancado ou cancelado nao pode agendar, e conta-lo no total
+   * deixaria a adesao eternamente abaixo de 100% sem ninguem para cobrar.
+   *
+   * Modalidade e polo aqui sao os de HOJE (`AlunoImportado`), e nao a
+   * fotografia do agendamento: a pergunta e "quanto da base atual ja tem
+   * prova", e numerador e denominador precisam cortar pelo mesmo campo.
+   *
+   * O recorte e a janela vigente inteira + a rodada, como na exportacao: sem a
+   * rodada, quem fez a N2 contaria como agendado durante a substitutiva.
+   */
+  async estatisticas(filtro: {
+    poloId?: number;
+  }): Promise<EstatisticasDaJanela> {
+    const janela = await this.periodo.janelaVigente();
+
+    const [modalidades, polos, vinculos, ofertas] = await Promise.all([
+      this.prisma.modalidade.findMany({
+        orderBy: { id: 'asc' },
+        select: { id: true, nome: true },
+      }),
+      this.prisma.polo.findMany({ select: { id: true, nome: true } }),
+      this.prisma.alunoImportado.groupBy({
+        by: ['poloId', 'modalidadeId'],
+        where: { ativo: true, poloId: filtro.poloId },
+        _count: { _all: true },
+      }),
+      // As vagas que o compulsorio ainda pode usar: o MESMO recorte de
+      // `faixasPorPolo` (faixa ativa, de hoje em diante). Contar faixa passada
+      // prometeria cadeira numa prova que ja aconteceu.
+      this.prisma.salaFaixa.findMany({
+        where: {
+          faixa: {
+            ativo: true,
+            data: { gte: hojeUtc() },
+            poloId: filtro.poloId,
+          },
+        },
+        select: {
+          vagas: true,
+          modalidadeId: true,
+          faixa: { select: { poloId: true } },
+          // Ocupacao contada igual em todo lugar: CONFIRMADO, de qualquer
+          // rodada — a cadeira tomada nao volta por ser de outra prova.
+          _count: {
+            select: {
+              agendamentos: {
+                where: { status: StatusAgendamento.CONFIRMADO },
+              },
+            },
+          },
+        },
+      }),
+    ]);
+
+    // Sem periodo cadastrado ninguem tem prova "da rodada vigente".
+    const reservas = janela
+      ? await this.prisma.agendamento.findMany({
+          where: {
+            status: StatusAgendamento.CONFIRMADO,
+            periodoLetivoId: { in: janela.periodoLetivoIds },
+            rodada: janela.rodada,
+            aluno: { poloId: filtro.poloId },
+          },
+          select: {
+            alunoId: true,
+            createdAt: true,
+            aluno: {
+              select: { ativo: true, modalidadeId: true, poloId: true },
+            },
+            historico: {
+              where: { evento: EventoAgendamento.CRIADO },
+              select: { autorTipo: true, autor: true },
+              orderBy: { createdAt: 'asc' },
+              take: 1,
+            },
+          },
+        })
+      : [];
+
+    // A regra e uma prova por vinculo em cada rodada; o Map so garante que uma
+    // duplicata, se um dia existir, nao infle a adesao acima de 100%.
+    const porVinculo = new Map(reservas.map((r) => [r.alunoId, r]));
+
+    const agendadosPorCombinacao = new Map<string, number>();
+    const porOrigem = { aluno: 0, compulsorio: 0, admin: 0, semRegistro: 0 };
+    const porDia = new Map<string, AgendamentosDoDia>();
+    let agendadosInativos = 0;
+
+    for (const reserva of porVinculo.values()) {
+      if (!reserva.aluno.ativo) {
+        agendadosInativos++;
+        continue;
+      }
+
+      somar(
+        agendadosPorCombinacao,
+        chaveDaCombinacao(reserva.aluno.poloId, reserva.aluno.modalidadeId),
+        1,
+      );
+
+      const campo =
+        CAMPO_DA_ORIGEM[
+          origemDaReserva(reserva.historico[0]) ?? 'SEM_REGISTRO'
+        ];
+
+      porOrigem[campo]++;
+
+      const dia = diaDaOperacao(reserva.createdAt);
+      const doDia = porDia.get(dia) ?? {
+        dia,
+        aluno: 0,
+        compulsorio: 0,
+        admin: 0,
+        semRegistro: 0,
+      };
+      doDia[campo]++;
+      porDia.set(dia, doDia);
+    }
+
+    const vagasPorCombinacao = new Map<string, number>();
+    for (const oferta of ofertas) {
+      somar(
+        vagasPorCombinacao,
+        chaveDaCombinacao(oferta.faixa.poloId, oferta.modalidadeId),
+        Math.max(0, oferta.vagas - oferta._count.agendamentos),
+      );
+    }
+
+    const nomeDaModalidade = new Map(modalidades.map((m) => [m.id, m.nome]));
+    const nomeDoPolo = new Map(polos.map((p) => [p.id, p.nome]));
+
+    const totalPorModalidade = new Map<number, number>();
+    const agendadosPorModalidade = new Map<number, number>();
+    const capacidade = new Map<string, CapacidadeDaCombinacao>();
+
+    const linhaDe = (poloId: number, modalidadeId: number) => {
+      const chave = chaveDaCombinacao(poloId, modalidadeId);
+      const linha = capacidade.get(chave) ?? {
+        poloId,
+        polo: nomeDoPolo.get(poloId) ?? `Polo ${poloId}`,
+        modalidadeId,
+        modalidade: nomeDaModalidade.get(modalidadeId) ?? `${modalidadeId}`,
+        pendentes: 0,
+        vagasRestantes: vagasPorCombinacao.get(chave) ?? 0,
+      };
+      capacidade.set(chave, linha);
+      return linha;
+    };
+
+    for (const v of vinculos) {
+      const total = v._count._all;
+      const agendados =
+        agendadosPorCombinacao.get(
+          chaveDaCombinacao(v.poloId, v.modalidadeId),
+        ) ?? 0;
+
+      somar(totalPorModalidade, v.modalidadeId, total);
+      somar(agendadosPorModalidade, v.modalidadeId, agendados);
+
+      linhaDe(v.poloId, v.modalidadeId).pendentes = Math.max(
+        0,
+        total - agendados,
+      );
+    }
+
+    // Vaga sobrando onde nao ha aluno tambem vira linha: e a sala que talvez
+    // nem precise abrir.
+    for (const chave of vagasPorCombinacao.keys()) {
+      const [poloId, modalidadeId] = chave.split(':').map(Number);
+      linhaDe(poloId, modalidadeId);
+    }
+
+    const porModalidade = modalidades
+      .map((m) => ({
+        modalidadeId: m.id,
+        modalidade: m.nome,
+        total: totalPorModalidade.get(m.id) ?? 0,
+        agendados: agendadosPorModalidade.get(m.id) ?? 0,
+      }))
+      // Modalidade sem nenhum vinculo so ocuparia espaco com "0 de 0".
+      .filter((m) => m.total > 0);
+
+    return {
+      rodada: janela?.rodada ?? null,
+      totalVinculos: porModalidade.reduce((s, m) => s + m.total, 0),
+      agendados: porModalidade.reduce((s, m) => s + m.agendados, 0),
+      porModalidade,
+      porOrigem,
+      agendadosInativos,
+      // Pior saldo primeiro: e a lista de onde abrir sala antes do compulsorio.
+      capacidade: [...capacidade.values()].sort(
+        (a, b) =>
+          a.vagasRestantes - a.pendentes - (b.vagasRestantes - b.pendentes) ||
+          a.polo.localeCompare(b.polo, 'pt-BR') ||
+          a.modalidadeId - b.modalidadeId,
+      ),
+      porDia: [...porDia.values()].sort((a, b) => a.dia.localeCompare(b.dia)),
+    };
+  }
+
+  /**
    * Ocupacao por sala, que e a pergunta operacional do dia da prova: quantas
    * pessoas em cada sala, e quais salas nem precisam ser abertas.
    */
@@ -1313,12 +1585,56 @@ const NAO_AGENDADO = 'Não Agendado';
 function quemAgendou(
   criado: { autorTipo: AutorDaAlteracao; autor: string } | undefined,
 ): string | null {
+  const origem = origemDaReserva(criado);
+
+  if (!origem) return null;
+
+  return { ALUNO: 'Aluno', COMPULSORIO: 'Compulsório', ADMIN: 'Admin' }[origem];
+}
+
+/**
+ * A classificacao por tras de `quemAgendou`, compartilhada com as estatisticas
+ * do Inicio: a coluna do CSV e o grafico precisam contar do mesmo jeito.
+ */
+function origemDaReserva(
+  criado: { autorTipo: AutorDaAlteracao; autor: string } | undefined,
+): OrigemDaReserva | null {
   if (!criado) return null;
 
-  if (criado.autorTipo === AutorDaAlteracao.ALUNO) return 'Aluno';
+  if (criado.autorTipo === AutorDaAlteracao.ALUNO) return 'ALUNO';
 
-  return criado.autor === IDENTIFICACAO_COMPULSORIO ? 'Compulsório' : 'Admin';
+  return criado.autor === IDENTIFICACAO_COMPULSORIO ? 'COMPULSORIO' : 'ADMIN';
 }
+
+const CAMPO_DA_ORIGEM = {
+  ALUNO: 'aluno',
+  COMPULSORIO: 'compulsorio',
+  ADMIN: 'admin',
+  SEM_REGISTRO: 'semRegistro',
+} as const;
+
+const chaveDaCombinacao = (poloId: number, modalidadeId: number) =>
+  `${poloId}:${modalidadeId}`;
+
+function somar<K>(mapa: Map<K, number>, chave: K, valor: number): void {
+  mapa.set(chave, (mapa.get(chave) ?? 0) + valor);
+}
+
+/**
+ * O dia em que a reserva foi criada, no fuso da operacao.
+ *
+ * Um formatador so, e nao `agoraNaOperacao` por reserva: sao milhares de
+ * linhas, e construir um `Intl.DateTimeFormat` custa mais que formatar. Ler o
+ * dia em UTC jogaria para amanha tudo que foi agendado depois das 21h.
+ */
+const DIA_DA_OPERACAO = new Intl.DateTimeFormat('en-CA', {
+  timeZone: FUSO_DA_OPERACAO,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+const diaDaOperacao = (instante: Date) => DIA_DA_OPERACAO.format(instante);
 
 /**
  * Recorte de datas da prova, compartilhado com o modulo de relatorios: e a

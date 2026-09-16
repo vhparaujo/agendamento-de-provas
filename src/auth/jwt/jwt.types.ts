@@ -4,6 +4,12 @@ import { Perfil } from '../../enums/perfil.enum';
 export interface AdminJwtPayload {
   sub: string; // Admin.id
   email: string;
+  /**
+   * Como o admin e chamado na tela ("Bem-vindo, Fulano"). Opcional no cadastro,
+   * e ausente em token emitido antes deste campo existir — leia com `?? null`.
+   * Renomear no banco so aparece no proximo refresh (no maximo 15 min).
+   */
+  nome?: string | null;
   perfil: Perfil.ADMIN;
   mustChangePassword: boolean;
 }

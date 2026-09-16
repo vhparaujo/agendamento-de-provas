@@ -374,6 +374,7 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `GET/POST /portal/agendamentos` | aluno | Confirmar a prova e consultar o que já marcou |
 | `GET/POST /periodos` · `GET/PATCH/DELETE /periodos/:id` | admin | Abrir/fechar a janela de agendamento |
 | `GET /agendamentos` · `/resumo` · `/exportacao` · `/:id` | admin | Relatório: consulta, ocupação por sala e o CSV de **todos os alunos** |
+| `GET /agendamentos/estatisticas` | admin | A tela de Início: adesão da rodada vigente sobre os vínculos **ativos**, por modalidade e por origem (aluno/compulsório/admin — a mesma regra do "Agendado por" da exportação), por dia de criação, e vagas livres nas faixas futuras x pendentes por polo + modalidade (o mesmo recorte de faixas do compulsório) |
 | `GET /relatorios/grupos-d2l` · `/zip` · `/:faixaId/:orgUnitId` | admin | Grupos do Brightspace: um CSV de matrículas **por horário e turma** |
 | `GET /relatorios/listas-de-presenca` · `/pdf` · `/:salaFaixaId/pdf` | admin | Lista de presença: um PDF com **uma página por sala** de aplicação |
 | `PATCH /agendamentos/:id/remanejar` · `DELETE /agendamentos/:id` | admin | Mover de sala/horário e cancelar |

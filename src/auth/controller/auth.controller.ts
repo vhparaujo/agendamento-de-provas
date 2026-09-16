@@ -116,6 +116,7 @@ export class AuthController {
     return {
       id: admin.sub,
       email: admin.email,
+      nome: admin.nome ?? null,
       perfil: admin.perfil,
       mustChangePassword: admin.mustChangePassword,
     };

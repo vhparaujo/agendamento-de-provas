@@ -84,6 +84,7 @@ export class AuthService {
     return this.emitirTokensAdmin(
       admin.id,
       admin.email,
+      admin.nome,
       admin.mustChangePassword,
     );
   }
@@ -132,6 +133,7 @@ export class AuthService {
     return this.emitirTokensAdmin(
       admin.id,
       admin.email,
+      admin.nome,
       admin.mustChangePassword,
     );
   }
@@ -198,11 +200,13 @@ export class AuthService {
   private async emitirTokensAdmin(
     id: string,
     email: string,
+    nome: string | null,
     mustChangePassword: boolean,
   ): Promise<TokensAdmin> {
     const accessPayload: AdminJwtPayload = {
       sub: id,
       email,
+      nome,
       perfil: Perfil.ADMIN,
       mustChangePassword,
     };

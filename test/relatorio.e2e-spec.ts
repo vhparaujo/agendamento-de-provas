@@ -413,6 +413,123 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
     });
   });
 
+  describe('estatisticas do Inicio', () => {
+    it('conta a adesao sobre os vinculos ativos, por modalidade e por origem', async () => {
+      const res = await comoAdmin(
+        api().get(`/api/agendamentos/estatisticas?poloId=${poloId}`),
+      ).expect(200);
+
+      expect(res.body).toMatchObject({
+        totalVinculos: 2,
+        agendados: 1,
+        porModalidade: [
+          { modalidadeId: ead.id, modalidade: 'EaD', total: 2, agendados: 1 },
+        ],
+        porOrigem: { aluno: 1, compulsorio: 0, admin: 0, semRegistro: 0 },
+        agendadosInativos: 0,
+      });
+    });
+
+    it('cruza pendentes com as vagas livres do polo + modalidade', async () => {
+      const res = await comoAdmin(
+        api().get(`/api/agendamentos/estatisticas?poloId=${poloId}`),
+      ).expect(200);
+
+      // 2 ativos, 1 agendado; a sala tem 5 vagas numa faixa futura, 1 tomada.
+      expect(res.body.capacidade).toEqual([
+        {
+          poloId,
+          polo: POLO_NOME,
+          modalidadeId: ead.id,
+          modalidade: 'EaD',
+          pendentes: 1,
+          vagasRestantes: 4,
+        },
+      ]);
+    });
+
+    it('conta as reservas por dia de criacao, separadas por origem', async () => {
+      const res = await comoAdmin(
+        api().get(`/api/agendamentos/estatisticas?poloId=${poloId}`),
+      ).expect(200);
+
+      expect(res.body.porDia).toHaveLength(1);
+      expect(res.body.porDia[0]).toMatchObject({
+        aluno: 1,
+        compulsorio: 0,
+        admin: 0,
+        semRegistro: 0,
+      });
+      expect(res.body.porDia[0].dia).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    });
+
+    it('separa o compulsorio do admin de balcao, como a exportacao', async () => {
+      const agendamento = await prisma.agendamento.findFirstOrThrow({
+        where: { matricula: MATRICULA, status: 'CONFIRMADO' },
+      });
+      const criado = await prisma.historicoAgendamento.findFirstOrThrow({
+        where: { agendamentoId: agendamento.id, evento: 'CRIADO' },
+      });
+
+      const origemCom = async (autor: string) => {
+        await prisma.historicoAgendamento.update({
+          where: { id: criado.id },
+          data: { autorTipo: 'ADMIN', autor },
+        });
+
+        return (
+          await comoAdmin(
+            api().get(`/api/agendamentos/estatisticas?poloId=${poloId}`),
+          ).expect(200)
+        ).body.porOrigem;
+      };
+
+      try {
+        expect(await origemCom('compulsorio')).toMatchObject({
+          aluno: 0,
+          compulsorio: 1,
+        });
+        expect(await origemCom(EMAIL)).toMatchObject({
+          compulsorio: 0,
+          admin: 1,
+        });
+      } finally {
+        await prisma.historicoAgendamento.update({
+          where: { id: criado.id },
+          data: { autorTipo: criado.autorTipo, autor: criado.autor },
+        });
+      }
+    });
+
+    it('vinculo inativo sai da base e aparece a parte', async () => {
+      const aluno = await prisma.alunoImportado.findFirstOrThrow({
+        where: { matricula: MATRICULA },
+      });
+
+      await prisma.alunoImportado.update({
+        where: { id: aluno.id },
+        data: { ativo: false },
+      });
+
+      try {
+        const res = await comoAdmin(
+          api().get(`/api/agendamentos/estatisticas?poloId=${poloId}`),
+        ).expect(200);
+
+        expect(res.body).toMatchObject({
+          totalVinculos: 1,
+          agendados: 0,
+          agendadosInativos: 1,
+        });
+      } finally {
+        await prisma.alunoImportado.update({
+          where: { id: aluno.id },
+          data: { ativo: true },
+        });
+      }
+    });
+  });
+
   describe('exportacao em CSV', () => {
     const linhaDe = (csv: string, matricula: string) =>
       csv.split('\r\n').find((l) => l.includes(matricula)) as string;

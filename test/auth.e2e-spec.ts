@@ -126,6 +126,18 @@ describe('Auth admin (e2e)', () => {
       .expect(401);
   });
 
+  it('/auth/me devolve o nome do cadastro, para a tela chamar o admin pelo nome', async () => {
+    // Roda depois do ciclo acima, que ja trocou a senha provisoria.
+    const { accessToken } = (await login(SENHA_NOVA).expect(200)).body;
+
+    const res = await request(app.getHttpServer())
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .expect(200);
+
+    expect(res.body).toMatchObject({ email: EMAIL, nome: 'Admin E2E' });
+  });
+
   it('nao devolve o hash da senha ao listar admins', async () => {
     const { body } = await login(SENHA_NOVA).expect(200);
 

@@ -1,8 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsBoolean, IsInt, IsOptional, Min } from 'class-validator';
 import type {
+  AdesaoDaModalidade,
+  AgendamentosDoDia,
   AgendamentoAdmin,
   AgendamentoPeloAdmin,
+  CapacidadeDaCombinacao,
+  EstatisticasDaJanela,
   EventoDoHistorico,
   LinhaDoResumo,
   OrigemDasDisciplinas,
@@ -144,6 +148,125 @@ export class LinhaDoResumoDto implements LinhaDoResumo {
     description: 'Sala com `ocupadas: 0` nem precisa ser aberta no dia.',
   })
   disponiveis!: number;
+}
+
+class AdesaoDaModalidadeDto implements AdesaoDaModalidade {
+  @ApiProperty({ example: 1 })
+  modalidadeId!: number;
+
+  @ApiProperty({ example: 'EaD' })
+  modalidade!: string;
+
+  @ApiProperty({ example: 2515, description: 'Vinculos ativos.' })
+  total!: number;
+
+  @ApiProperty({ example: 1840, description: 'Com prova na rodada vigente.' })
+  agendados!: number;
+}
+
+class OrigemDasReservasDto {
+  @ApiProperty({ example: 4210, description: 'Pelo portal do aluno.' })
+  aluno!: number;
+
+  @ApiProperty({ example: 950, description: 'Pelo lote compulsorio.' })
+  compulsorio!: number;
+
+  @ApiProperty({ example: 12, description: 'Por um admin (agendar aluno).' })
+  admin!: number;
+
+  @ApiProperty({
+    example: 0,
+    description: 'Reservas anteriores ao historico, sem autor registrado.',
+  })
+  semRegistro!: number;
+}
+
+export class EstatisticasDaJanelaDto implements EstatisticasDaJanela {
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    example: 'N2',
+    description: 'Rodada vigente; `null` sem periodo cadastrado.',
+  })
+  rodada!: string | null;
+
+  @ApiProperty({ example: 7519, description: 'Vinculos ativos (a base).' })
+  totalVinculos!: number;
+
+  @ApiProperty({ example: 5172 })
+  agendados!: number;
+
+  @ApiProperty({ type: [AdesaoDaModalidadeDto] })
+  porModalidade!: AdesaoDaModalidadeDto[];
+
+  @ApiProperty({ type: OrigemDasReservasDto })
+  porOrigem!: OrigemDasReservasDto;
+
+  @ApiProperty({
+    example: 3,
+    description:
+      'Reservas confirmadas de vinculos hoje inativos — fora da base acima.',
+  })
+  agendadosInativos!: number;
+
+  @ApiProperty({
+    type: () => [CapacidadeDaCombinacaoDto],
+    description:
+      'Por polo + modalidade: pendentes contra vagas livres nas faixas ativas ' +
+      'de hoje em diante. Pior saldo primeiro.',
+  })
+  capacidade!: CapacidadeDaCombinacaoDto[];
+
+  @ApiProperty({
+    type: () => [AgendamentosDoDiaDto],
+    description:
+      'Reservas confirmadas por dia de criacao (fuso da operacao), por origem. ' +
+      'So os dias com alguma reserva.',
+  })
+  porDia!: AgendamentosDoDiaDto[];
+}
+
+class CapacidadeDaCombinacaoDto implements CapacidadeDaCombinacao {
+  @ApiProperty({ example: 6 })
+  poloId!: number;
+
+  @ApiProperty({ example: 'Câmpus Taguatinga' })
+  polo!: string;
+
+  @ApiProperty({ example: 1 })
+  modalidadeId!: number;
+
+  @ApiProperty({ example: 'EaD' })
+  modalidade!: string;
+
+  @ApiProperty({
+    example: 310,
+    description: 'Vinculos ativos sem prova confirmada na rodada vigente.',
+  })
+  pendentes!: number;
+
+  @ApiProperty({
+    example: 180,
+    description: 'Cadeiras livres nas ofertas ativas de hoje em diante.',
+  })
+  vagasRestantes!: number;
+}
+
+class AgendamentosDoDiaDto implements AgendamentosDoDia {
+  @ApiProperty({ example: '2026-08-21', format: 'date' })
+  dia!: string;
+
+  @ApiProperty({ example: 412 })
+  aluno!: number;
+
+  @ApiProperty({ example: 0 })
+  compulsorio!: number;
+
+  @ApiProperty({ example: 3 })
+  admin!: number;
+
+  @ApiProperty({ example: 0 })
+  semRegistro!: number;
 }
 
 export class RemanejarDto {

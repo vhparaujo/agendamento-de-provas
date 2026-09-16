@@ -38,6 +38,14 @@ export class AdminLogadoResponseDto {
   @ApiProperty({ example: 'admin@ucb.br' })
   email!: string;
 
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    example: 'Maria Souza',
+    description: 'Nome do cadastro; `null` quando nao preenchido.',
+  })
+  nome!: string | null;
+
   @ApiProperty({ enum: Perfil, example: Perfil.ADMIN })
   perfil!: Perfil;
 
