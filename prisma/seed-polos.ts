@@ -27,6 +27,7 @@ export const POLOS = [
   'Polo Valparaíso - GO',
   'Polo Águas Lindas',
   'Polo Recife - FICR',
+  'Polo Cruzeiro do Sul',
 ] as const;
 
 export async function seedPolos(prisma: PrismaClient): Promise<void> {
