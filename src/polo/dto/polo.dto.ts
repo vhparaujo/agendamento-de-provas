@@ -24,7 +24,7 @@ export class CriarPoloDto {
     typeof value === 'string' ? value.trim() : value,
   )
   @IsString()
-  @IsNotEmpty({ message: 'nome e obrigatorio' })
+  @IsNotEmpty({ message: 'Informe o nome do polo.' })
   @MaxLength(191)
   nome!: string;
 
@@ -69,7 +69,7 @@ export class AtualizarPoloDto {
   })
   @IsOptional()
   @IsIn(NOMES_DOS_FUSOS, {
-    message: 'fuso deve ser um dos listados em GET /polos/fusos',
+    message: 'Escolha um fuso da lista.',
   })
   fuso?: string;
 }
@@ -123,6 +123,6 @@ export class PoloComContagensDto extends PoloDto implements PoloComContagens {
 }
 
 export class RemocaoPoloDto {
-  @ApiProperty({ example: 'Polo "Polo Formosa" removido' })
+  @ApiProperty({ example: 'Polo "Polo Formosa" apagado.' })
   mensagem!: string;
 }

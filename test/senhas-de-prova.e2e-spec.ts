@@ -14,7 +14,7 @@ import { Turno } from './../src/generated/prisma/client';
  * O que estas rotas precisam provar nao e que gravam e leem — isso o unitario ja
  * cobre. E que **a senha nao vaza**: nem na listagem, nem no corpo do upsert que
  * volta, nem para quem nao e admin. A grade fica aberta num monitor
- * compartilhado da secretaria, e um campo a mais no JSON e a senha da prova de
+ * compartilhado da administracao, e um campo a mais no JSON e a senha da prova de
  * toda a instituicao na aba do navegador de qualquer um que passe por ali.
  *
  * O lote em si nao roda aqui: `D2L_HABILITADO` fica `false` no e2e (setup-e2e),
@@ -664,7 +664,7 @@ describe('Senhas de prova: a grade dia x turno (e2e)', () => {
       await comoAdmin(api().get('/api/senhas-de-prova/execucoes/99999999'))
         .expect(404)
         .expect((res) => {
-          expect(String(res.body.message)).toContain('Execucao');
+          expect(String(res.body.message)).toContain('Execução');
         });
     });
   });

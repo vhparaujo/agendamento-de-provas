@@ -118,12 +118,12 @@ export class LtiService {
     const lti = this.exigirConfig();
 
     if (!params.login_hint) {
-      throw new BadRequestException('login_hint ausente na iniciacao OIDC');
+      throw new BadRequestException('login_hint ausente na iniciação OIDC');
     }
 
     if (params.iss && params.iss !== lti.issuer) {
       throw new UnauthorizedException(
-        `Issuer inesperado na iniciacao: ${params.iss}`,
+        `Issuer inesperado na iniciação: ${params.iss}`,
       );
     }
 
@@ -164,14 +164,14 @@ export class LtiService {
     const nonceEsperado = this.stateStore.consumir(state);
     if (!nonceEsperado) {
       throw new UnauthorizedException(
-        'State invalido, expirado ou ja utilizado',
+        'State inválido, expirado ou já utilizado',
       );
     }
 
     const payload = await this.verificarIdToken(idToken, lti);
 
     if (payload.nonce !== nonceEsperado) {
-      throw new UnauthorizedException('Nonce do id_token nao confere');
+      throw new UnauthorizedException('Nonce do id_token não confere');
     }
 
     this.validarClaimsLti(payload, lti);
@@ -183,7 +183,7 @@ export class LtiService {
 
     if (!matricula) {
       throw new UnauthorizedException(
-        'Nao foi possivel identificar a matricula no launch LTI. ' +
+        'Não foi possível identificar a matrícula no launch LTI. ' +
           'Verifique LTI_CLAIM_MATRICULA (ative LTI_DEBUG_CLAIMS=true para ver os claims recebidos).',
       );
     }
@@ -195,7 +195,7 @@ export class LtiService {
       });
 
       throw new UnauthorizedException(
-        'Nao foi possivel identificar o UserId do D2L no launch LTI. ' +
+        'Não foi possível identificar o UserId do D2L no launch LTI. ' +
           `Ele vem no claim proprietario "${CLAIM_BRIGHTSPACE}" -> user_id; ` +
           'confira as security settings do deployment (nome, e-mail e org defined id ' +
           'liberados). Ative LTI_DEBUG_CLAIMS=true para ver os claims recebidos.',
@@ -213,8 +213,8 @@ export class LtiService {
       });
 
       throw new UnauthorizedException(
-        'O UserId do D2L recebido no launch nao e numerico e nao seria aceito pela ' +
-          'Valence API. Verifique LTI_CLAIM_USER_ID — o `sub` do LTI nao serve.',
+        'O UserId do D2L recebido no launch não é numérico e não seria aceito pela ' +
+          'Valence API. Verifique LTI_CLAIM_USER_ID — o `sub` do LTI não serve.',
       );
     }
 
@@ -231,8 +231,8 @@ export class LtiService {
       });
 
       throw new ForbiddenException(
-        `Matricula ${matricula} nao encontrada na base de alunos importada. ` +
-          'Procure a secretaria academica.',
+        `Matrícula ${matricula} não encontrada na base de alunos do agendamento. ` +
+          'Para pedir ajuda, acesse o formulário de suporte disponível na sua turma no AVA.',
       );
     }
 
@@ -389,7 +389,7 @@ export class LtiService {
       });
 
       throw new UnauthorizedException(
-        'Sessao invalida ou expirada. Volte ao Brightspace e abra o link da ' +
+        'Sessão inválida ou expirada. Volte ao AVA e abra o link da ' +
           'prova de novo.',
       );
     }
@@ -461,7 +461,7 @@ export class LtiService {
       this.logger.warn(
         `Falha ao validar id_token do LTI: ${erro instanceof Error ? erro.message : String(erro)}`,
       );
-      throw new UnauthorizedException('id_token do LTI invalido');
+      throw new UnauthorizedException('id_token do LTI inválido');
     }
   }
 
@@ -470,7 +470,7 @@ export class LtiService {
     lti: LtiConfig,
   ): void {
     if (payload[CLAIM_VERSION] !== '1.3.0') {
-      throw new UnauthorizedException('Versao de LTI nao suportada');
+      throw new UnauthorizedException('Versao de LTI não suportada');
     }
 
     if (payload[CLAIM_MESSAGE_TYPE] !== 'LtiResourceLinkRequest') {
@@ -480,7 +480,7 @@ export class LtiService {
     }
 
     if (lti.deploymentId && payload[CLAIM_DEPLOYMENT_ID] !== lti.deploymentId) {
-      throw new UnauthorizedException('deployment_id nao confere');
+      throw new UnauthorizedException('deployment_id não confere');
     }
   }
 
@@ -535,7 +535,7 @@ export class LtiService {
 
     if (faltando.length > 0) {
       throw new ServiceUnavailableException(
-        `Integracao LTI ainda nao configurada. Faltam no .env: ${faltando.join(', ')}`,
+        `Integração LTI ainda não configurada. Faltam no .env: ${faltando.join(', ')}`,
       );
     }
 

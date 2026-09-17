@@ -181,8 +181,8 @@ export function trocarGrupoNasCondicoes(
 
       porCategoria = true;
       avisos.push(
-        'ha uma condicao de grupo por CATEGORIA (GroupCategoryId): ela ' +
-          'significa "qualquer grupo da categoria" e foi preservada, nao trocada.',
+        'Há uma condição que libera QUALQUER grupo de uma categoria: ela ' +
+          'foi preservada, não trocada.',
       );
     }
 
@@ -206,7 +206,7 @@ export function trocarGrupoNasCondicoes(
     // duas para o MESMO grupo transforma um `All` de dois grupos numa condicao
     // redundante, e isso quase nunca e o que se queria.
     avisos.push(
-      `${trocadas} condicoes de grupo foram apontadas para o MESMO grupo — ` +
+      `${trocadas} condições de grupo foram apontadas para o MESMO grupo — ` +
         'confira se era isso mesmo.',
     );
   }

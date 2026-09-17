@@ -38,6 +38,24 @@ import {
 } from './lock-de-vagas';
 
 /**
+ * O nome de cada motivo na coluna "Motivo" do CSV. A administracao filtra o arquivo
+ * por esta coluna no Excel: o enum cru obrigaria a decorar o que cada codigo quer
+ * dizer. O `Record` e completo de proposito — motivo novo sem rotulo quebra o build.
+ */
+const ROTULO_DO_MOTIVO: Record<MotivoExcecao, string> = {
+  SEM_VAGA: 'Sem vaga',
+  SEM_FAIXA_NO_POLO: 'Polo sem horário de prova',
+  SEM_CONTA_D2L: 'Sem conta no AVA',
+  MATRICULA_AMBIGUA: 'Matrícula duplicada no AVA',
+  ID_INVALIDO_D2L: 'Cadastro inválido no AVA',
+  SEM_DISCIPLINA_AGENDAVEL: 'Sem disciplina com prova',
+  NAO_ELEGIVEL_PELA_NOTA: 'Sem direito pela nota',
+  CANCELOU_E_NAO_REMARCOU: 'Cancelou e não remarcou',
+  FALHA_NA_INTEGRACAO: 'Falha de comunicação com o AVA',
+  AVISO_CONTA_INATIVA_D2L: 'Alocado, com conta desativada no AVA',
+};
+
+/**
  * Quantas identidades/disciplinas se resolvem ao mesmo tempo na fase 1.
  *
  * O gargalo e rede: cada aluno custa ~1,5s de Valence (achar o UserId, ler as
@@ -134,7 +152,7 @@ type MotivoDaPessoa = Pick<Excecao, 'motivo' | 'detalhe'>;
 
 /**
  * ============================================================================
- * AGENDAMENTO COMPULSORIO — a secretaria agenda por quem nao agendou
+ * AGENDAMENTO COMPULSORIO — a administração agenda por quem nao agendou
  * ============================================================================
  * Fechado o prazo, quem nao marcou prova nao fica sem prova: o lote aloca todo
  * mundo automaticamente, enchendo a sala de menor `ordem` ate lotar e os dias
@@ -157,7 +175,7 @@ type MotivoDaPessoa = Pick<Excecao, 'motivo' | 'detalhe'>;
  * QUEM ENTRA (regra do cliente, 12/08/2026): vinculo `ativo` que nao tem
  * agendamento CONFIRMADO no periodo letivo. Quem cancelou e nao remarcou fica
  * de fora — e sai no relatorio como `CANCELOU_E_NAO_REMARCOU`, porque ficar sem
- * lugar nenhum e uma decisao que a secretaria precisa enxergar, aluno por aluno.
+ * lugar nenhum e uma decisao que a administracao precisa enxergar, aluno por aluno.
  *
  * SIMULACAO e o padrao. Ela percorre a alocacao inteira contando as vagas em
  * memoria e nao grava nada: e a unica forma honesta de responder "cabe todo
@@ -192,8 +210,9 @@ export class CompulsorioService {
       // Sem os enrollments nao ha como saber as disciplinas de quem nunca fez
       // login — e o lote alocaria zero pessoas relatando o problema errado.
       throw new BadRequestException(
-        'O compulsorio depende da integracao com o Brightspace (D2L_HABILITADO=true): ' +
-          'e ela quem sabe as disciplinas de quem nunca entrou pelo link.',
+        'O compulsório depende da integração com o AVA, que está desligada ' +
+          'neste servidor: é ela quem sabe as disciplinas de quem nunca entrou ' +
+          'pelo link. Avise o suporte técnico.',
       );
     }
 
@@ -201,8 +220,8 @@ export class CompulsorioService {
 
     if (emAndamento) {
       throw new ConflictException(
-        `A execucao ${emAndamento.id} ainda esta rodando (${emAndamento.processados} de ` +
-          `${emAndamento.totalElegiveis}). Espere terminar antes de comecar outra.`,
+        `A execução #${emAndamento.id} ainda está rodando (${emAndamento.processados} de ` +
+          `${emAndamento.totalElegiveis}). Espere terminar antes de começar outra.`,
       );
     }
 
@@ -210,8 +229,8 @@ export class CompulsorioService {
 
     if (!vigente) {
       throw new BadRequestException(
-        'Nenhum periodo letivo cadastrado. Sem ele nao ha como separar a prova ' +
-          'deste semestre da do semestre passado.',
+        'Nenhum período de agendamento cadastrado. Sem ele não há como separar a ' +
+          'prova deste semestre da do semestre passado.',
       );
     }
 
@@ -259,7 +278,9 @@ export class CompulsorioService {
     });
 
     if (!execucao) {
-      throw new NotFoundException(`Execucao ${id} nao encontrada`);
+      throw new NotFoundException(
+        'Execução não encontrada. Atualize a página e tente de novo.',
+      );
     }
 
     const porMotivo = await this.prisma.excecaoCompulsorio.groupBy({
@@ -280,7 +301,7 @@ export class CompulsorioService {
   }
 
   /**
-   * O relatorio de exceções em CSV — a fila de trabalho da secretaria.
+   * O relatorio de exceções em CSV — a fila de trabalho da administração.
    *
    * Formato do Excel pt-BR (`;` + BOM), o mesmo da exportacao de alunos: quem
    * abre este arquivo e pessoa, e sem o BOM os acentos chegam quebrados. Ver
@@ -293,7 +314,9 @@ export class CompulsorioService {
     });
 
     if (!execucao) {
-      throw new NotFoundException(`Execucao ${id} nao encontrada`);
+      throw new NotFoundException(
+        'Execução não encontrada. Atualize a página e tente de novo.',
+      );
     }
 
     const excecoes = await this.prisma.excecaoCompulsorio.findMany({
@@ -313,13 +336,13 @@ export class CompulsorioService {
         },
       },
       // Agrupado por motivo: cada bloco do arquivo e uma acao diferente da
-      // secretaria (abrir sala, abrir chamado no LMS, conferir o CSV).
+      // administracao (abrir sala, abrir chamado no LMS, conferir o CSV).
       orderBy: [{ motivo: 'asc' }, { matricula: 'asc' }],
     });
 
     return montarCsv(
       [
-        'Matricula',
+        'Matrícula',
         'Aluno',
         'E-mail',
         'Curso',
@@ -335,7 +358,7 @@ export class CompulsorioService {
         e.aluno.curso,
         e.aluno.modalidade.codigo,
         e.aluno.polo.nome,
-        e.motivo,
+        ROTULO_DO_MOTIVO[e.motivo],
         e.detalhe,
       ]),
     );
@@ -365,7 +388,7 @@ export class CompulsorioService {
         where: { id: candidata.id },
         data: {
           status: StatusExecucao.FALHOU,
-          erro: 'O processo foi interrompido durante a execucao (reinicio do servidor?). O que ja tinha sido gravado permanece.',
+          erro: 'O processo foi interrompido durante a execução (provavelmente o servidor reiniciou). O que já tinha sido gravado permanece.',
           concluidoEm: new Date(),
         },
       });
@@ -479,7 +502,7 @@ export class CompulsorioService {
           alunoId: aluno.id,
           matricula: aluno.matricula,
           motivo: MotivoExcecao.CANCELOU_E_NAO_REMARCOU,
-          detalhe: `${aluno.curso}: cancelou a prova e nao remarcou; por decisao da secretaria nao entra no compulsorio.`,
+          detalhe: `${aluno.curso}: cancelou a prova e não remarcou; por decisão da administração não entra no compulsório.`,
         });
       }
 
@@ -706,22 +729,22 @@ export class CompulsorioService {
         return {
           motivo: MotivoExcecao.SEM_CONTA_D2L,
           detalhe:
-            'A matricula nao existe no Brightspace. Sem conta no LMS nao ha como ' +
-            'saber as disciplinas nem liberar a prova.',
+            'A matrícula não existe no AVA. Sem conta no AVA não há ' +
+            'como saber as disciplinas nem liberar a prova.',
         };
       }
 
       if (identidade.situacao === 'AMBIGUA') {
         return {
           motivo: MotivoExcecao.MATRICULA_AMBIGUA,
-          detalhe: `${identidade.quantos} contas no Brightspace com esta matricula; escolher uma nao e decisao do sistema.`,
+          detalhe: `${identidade.quantos} contas no AVA com esta matrícula; o sistema não escolhe entre elas.`,
         };
       }
 
       if (identidade.situacao === 'ID_INVALIDO') {
         return {
           motivo: MotivoExcecao.ID_INVALIDO_D2L,
-          detalhe: `UserId "${identidade.valor}" nao e numerico e seria recusado pela Valence.`,
+          detalhe: `A conta no AVA tem um identificador inválido ("${identidade.valor}").`,
         };
       }
 
@@ -734,7 +757,7 @@ export class CompulsorioService {
         // Duas linhas de relatorio DIFERENTES, e a diferenca importa: uma e
         // fila de trabalho ("confira o CSV de turmas"), a outra e informacao
         // ("este aluno nao faz a substitutiva"). Misturar as duas encheria a
-        // fila da secretaria de casos que ninguem deve tratar — e, no lote da
+        // fila da administração de casos que ninguem deve tratar — e, no lote da
         // SUB, eles serao a MAIORIA, porque quem passou de ano e a maioria.
         //
         // A escolha e pela `causa`, e nunca pelo texto do `motivo`: comparar
@@ -745,7 +768,7 @@ export class CompulsorioService {
             motivo: MotivoExcecao.NAO_ELEGIVEL_PELA_NOTA,
             detalhe:
               cruzamento.motivo ??
-              'Nenhuma disciplina dele atende aos criterios de nota desta janela.',
+              'Nenhuma disciplina deste aluno atende aos critérios de nota desta janela.',
           };
         }
 
@@ -753,8 +776,8 @@ export class CompulsorioService {
           motivo: MotivoExcecao.SEM_DISCIPLINA_AGENDAVEL,
           detalhe:
             cruzamento.motivo ??
-            `Nenhuma disciplina dele no periodo letivo ${periodoLetivoId} ` +
-              `(formato ${modalidadeCodigo}) cruzou com o CSV de turmas com prova.`,
+            `Nenhuma disciplina deste aluno no período letivo ${periodoLetivoId} ` +
+              `(formato ${modalidadeCodigo}) está na planilha de turmas com prova.`,
         };
       }
 
@@ -768,7 +791,9 @@ export class CompulsorioService {
       // Rede, timeout, 500 da Valence: e problema DESTE aluno, nao do lote.
       return {
         motivo: MotivoExcecao.FALHA_NA_INTEGRACAO,
-        detalhe: erro instanceof Error ? erro.message : String(erro),
+        detalhe:
+          'Falha de comunicação com o AVA. Detalhe técnico: ' +
+          (erro instanceof Error ? erro.message : String(erro)),
       };
     }
   }
@@ -823,7 +848,8 @@ export class CompulsorioService {
           alunoId: candidato.vinculoId,
           matricula: candidato.matricula,
           motivo: MotivoExcecao.SEM_FAIXA_NO_POLO,
-          detalhe: 'O polo deste aluno nao tem nenhuma faixa cadastrada.',
+          detalhe:
+            'O polo deste aluno não tem nenhum horário de prova cadastrado.',
         });
         continue;
       }
@@ -850,8 +876,8 @@ export class CompulsorioService {
           matricula: candidato.matricula,
           motivo: MotivoExcecao.SEM_VAGA,
           detalhe:
-            'Todas as salas do formato dele lotaram em todas as datas do polo. ' +
-            'E preciso abrir mais uma sala ou mais uma data.',
+            'Todas as salas do formato deste aluno lotaram em todas as datas do polo. ' +
+            'É preciso abrir mais uma sala ou mais uma data.',
         });
         continue;
       }
@@ -864,8 +890,8 @@ export class CompulsorioService {
           matricula: candidato.matricula,
           motivo: MotivoExcecao.AVISO_CONTA_INATIVA_D2L,
           detalhe:
-            'Alocado normalmente, mas a conta esta DESATIVADA no Brightspace: ' +
-            'do jeito que esta, ele nao conseguiria abrir a prova.',
+            'Alocado normalmente, mas a conta está DESATIVADA no AVA: ' +
+            'do jeito que está, ele não conseguiria abrir a prova.',
         });
       }
     }
@@ -932,7 +958,7 @@ export class CompulsorioService {
               // Fotografia do vinculo na data da reserva — ver o schema.
               modalidadeId: candidato.modalidadeId,
               poloId: candidato.poloId,
-              // Foi a secretaria quem escolheu a sala, nao a alocacao a pedido
+              // Foi a administracao quem escolheu a sala, nao a alocacao a pedido
               // do aluno. Marcar evita que alguem leia o resultado do lote como
               // escolha dele.
               alocadoManual: true,

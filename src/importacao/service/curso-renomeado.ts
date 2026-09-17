@@ -8,7 +8,7 @@
  * muda, o upsert nao encontra nada, e o resultado e uma LINHA NOVA.
  *
  * O estrago nao aparece na importacao. Aparece depois:
- * - o RA passa a ter dois vinculos na tela de atendimento, e a secretaria nao
+ * - o RA passa a ter dois vinculos na tela de atendimento, e a administracao nao
  *   sabe qual e o real;
  * - a prova ja marcada continua pendurada no vinculo ANTIGO, entao o novo
  *   aparece como "Nao Agendado" na exportacao — e o aluno e cobrado por uma
@@ -20,7 +20,7 @@
  * outro jeito?". Ele nao mescla nada, e de proposito: um RA pode ter dois
  * vinculos de verdade (2 em 7519 na base real), e fundir dois cursos distintos
  * misturaria as provas de dois cursos numa pessoa so. Quem decide e a
- * secretaria, pela rota de mesclagem.
+ * administracao, pela rota de mesclagem.
  *
  * Modulo puro: sem banco, sem HTTP.
  */

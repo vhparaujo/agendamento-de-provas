@@ -205,7 +205,7 @@ const JANELAS_PRESENCIAL: JanelaSemente[] = [
     // (Semi vai ate 17:30 de tarde e retoma as 18:00 de noite; EaD vai ate 18:00
     // de tarde e retoma as 19:00). Escolhido TARDE porque 17:30 ainda e tarde no
     // relogio, e porque mantem o formato 2/2/1 — o mesmo agrupamento por periodo
-    // do dia que Semi/Modular usa. Se a secretaria discordar, e um dropdown na
+    // do dia que Semi/Modular usa. Se a administracao discordar, e um dropdown na
     // tela: nada no codigo depende desta escolha.
     turno: Turno.TARDE,
   },
@@ -232,7 +232,7 @@ export const JANELAS_POR_MODALIDADE: Record<string, JanelaSemente[]> = {
  * `seedModalidades` pode sobrescrever porque duracao de prova e especificacao,
  * nao configuracao. Aqui o admin edita os horarios na tela, e um `npm run seed`
  * de rotina (que o deploy roda para garantir o primeiro admin) devolveria o
- * calendario semeado por cima do que a secretaria acabou de ajustar. O seed
+ * calendario semeado por cima do que a administracao acabou de ajustar. O seed
  * CRIA o que falta e nao encosta no que existe.
  */
 export async function seedJanelas(prisma: PrismaClient): Promise<void> {

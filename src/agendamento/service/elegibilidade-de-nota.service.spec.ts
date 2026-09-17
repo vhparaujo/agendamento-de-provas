@@ -578,7 +578,7 @@ describe('motivoDeNenhumaElegivel', () => {
 
     // Nem os limites (1,50 / 7,00) nem a nota que o aluno tirou (8 / 4).
     expect(texto).not.toMatch(/\d/);
-    expect(texto).toContain('formulario de suporte');
+    expect(texto).toContain('formulário de suporte');
   });
 
   it('criterio nao atendido: nao insinua nota faltando', () => {
@@ -586,15 +586,15 @@ describe('motivoDeNenhumaElegivel', () => {
       recusa('FINAL_ATINGIU_A_MEDIA', { notaFinal: 8 }),
     ]);
 
-    expect(texto).toContain('tem direito a prova substitutiva');
-    expect(texto).not.toContain('sem nota lancada');
+    expect(texto).toContain('tem direito à prova substitutiva');
+    expect(texto).not.toContain('sem nota lançada');
   });
 
   /** A CAUSA continua distinta, porque e ela que roteia o atendimento. */
   it('todas sem nota: aponta o lancamento, nao o direito do aluno', () => {
     const texto = motivoDeNenhumaElegivel([recusa('SEM_NOTA_FINAL')]);
 
-    expect(texto).toContain('sem nota lancada');
+    expect(texto).toContain('sem nota lançada');
     expect(texto).not.toContain('tem direito');
   });
 
@@ -602,7 +602,7 @@ describe('motivoDeNenhumaElegivel', () => {
   it('todas sem categoria N1: fala das notas incompletas, nao do direito', () => {
     const texto = motivoDeNenhumaElegivel([recusa('SEM_CATEGORIA_N1')]);
 
-    expect(texto).toContain('Nao foi possivel conferir suas notas');
+    expect(texto).toContain('Não foi possível conferir suas notas');
     expect(texto).not.toContain('tem direito');
   });
 
@@ -612,7 +612,7 @@ describe('motivoDeNenhumaElegivel', () => {
       recusa('SEM_NOTA_N1', { notaFinal: 4 }),
     ]);
 
-    expect(texto).toContain('tem direito a prova substitutiva');
-    expect(texto).toContain('sem nota lancada');
+    expect(texto).toContain('tem direito à prova substitutiva');
+    expect(texto).toContain('sem nota lançada');
   });
 });

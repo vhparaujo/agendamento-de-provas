@@ -4,7 +4,7 @@
  *
  * Espelha `nomeDaRodada` do portal (`PortalView.vue`): as duas rodadas que
  * existem hoje ganham texto por extenso, e qualquer outra — o campo e texto
- * livre no cadastro — sai como a secretaria a escreveu. Mostrar o valor cru e
+ * livre no cadastro — sai como a administração a escreveu. Mostrar o valor cru e
  * melhor que esconder uma rodada que ninguem previu.
  */
 const RODADAS_CONHECIDAS: Record<string, string> = {

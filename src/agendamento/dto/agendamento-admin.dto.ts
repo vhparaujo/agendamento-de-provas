@@ -372,7 +372,7 @@ export class AgendamentoPeloAdminDto implements AgendamentoPeloAdmin {
       'A conta deste aluno esta DESATIVADA no Brightspace: do jeito que esta, ele nao conseguiria abrir a prova.',
     ],
     description:
-      'O que a secretaria precisa saber, sem que nada disso tenha impedido o ' +
+      'O que a administracao precisa saber, sem que nada disso tenha impedido o ' +
       'agendamento. Vazio quando nao ha ressalva.',
   })
   avisos!: string[];

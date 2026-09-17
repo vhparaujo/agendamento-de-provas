@@ -31,7 +31,7 @@ export interface ResultadoMesclagem {
  * ============================================================================
  * Contraparte de `cursosRenomeados[]` na importacao de alunos. La o sistema
  * DETECTA que "PSICOLOGIA" virou "Psicologia — Bacharelado" e que isso criou uma
- * segunda linha para a mesma pessoa; aqui a secretaria RESOLVE, movendo o que
+ * segunda linha para a mesma pessoa; aqui a administracao RESOLVE, movendo o que
  * estava preso ao vinculo antigo para o novo e apagando o antigo.
  *
  * POR QUE E UMA ACAO HUMANA, e nao algo que a importacao faz sozinha:
@@ -76,7 +76,7 @@ export class MesclagemVinculosService {
   ): Promise<ResultadoMesclagem> {
     if (destinoId === absorverId) {
       throw new BadRequestException(
-        'destino e absorvido sao o mesmo vinculo. Informe os dois ids do relatorio de importacao.',
+        'destino e absorvido são o mesmo vínculo. Informe os dois ids do relatório de importação.',
       );
     }
 
@@ -93,11 +93,11 @@ export class MesclagemVinculosService {
       ]);
 
       if (!destino) {
-        throw new NotFoundException(`Vinculo ${destinoId} nao encontrado`);
+        throw new NotFoundException(`Vínculo ${destinoId} não encontrado`);
       }
 
       if (!absorvido) {
-        throw new NotFoundException(`Vinculo ${absorverId} nao encontrado`);
+        throw new NotFoundException(`Vínculo ${absorverId} não encontrado`);
       }
 
       // A TRAVA QUE IMPORTA. Sem ela, um id trocado na chamada moveria a prova
@@ -106,8 +106,8 @@ export class MesclagemVinculosService {
       // unico jeito de afirmar que os dois vinculos sao da MESMA pessoa.
       if (destino.matricula !== absorvido.matricula) {
         throw new BadRequestException(
-          `Os vinculos sao de matriculas diferentes (${destino.matricula} e ` +
-            `${absorvido.matricula}). Mesclar so faz sentido dentro do mesmo RA.`,
+          `Os vínculos são de matrículas diferentes (${destino.matricula} e ` +
+            `${absorvido.matricula}). Mesclar só faz sentido dentro do mesmo RA.`,
         );
       }
 
@@ -159,7 +159,7 @@ export class MesclagemVinculosService {
         `RA ${resultado.destino.matricula}: vinculo ${resultado.absorvido.id} ` +
         `("${resultado.absorvido.curso}") absorvido por ${resultado.destino.id} ` +
         `("${resultado.destino.curso}"); ${resultado.agendamentosMovidos} agendamento(s) ` +
-        `e ${resultado.excecoesMovidas} excecao(oes) movidas`,
+        `e ${resultado.excecoesMovidas} exceção(ões) movidas`,
     });
 
     if (resultado.avisos.length > 0) {
@@ -200,7 +200,7 @@ export class MesclagemVinculosService {
    *
    * Recusa em vez de escolher uma: decidir qual prova sobrevive e das duas uma —
    * ou sao a mesma pessoa e uma das reservas precisa ser cancelada (decisao da
-   * secretaria, que pode ate ser a mais recente), ou sao dois vinculos de
+   * administracao, que pode ate ser a mais recente), ou sao dois vinculos de
    * verdade e a mesclagem inteira e o erro.
    */
   private async recusarSeAmbosTemProva(
@@ -235,11 +235,11 @@ export class MesclagemVinculosService {
 
     if (conflito) {
       throw new ConflictException(
-        `Os dois vinculos tem prova CONFIRMADA na mesma janela (periodo letivo ` +
+        `Os dois vínculos têm prova CONFIRMADA na mesma janela (período letivo ` +
           `${conflito.periodoLetivoId}, rodada ${conflito.rodada}). Mesclar deixaria ` +
           `a mesma pessoa com duas reservas para a mesma prova, em duas salas. ` +
-          `Cancele uma das provas antes de mesclar — ou reveja se estes vinculos ` +
-          `sao mesmo a mesma coisa.`,
+          `Cancele uma das provas antes de mesclar — ou reveja se estes vínculos ` +
+          `são mesmo a mesma coisa.`,
       );
     }
   }
@@ -257,22 +257,22 @@ export class MesclagemVinculosService {
  *
  * Avisa e nao bloqueia, pelo mesmo motivo de la: o divergente pode ser
  * justamente o cadastro errado que a planilha nova veio corrigir. Quem decide
- * entre remanejar e cancelar e a secretaria — o que ela nao pode e nao saber.
+ * entre remanejar e cancelar e a administração — o que ela nao pode e nao saber.
  */
 function conferirHeranca(destino: Vinculo, absorvido: Vinculo): string[] {
   const avisos: string[] = [];
 
   if (destino.modalidadeId !== absorvido.modalidadeId) {
     avisos.push(
-      `O vinculo absorvido era ${absorvido.modalidade.nome} e o que ficou e ` +
+      `O vínculo absorvido era ${absorvido.modalidade.nome} e o que ficou é ` +
         `${destino.modalidade.nome}: as provas herdadas continuam alocadas em salas ` +
-        `de outra duracao. Confira se precisam ser remanejadas.`,
+        `de outra duração. Confira se precisam ser remanejadas.`,
     );
   }
 
   if (destino.poloId !== absorvido.poloId) {
     avisos.push(
-      `O vinculo absorvido era do polo ${absorvido.polo.nome} e o que ficou e de ` +
+      `O vínculo absorvido era do polo ${absorvido.polo.nome} e o que ficou é de ` +
         `${destino.polo.nome}: as provas herdadas continuam marcadas no campus anterior. ` +
         `Confira se o aluno sabe para onde ir.`,
     );

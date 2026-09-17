@@ -34,7 +34,7 @@ describe('csvDeGrupos', () => {
 
   it('poe entre aspas o campo que contem virgula, nao o que contem ;', () => {
     // O separador decide o escape: neste arquivo quem quebra a linha e a
-    // virgula. No CSV da secretaria (`;`) e o contrario.
+    // virgula. No CSV da administracao (`;`) e o contrario.
     expect(csvDeGrupos(['SILVA, MARIA'])).toContain('"SILVA, MARIA",');
     expect(csvDeGrupos(['A;B'])).toContain('\r\nA;B,');
   });

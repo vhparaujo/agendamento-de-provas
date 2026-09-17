@@ -88,7 +88,7 @@ export class D2lQuizzesService {
   ): Promise<QuizDaLista[]> {
     return this.paginar<QuizDaLista>(
       `${encodeURIComponent(orgUnitId)}/quizzes/`,
-      `os questionarios da turma ${orgUnitId}`,
+      `os questionários da turma ${orgUnitId}`,
       ritmo,
     );
   }
@@ -106,7 +106,7 @@ export class D2lQuizzesService {
   ): Promise<AcessoEspecialDaLista[]> {
     return this.paginar<AcessoEspecialDaLista>(
       `${encodeURIComponent(orgUnitId)}/quizzes/${encodeURIComponent(quizId)}/specialaccess/`,
-      `os special access do questionario ${quizId} da turma ${orgUnitId}`,
+      `os acessos especiais do questionário ${quizId} da turma ${orgUnitId}`,
       ritmo,
     );
   }
@@ -133,12 +133,12 @@ export class D2lQuizzesService {
       this.caminhoDoAcesso(orgUnitId, quizId, userId),
       {
         ...this.opcoes(
-          `o special access do usuario ${userId} no questionario ${quizId} da turma ${orgUnitId}`,
+          `o acesso especial do usuário ${userId} no questionário ${quizId} da turma ${orgUnitId}`,
           ritmo,
         ),
         dicaDe404:
-          'Com o questionario ja encontrado, isto costuma ser o aluno fora da ' +
-          'turma no Brightspace.',
+          'Com o questionário já encontrado, isto costuma ser o aluno fora da ' +
+          'turma no AVA.',
         metodo: 'PUT',
         corpo,
       },
@@ -169,7 +169,7 @@ export class D2lQuizzesService {
         this.caminhoDoAcesso(orgUnitId, quizId, userId),
         {
           ...this.opcoes(
-            `o special access do usuario ${userId} no questionario ${quizId} da turma ${orgUnitId}`,
+            `o acesso especial do usuário ${userId} no questionário ${quizId} da turma ${orgUnitId}`,
             ritmo,
           ),
           metodo: 'DELETE',
@@ -194,7 +194,7 @@ export class D2lQuizzesService {
       cfg,
       'le',
       `${encodeURIComponent(orgUnitId)}/quizzes/${encodeURIComponent(quizId)}`,
-      this.opcoes(`o questionario ${quizId} da turma ${orgUnitId}`, ritmo),
+      this.opcoes(`o questionário ${quizId} da turma ${orgUnitId}`, ritmo),
     );
   }
 
@@ -212,7 +212,7 @@ export class D2lQuizzesService {
       'le',
       `${encodeURIComponent(orgUnitId)}/quizzes/${encodeURIComponent(quizId)}`,
       {
-        ...this.opcoes(`o questionario ${quizId} da turma ${orgUnitId}`, ritmo),
+        ...this.opcoes(`o questionário ${quizId} da turma ${orgUnitId}`, ritmo),
         metodo: 'PUT',
         corpo,
       },
@@ -313,8 +313,8 @@ export class D2lQuizzesService {
       timeoutMs: ritmo.timeoutMs,
       retentar429: true,
       dicaDe404:
-        'Confira se a turma ainda existe neste tenant e se o usuario da ' +
-        'integracao enxerga os questionarios dela.',
+        'Confira se a turma ainda existe neste tenant e se o usuário da ' +
+        'integração enxerga os questionários dela.',
     };
   }
 }

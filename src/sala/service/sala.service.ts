@@ -62,7 +62,11 @@ export class SalaService {
       },
     });
 
-    if (!sala) throw new NotFoundException(`Sala ${id} nao encontrada`);
+    if (!sala) {
+      throw new NotFoundException(
+        'Sala não encontrada. Ela pode ter sido apagada; atualize a página.',
+      );
+    }
 
     const { _count, ...dados } = sala;
 
@@ -79,7 +83,9 @@ export class SalaService {
     });
 
     if (!polo) {
-      throw new NotFoundException(`Polo ${dados.poloId} nao encontrado`);
+      throw new NotFoundException(
+        'Polo não encontrado. Ele pode ter sido apagado; atualize a página.',
+      );
     }
 
     // Polo inativo = campus fora da oferta. Sala nova ali seria cadastro que
@@ -87,8 +93,8 @@ export class SalaService {
     // o polo na lista.
     if (!polo.ativo) {
       throw new ConflictException(
-        `O polo "${polo.nome}" esta inativo e nao recebe salas novas. ` +
-          'Reative-o (PATCH ativo=true) se o campus voltou a ter prova.',
+        `O polo "${polo.nome}" está inativo e não recebe salas novas. ` +
+          'Se o campus voltou a ter prova, reative o polo na tela de Polos.',
       );
     }
 
@@ -100,7 +106,7 @@ export class SalaService {
 
     if (jaExiste) {
       throw new ConflictException(
-        `O polo "${polo.nome}" ja tem uma sala chamada "${nome}"`,
+        `O polo "${polo.nome}" já tem uma sala chamada "${nome}".`,
       );
     }
 
@@ -130,7 +136,7 @@ export class SalaService {
 
       if (conflito) {
         throw new ConflictException(
-          `O polo "${sala.polo.nome}" ja tem uma sala chamada "${nome}"`,
+          `O polo "${sala.polo.nome}" já tem uma sala chamada "${nome}".`,
         );
       }
     }
@@ -154,13 +160,13 @@ export class SalaService {
 
     if (sala.totalOfertas > 0) {
       throw new ConflictException(
-        `A sala "${sala.nome}" ja foi usada em ${sala.totalOfertas} faixa(s) e nao pode ser apagada. ` +
-          'Desative-a (PATCH ativo=false) para tira-la das proximas montagens.',
+        `A sala "${sala.nome}" não pode ser apagada porque já foi usada em ${sala.totalOfertas} faixa(s). ` +
+          'Em vez de apagar, desative a sala: ela deixa de aparecer na montagem das próximas faixas.',
       );
     }
 
     await this.prisma.sala.delete({ where: { id } });
 
-    return { mensagem: `Sala "${sala.nome}" removida` };
+    return { mensagem: `Sala "${sala.nome}" removida.` };
   }
 }

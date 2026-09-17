@@ -343,7 +343,7 @@ describe('D2lGradesService', () => {
     /**
      * ⚠️ 403 e o oposto de 404 aqui: ele atinge TODA turma (falta
      * `grades:gradecategories:read` no consentimento), e traduzi-lo para "turma
-     * sem N1" mandaria o curso inteiro a secretaria enquanto a correcao e um
+     * sem N1" mandaria o curso inteiro a administracao enquanto a correcao e um
      * `npm run d2l:autorizar`.
      */
     it('403 SOBE, e nao vira "turma sem N1"', async () => {

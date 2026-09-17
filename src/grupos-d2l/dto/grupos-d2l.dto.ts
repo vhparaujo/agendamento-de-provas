@@ -44,7 +44,7 @@ export class LinhaDeGrupoEntradaDto {
     example: '2026-09-16',
     description: 'O dia da prova (AAAA-MM-DD).',
   })
-  @Matches(PADRAO_DIA, { message: 'data deve estar em AAAA-MM-DD' })
+  @Matches(PADRAO_DIA, { message: 'Informe uma data válida.' })
   data!: string;
 
   @ApiProperty({
@@ -52,11 +52,15 @@ export class LinhaDeGrupoEntradaDto {
     description:
       'Abertura de uma janela ATIVA do bloco — e o que liga o grupo a sessao.',
   })
-  @Matches(PADRAO_HORA, { message: 'horaInicio deve estar em HH:MM' })
+  @Matches(PADRAO_HORA, {
+    message: 'A hora de início deve estar no formato HH:MM.',
+  })
   horaInicio!: string;
 
   @ApiProperty({ example: '12:00', description: 'Fechamento da mesma janela.' })
-  @Matches(PADRAO_HORA, { message: 'horaFim deve estar em HH:MM' })
+  @Matches(PADRAO_HORA, {
+    message: 'A hora de fim deve estar no formato HH:MM.',
+  })
   horaFim!: string;
 
   @ApiProperty({
@@ -86,14 +90,14 @@ export class SalvarNomesDoBlocoDto {
     example: '2026-09-14',
     description: 'Inicio do intervalo substituido.',
   })
-  @Matches(PADRAO_DIA, { message: 'de deve estar em AAAA-MM-DD' })
+  @Matches(PADRAO_DIA, { message: 'Informe uma data De válida.' })
   de!: string;
 
   @ApiProperty({
     example: '2026-09-19',
     description: 'Fim do intervalo substituido.',
   })
-  @Matches(PADRAO_DIA, { message: 'ate deve estar em AAAA-MM-DD' })
+  @Matches(PADRAO_DIA, { message: 'Informe uma data Até válida.' })
   ate!: string;
 
   @ApiProperty({
@@ -120,14 +124,18 @@ export class ResolverHorarioDto {
     example: '15:00',
     description: 'Abertura das FAIXAS pendentes.',
   })
-  @Matches(PADRAO_HORA, { message: 'horaInicio deve estar em HH:MM' })
+  @Matches(PADRAO_HORA, {
+    message: 'A hora de início deve estar no formato HH:MM.',
+  })
   horaInicio!: string;
 
   @ApiProperty({
     example: '18:00',
     description: 'Fechamento das FAIXAS pendentes.',
   })
-  @Matches(PADRAO_HORA, { message: 'horaFim deve estar em HH:MM' })
+  @Matches(PADRAO_HORA, {
+    message: 'A hora de fim deve estar no formato HH:MM.',
+  })
   horaFim!: string;
 
   @ApiProperty({
@@ -154,14 +162,14 @@ export class ResolverHorarioDto {
     example: '2026-09-14',
     description: 'Inicio do intervalo das faixas.',
   })
-  @Matches(PADRAO_DIA, { message: 'de deve estar em AAAA-MM-DD' })
+  @Matches(PADRAO_DIA, { message: 'Informe uma data De válida.' })
   de!: string;
 
   @ApiProperty({
     example: '2026-09-19',
     description: 'Fim do intervalo das faixas.',
   })
-  @Matches(PADRAO_DIA, { message: 'ate deve estar em AAAA-MM-DD' })
+  @Matches(PADRAO_DIA, { message: 'Informe uma data Até válida.' })
   ate!: string;
 }
 
@@ -189,14 +197,14 @@ export class IniciarExecucaoGruposDto {
     example: '2026-09-14',
     description: 'Primeiro dia de prova considerado.',
   })
-  @Matches(PADRAO_DIA, { message: 'de deve estar em AAAA-MM-DD' })
+  @Matches(PADRAO_DIA, { message: 'Informe uma data De válida.' })
   de!: string;
 
   @ApiProperty({
     example: '2026-09-19',
     description: 'Ultimo dia de prova considerado.',
   })
-  @Matches(PADRAO_DIA, { message: 'ate deve estar em AAAA-MM-DD' })
+  @Matches(PADRAO_DIA, { message: 'Informe uma data Até válida.' })
   ate!: string;
 
   @ApiPropertyOptional({
@@ -218,7 +226,7 @@ export class IniciarExecucaoGruposDto {
   })
   @IsOptional()
   @Matches(/^\d+$/, {
-    message: 'orgUnitId deve ser o id numerico da turma no Brightspace',
+    message: 'O código da turma no AVA deve ter só números.',
   })
   orgUnitId?: string;
 }
@@ -510,7 +518,7 @@ export class AndamentoDosGruposD2lDto implements AndamentoDosGruposD2L {
   @ApiProperty({ example: '2026-09-19' })
   ate!: string;
 
-  @ApiProperty({ example: 'secretaria@ucb.br' })
+  @ApiProperty({ example: 'admin@ucb.br' })
   iniciadoPor!: string;
 
   @ApiProperty({ example: 152 })

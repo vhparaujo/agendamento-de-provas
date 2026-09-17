@@ -129,7 +129,7 @@ export class EnvironmentVariables {
    * Se ESTA INSTANCIA pode disparar o cron. Os HORARIOS nao estao mais aqui
    * (19/08/2026): eles sao escolhidos pelo admin na tela e moram em
    * `configuracao_senha_quiz`. As duas coisas respondem perguntas diferentes —
-   * "a que horas a prova comeca" e da secretaria; "esta replica dispara" e de
+   * "a que horas a prova comeca" e da administracao; "esta replica dispara" e de
    * quem sobe o container.
    */
   @IsOptional()

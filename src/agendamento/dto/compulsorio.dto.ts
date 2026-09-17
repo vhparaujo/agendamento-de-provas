@@ -78,7 +78,7 @@ export class AndamentoDoCompulsorioDto {
   })
   rodada!: string;
 
-  @ApiProperty({ example: 'secretaria@ucb.br' })
+  @ApiProperty({ example: 'admin@ucb.br' })
   iniciadoPor!: string;
 
   @ApiProperty({ example: 4812 })

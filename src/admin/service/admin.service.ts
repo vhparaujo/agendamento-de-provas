@@ -54,7 +54,9 @@ export class AdminService {
     });
 
     if (jaExiste) {
-      throw new ConflictException('Ja existe um administrador com este e-mail');
+      throw new ConflictException(
+        'Já existe um administrador com este e-mail.',
+      );
     }
 
     // Senha informada ou gerada: nos dois casos a troca e obrigatoria no
@@ -86,7 +88,10 @@ export class AdminService {
   ): Promise<{ admin: Admin; senhaProvisoria: string }> {
     const alvo = await this.prisma.admin.findUnique({ where: { id } });
 
-    if (!alvo) throw new NotFoundException('Administrador nao encontrado');
+    if (!alvo)
+      throw new NotFoundException(
+        'Administrador não encontrado. Atualize a página e tente de novo.',
+      );
 
     const senhaProvisoria = gerarSenhaProvisoria();
 
@@ -116,12 +121,15 @@ export class AdminService {
   ): Promise<Admin> {
     if (id === solicitanteId && !ativo) {
       throw new BadRequestException(
-        'Um administrador nao pode desativar a si mesmo',
+        'Um administrador não pode desativar a si mesmo.',
       );
     }
 
     const existe = await this.prisma.admin.findUnique({ where: { id } });
-    if (!existe) throw new NotFoundException('Administrador nao encontrado');
+    if (!existe)
+      throw new NotFoundException(
+        'Administrador não encontrado. Atualize a página e tente de novo.',
+      );
 
     // Nunca deixar o sistema sem nenhum admin ativo.
     if (!ativo) {
@@ -131,7 +139,7 @@ export class AdminService {
 
       if (ativosRestantes === 0) {
         throw new BadRequestException(
-          'Nao e possivel desativar o ultimo administrador ativo',
+          'Não é possível desativar o último administrador ativo.',
         );
       }
     }

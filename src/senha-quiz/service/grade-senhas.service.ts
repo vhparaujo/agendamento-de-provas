@@ -27,7 +27,7 @@ import { validarSenha } from './senha';
  * ⚠️ **POSTURA DE SEGURANCA DA SENHA** (vale para este arquivo e para o lote):
  *
  * 1. Texto claro e inevitavel e fica em UM lugar so — `senha_de_prova.senha`. O
- *    D2L exige o valor literal no PUT e a secretaria imprime a folha para os
+ *    D2L exige o valor literal no PUT e a administracao imprime a folha para os
  *    fiscais; hash impossibilitaria as duas. A protecao e EM VOLTA, nao no
  *    armazenamento. Precedente do projeto: `integracao_d2l.refreshToken` ja e
  *    segredo em claro no mesmo banco.
@@ -37,7 +37,7 @@ import { validarSenha } from './senha';
  * 5. **Ler em claro e uma ROTA SEPARADA e auditada.** `listar()` devolve
  *    `temSenha`, nunca o valor; so `revelar()` entrega o texto, e toda chamada
  *    dela vira `SENHA_QUIZ_REVELADA`. A grade fica aberta num monitor
- *    compartilhado da secretaria: revelar precisa ser um ATO, com rastro.
+ *    compartilhado da administracao: revelar precisa ser um ATO, com rastro.
  * 6. Nenhuma rota de aluno toca nisto.
  * 7. `remover()` existe para retencao; a execucao historica sobrevive
  *    (`onDelete: SetNull` + data/turno desnormalizados).
@@ -46,7 +46,7 @@ import { validarSenha } from './senha';
 /**
  * Em que pe esta a celula. DERIVADO, nao gravado: gravar exigiria manter o campo
  * em sincronia com a execucao, e a primeira divergencia mentiria justamente no
- * dia em que a secretaria precisa confiar na tela.
+ * dia em que a administracao precisa confiar na tela.
  */
 export type SituacaoDaCelula =
   /** Ha senha cadastrada e nenhum lote real rodou nela. */
@@ -326,7 +326,7 @@ export class GradeSenhasService {
   async revelar(id: number, adminEmail: string): Promise<{ senha: string }> {
     const celula = await this.prisma.senhaDeProva.findUnique({ where: { id } });
 
-    if (!celula) throw new NotFoundException(`Celula ${id} nao encontrada.`);
+    if (!celula) throw new NotFoundException(`Célula ${id} não encontrada.`);
 
     this.auditoria.registrar('SENHA_QUIZ_REVELADA', {
       ator: adminEmail,
@@ -343,7 +343,7 @@ export class GradeSenhasService {
   async remover(id: number, adminEmail: string): Promise<void> {
     const celula = await this.prisma.senhaDeProva.findUnique({ where: { id } });
 
-    if (!celula) throw new NotFoundException(`Celula ${id} nao encontrada.`);
+    if (!celula) throw new NotFoundException(`Célula ${id} não encontrada.`);
 
     await this.prisma.senhaDeProva.delete({ where: { id } });
 
@@ -383,7 +383,7 @@ export class GradeSenhasService {
 
     if (!nomeQuiz) {
       throw new BadRequestException(
-        'Informe o nome do questionario que o lote deve procurar.',
+        'Informe o nome do questionário que o lote deve procurar.',
       );
     }
 
@@ -421,7 +421,7 @@ export class GradeSenhasService {
    * A que horas o cron aplica cada turno.
    *
    * Saiu do .env em 19/08/2026: o calendario dos turnos muda por semestre, e
-   * quem o conhece e a secretaria — pedir deploy para mudar 07:30 garantia que
+   * quem o conhece e a administração — pedir deploy para mudar 07:30 garantia que
    * o horario ficasse errado no primeiro dia em que a prova mudasse de hora.
    *
    * O `cronHabilitado` do .env vem junto de proposito (ver a interface).
@@ -452,9 +452,9 @@ export class GradeSenhasService {
     },
     adminEmail: string,
   ): Promise<HorariosDoCronConfig> {
-    const horaManha = this.horaValidada(dados.horaManha, 'horaManha');
-    const horaTarde = this.horaValidada(dados.horaTarde, 'horaTarde');
-    const horaNoite = this.horaValidada(dados.horaNoite, 'horaNoite');
+    const horaManha = this.horaValidada(dados.horaManha, 'A hora da manhã');
+    const horaTarde = this.horaValidada(dados.horaTarde, 'A hora da tarde');
+    const horaNoite = this.horaValidada(dados.horaNoite, 'A hora da noite');
 
     await this.prisma.configuracaoSenhaQuiz.upsert({
       where: { id: 1 },
@@ -568,7 +568,7 @@ export class GradeSenhasService {
     });
 
     if (!modalidade) {
-      throw new BadRequestException(`Formato ${modalidadeId} nao encontrado.`);
+      throw new BadRequestException(`Formato ${modalidadeId} não encontrado.`);
     }
 
     const validadas = janelas.map((janela, indice) =>
@@ -693,7 +693,7 @@ export class GradeSenhasService {
     if (minutosDaHora(horaFim)! <= minutosDaHora(horaInicio)!) {
       throw new BadRequestException(
         `${onde}: o fechamento (${horaFim}) precisa ser depois da abertura ` +
-          `(${horaInicio}). Uma prova que fecha antes de abrir nao e aplicavel.`,
+          `(${horaInicio}). Uma prova que fecha antes de abrir não é aplicável.`,
       );
     }
 
@@ -732,7 +732,7 @@ export class GradeSenhasService {
     // uma sessao existe `ativo: false`, que preserva o horario cadastrado.
     if (!texto || minutosDaHora(texto) == null) {
       throw new BadRequestException(
-        `${campo} deve estar em HH:MM (24h, com zero a esquerda), ex.: 15:00.`,
+        `${campo} deve estar no formato HH:MM, de 00:00 a 23:59 (ex.: 15:00).`,
       );
     }
 
@@ -748,8 +748,8 @@ export class GradeSenhasService {
         // ordem e a chave da sessao dentro do formato — duas iguais fariam
         // uma sobrescrever a outra no upsert, em silencio.
         throw new BadRequestException(
-          `Ha duas janelas com a ordem ${ordem}. A ordem identifica a sessao ` +
-            'dentro do formato e nao pode repetir.',
+          `Há duas janelas com a ordem ${ordem}. A ordem identifica a sessão ` +
+            'dentro do formato e não pode repetir.',
         );
       }
       vistas.add(ordem);
@@ -775,7 +775,7 @@ export class GradeSenhasService {
 
       if (vistos.has(horaDisparo)) {
         throw new BadRequestException(
-          `${codigoDaModalidade} tem duas janelas ativas disparando as ` +
+          `${codigoDaModalidade} tem duas janelas ativas disparando às ` +
             `${horaDisparo}. Apenas uma delas seria aplicada, e a outra ficaria ` +
             'sem efeito sem aviso nenhum.',
         );
@@ -796,8 +796,8 @@ export class GradeSenhasService {
 
     if (minutosDaHora(texto) == null) {
       throw new BadRequestException(
-        `${campo} deve estar em HH:MM (24h, com zero a esquerda), ex.: 07:30. ` +
-          'Deixe em branco para nao disparar este turno.',
+        `${campo} deve estar no formato HH:MM, de 00:00 a 23:59 (ex.: 07:30). ` +
+          'Deixe em branco para não disparar este turno.',
       );
     }
 

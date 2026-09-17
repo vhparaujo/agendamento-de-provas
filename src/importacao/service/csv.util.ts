@@ -69,7 +69,7 @@ export function lerCsv(buffer: Buffer): LinhaCsv[] {
     });
   } catch (erro) {
     throw new BadRequestException(
-      `Nao foi possivel ler o CSV: ${erro instanceof Error ? erro.message : String(erro)}`,
+      `Não foi possível ler o CSV. Confira se o arquivo é mesmo um CSV separado por ponto e vírgula. Detalhe técnico: ${erro instanceof Error ? erro.message : String(erro)}`,
     );
   }
 }
@@ -93,7 +93,9 @@ export function exigirColunas(
   obrigatorias: string[],
 ): void {
   if (linhas.length === 0) {
-    throw new BadRequestException('CSV vazio (nenhuma linha de dados)');
+    throw new BadRequestException(
+      'O CSV está vazio: não tem nenhuma linha de dados.',
+    );
   }
 
   const presentes = new Set(
@@ -106,8 +108,8 @@ export function exigirColunas(
 
   if (faltando.length > 0) {
     throw new BadRequestException(
-      `Colunas ausentes no CSV: ${faltando.join(', ')}. ` +
-        `Encontradas: ${Object.keys(linhas[0]).join(', ')}`,
+      `Faltam colunas no CSV: ${faltando.join(', ')}. ` +
+        `Colunas encontradas no arquivo: ${Object.keys(linhas[0]).join(', ')}.`,
     );
   }
 }

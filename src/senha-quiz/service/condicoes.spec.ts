@@ -130,7 +130,7 @@ describe('trocarGrupoNasCondicoes', () => {
     expect(r.trocadas).toBe(0);
     expect(r.porCategoria).toBe(true);
     expect(r.corpo).toBeNull();
-    expect(r.avisos.join(' ')).toContain('CATEGORIA');
+    expect(r.avisos.join(' ')).toContain('QUALQUER grupo de uma categoria');
   });
 
   /**

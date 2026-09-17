@@ -65,7 +65,7 @@ navegador, log de proxy e header `Referer`.
 A API devolve JSON, então não existe XSS refletido do lado do servidor. **O risco
 real é XSS armazenado, e a origem são os dados que nós importamos.**
 
-O sistema importa CSVs enviados pela secretaria — hoje **7.510 registros de
+O sistema importa CSVs enviados pela administração — hoje **7.510 registros de
 alunos** — com campos que vão direto para a tela do usuário:
 
 | Campo | Vem de | Aparece onde |
@@ -205,7 +205,7 @@ Quem tem **um** curso pode omitir; quem tem mais de um e omite recebe `400`.
 Toda recusa do portal traz em `message` uma frase escrita para o aluno ler. **Não
 reescreva nem generalize**: "vagas esgotadas", "seu curso está como Cancelado" e
 "o prazo encerrou em 18/08 23:59" pedem reações diferentes, e trocar isso por
-"erro ao agendar" transfere o problema para a secretaria.
+"erro ao agendar" transfere o problema para a administração.
 
 | Código | Quando | O que o front faz |
 |---|---|---|
@@ -225,6 +225,14 @@ Duas coisas que o front **não** deve fazer:
 - **Não reenviar o `POST` automaticamente** ao receber `409`. A vaga acabou; um
   retry só produz outro `409` — e um retry cego numa disputa por vaga é a forma
   mais fácil de derrubar a API no dia da abertura.
+
+Mensagens **automáticas** (validação de DTO, rota inexistente, parâmetro
+inválido, limite de requisições) também chegam prontas: o filtro global do
+backend as traduz do inglês para uma frase de usuário
+(`src/seguranca/filter/mensagens-amigaveis.ts`). O front não precisa — e não
+deve — reescrevê-las. Quando a resposta vier **sem** `message` (proxy fora do
+ar, corpo vazio), o front usa um texto por código (`mensagemPorStatus`, em
+`src/api/erros.ts`), nunca "HTTP 502".
 
 ### 4.4 Renovação de token
 
@@ -256,7 +264,7 @@ um instante") e **não** repetir automaticamente sem espera. Respeite o header
 Resposta de erro interno vem assim:
 
 ```json
-{ "statusCode": 500, "message": "Erro interno. Informe o codigo abaixo ao suporte.", "erroId": "8f1c9d2e-..." }
+{ "statusCode": 500, "message": "Ocorreu um erro inesperado. Tente de novo em instantes; se continuar, informe ao suporte o código abaixo.", "erroId": "8f1c9d2e-..." }
 ```
 
 **Mostre o `erroId` para o usuário.** É com ele que o time acha a linha exata no

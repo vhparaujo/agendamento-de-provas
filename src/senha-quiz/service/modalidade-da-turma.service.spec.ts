@@ -37,7 +37,7 @@ describe('ModalidadeDaTurmaService', () => {
     orgUnitId: string,
     modalidadeId: number,
     codigo: string,
-    escolhidaPor = 'secretaria@ucb.br',
+    escolhidaPor = 'admin@ucb.br',
   ) => ({
     orgUnitId,
     modalidadeId,
@@ -223,7 +223,7 @@ describe('ModalidadeDaTurmaService', () => {
       // As reservas sao as REAIS do formato eleito, nao o total da turma: e
       // o numero que o relatorio mostra ao lado da decisao.
       expect(decisao.reservas).toBe(583);
-      expect(decisao.escolha?.escolhidaPor).toBe('secretaria@ucb.br');
+      expect(decisao.escolha?.escolhidaPor).toBe('admin@ucb.br');
       // As candidatas continuam ali para a tela poder TROCAR a escolha sem
       // exigir um "desfazer" antes.
       expect(decisao.candidatas.map((c) => c.codigo)).toEqual([
@@ -290,7 +290,7 @@ describe('ModalidadeDaTurmaService', () => {
       // A turma apareceu resolvida na conferencia de ontem: sumir do painel sem
       // explicacao seria a pior versao deste aviso.
       expect(decisao.detalhe).toContain('MODULAR');
-      expect(decisao.detalhe).toContain('nao vale mais');
+      expect(decisao.detalhe).toContain('não vale mais');
     });
 
     /** Escolha de OUTRA turma nao pode vazar para esta. */
@@ -377,7 +377,7 @@ describe('ModalidadeDaTurmaService', () => {
         1,
         ['103'],
         'N2',
-        'secretaria@ucb.br',
+        'admin@ucb.br',
       );
 
       expect(upsert).toHaveBeenCalledWith(
@@ -387,7 +387,7 @@ describe('ModalidadeDaTurmaService', () => {
       );
       expect(registrar).toHaveBeenCalledWith(
         'DATA_QUIZ_MODALIDADE_ESCOLHIDA',
-        expect.objectContaining({ ator: 'secretaria@ucb.br' }),
+        expect.objectContaining({ ator: 'admin@ucb.br' }),
       );
       expect(resultado.decisao.situacao).toBe('ENCONTRADA');
       // A linha volta pronta para a tela redesenhar sem refazer a conferencia
@@ -404,7 +404,7 @@ describe('ModalidadeDaTurmaService', () => {
 
       await expect(
         servico.escolher(41, 1, ['103'], 'N2', 'a@b.c'),
-      ).rejects.toThrow(/nao esta ambigua/i);
+      ).rejects.toThrow(/não está ambígua/i);
       expect(upsert).not.toHaveBeenCalled();
     });
 
@@ -413,7 +413,7 @@ describe('ModalidadeDaTurmaService', () => {
 
       await expect(
         servico.escolher(41, 1, ['103'], 'N2', 'a@b.c'),
-      ).rejects.toThrow(/ausencia/i);
+      ).rejects.toThrow(/ausência/i);
       expect(upsert).not.toHaveBeenCalled();
     });
 
@@ -440,7 +440,7 @@ describe('ModalidadeDaTurmaService', () => {
 
       await expect(
         servico.escolher(41, 1, ['103'], 'N2', 'a@b.c'),
-      ).rejects.toThrow(/nao casou com nenhuma oferta/i);
+      ).rejects.toThrow(/não casou com nenhuma oferta/i);
       expect(upsert).not.toHaveBeenCalled();
     });
 
@@ -449,7 +449,7 @@ describe('ModalidadeDaTurmaService', () => {
 
       await expect(
         servico.escolher(41, 1, ['103'], 'N2', 'a@b.c'),
-      ).rejects.toThrow(/Turma nao encontrada/i);
+      ).rejects.toThrow(/Turma não encontrada/i);
     });
 
     /**

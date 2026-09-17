@@ -62,7 +62,7 @@ export interface Mudanca {
  *
  * NAO bloqueia a importacao de proposito: a planilha e a fonte de verdade, e
  * pode ser a correcao de um erro anterior. Quem decide o que fazer com a reserva
- * (remanejar, cancelar ou manter) e a secretaria — o que ela nao pode e nao
+ * (remanejar, cancelar ou manter) e a administração — o que ela nao pode e nao
  * ficar sabendo.
  */
 export interface AlteracaoComAgendamento {
@@ -77,7 +77,7 @@ export interface AlteracaoComAgendamento {
   /**
    * Presente so quando o vinculo PERDEU a elegibilidade nesta importacao —
    * `ativo` saindo de `true` para `false`. Os valores sao os STATUS CURSO
-   * brutos ("Ativo" -> "Transf. Interna"), que e o que a secretaria le na
+   * brutos ("Ativo" -> "Transf. Interna"), que e o que a administracao le na
    * planilha.
    *
    * GANHAR elegibilidade nao entra: voltar a poder agendar tendo prova marcada
@@ -124,7 +124,7 @@ export interface CandidataRenomeacao {
  * NAO bloqueia e NAO mescla, pelo mesmo motivo de `alteracoesComAgendamento`:
  * dois vinculos no mesmo RA existem de verdade (2 em 7519 na base real), e
  * fundir dois cursos distintos misturaria as provas de dois cursos numa pessoa
- * so. A mesclagem e uma decisao da secretaria, em `POST /alunos/:id/mesclar`.
+ * so. A mesclagem e uma decisao da administracao, em `POST /alunos/:id/mesclar`.
  */
 export interface CursoRenomeado {
   linha: number;
@@ -134,7 +134,7 @@ export interface CursoRenomeado {
   curso: string;
   /** Id do vinculo recem-criado — o destino da mesclagem. */
   alunoId: number;
-  /** Mais de uma = ambigua; a secretaria escolhe, o sistema nao chuta. */
+  /** Mais de uma = ambigua; a administracao escolhe, o sistema nao chuta. */
   candidatas: CandidataRenomeacao[];
 }
 
@@ -190,7 +190,7 @@ export class ImportacaoAlunosService {
 
     if (!modalidade) {
       throw new BadRequestException(
-        `Formato ${codigoModalidade} nao existe. Rode o seed de formatos.`,
+        `O formato ${codigoModalidade} não está cadastrado no sistema. Avise o suporte técnico.`,
       );
     }
 
@@ -426,15 +426,15 @@ export class ImportacaoAlunosService {
 
     if (!campus) {
       return rejeitar(
-        'CAMPUS vazio — nao da para definir o polo do aluno. ' +
-          'Corrija a planilha e reenvie (a importacao e idempotente).',
+        'CAMPUS vazio — não dá para definir o polo do aluno. ' +
+          'Corrija a planilha e reenvie (reenviar não duplica ninguém).',
       );
     }
 
     const poloId = ctx.poloPorNome.get(campus);
     if (!poloId) {
       return rejeitar(
-        `CAMPUS "${campus}" nao corresponde a nenhum polo cadastrado`,
+        `CAMPUS "${campus}" não corresponde a nenhum polo cadastrado`,
         campus,
       );
     }
@@ -515,7 +515,7 @@ export class ImportacaoAlunosService {
    * Por que so avisa: dois vinculos no mesmo RA existem de verdade, e mesclar
    * por semelhanca de nome fundiria dois cursos distintos numa pessoa so —
    * misturando as provas dos dois. A comparacao esta em `curso-renomeado.ts`,
-   * que nao chuta; a decisao e da secretaria, em `POST /alunos/:id/mesclar`.
+   * que nao chuta; a decisao e da administracao, em `POST /alunos/:id/mesclar`.
    *
    * O custo e uma consulta por CANDIDATA, e candidata e raro: numa importacao
    * normal nenhuma linha chega aqui, e numa primeira importacao o banco esta
@@ -585,7 +585,7 @@ export class ImportacaoAlunosService {
    *   Este e o mais silencioso dos tres, porque nao produz nem sintoma tardio:
    *   `bloqueados` sobe um no resumo do upload e mais nada acontece. O aluno
    *   some do compulsorio, nao troca mais de horario pelo portal, e ainda assim
-   *   aparece na lista de presenca do dia — ocupando vaga que a secretaria
+   *   aparece na lista de presenca do dia — ocupando vaga que a administração
    *   poderia estar dando a outra pessoa.
    *
    * ⚠️ A pergunta e "PERDEU a elegibilidade?", nao "o status mudou?" — a
@@ -597,7 +597,7 @@ export class ImportacaoAlunosService {
    *
    * Nenhum dos tres e erro por si so: a planilha e a fonte de verdade e pode
    * estar corrigindo um cadastro errado. Por isso isto **avisa e nao bloqueia** —
-   * o que nao pode e a secretaria descobrir no dia da prova.
+   * o que nao pode e a administracao descobrir no dia da prova.
    *
    * A consulta extra so acontece quando algo de fato mudou, o que e raro: numa
    * reimportacao normal, nenhuma linha passa daqui.

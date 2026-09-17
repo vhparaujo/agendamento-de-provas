@@ -116,7 +116,7 @@ export function mapRowToTurma(linha: LinhaCsv): LinhaMapeada {
     return {
       ok: false,
       motivo:
-        'codigo da turma ou nome da disciplina vazio — os dois sao necessarios ' +
+        'código da turma ou nome da disciplina vazio — os dois são necessários ' +
         'para identificar a turma',
     };
   }
@@ -127,7 +127,7 @@ export function mapRowToTurma(linha: LinhaCsv): LinhaMapeada {
     return {
       ok: false,
       motivo:
-        'nome da disciplina vazio depois de separar o codigo da disciplina',
+        'nome da disciplina vazio depois de separar o código da disciplina',
     };
   }
 

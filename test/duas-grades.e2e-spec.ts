@@ -522,7 +522,7 @@ describe('Duas grades na mesma janela (e2e)', () => {
       .send({ faixaId })
       .expect(409);
 
-    expect(recusa.body.message).toMatch(/ja tem prova marcada neste horario/i);
+    expect(recusa.body.message).toMatch(/prova marcada neste horário/i);
 
     // ...e a tela precisa dizer o MESMO, senao o aluno so descobre no clique.
     // O espelho tem que ser exato: uma faixa a menos e ele bate no 409; uma a

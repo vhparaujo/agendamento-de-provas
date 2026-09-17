@@ -133,8 +133,8 @@ export class D2lGruposService {
 
     if (!Number.isInteger(categoriaId) || categoriaId <= 0) {
       throw new BadGatewayException(
-        `O Brightspace aceitou criar a categoria "${nome}" na turma ${orgUnitId}, ` +
-          'mas nao devolveu o id dela. Resposta: ' +
+        `O AVA aceitou criar a categoria "${nome}" na turma ${orgUnitId}, ` +
+          'mas não devolveu o id dela. Resposta: ' +
           JSON.stringify(trabalho ?? null).slice(0, 200),
       );
     }
@@ -160,7 +160,7 @@ export class D2lGruposService {
       'lp',
       `${this.categorias(orgUnitId)}${categoriaId}/status`,
       this.opcoes(
-        `a situacao da categoria ${categoriaId} da turma ${orgUnitId}`,
+        `a situação da categoria ${categoriaId} da turma ${orgUnitId}`,
         ritmo,
       ),
     );
@@ -277,7 +277,7 @@ export class D2lGruposService {
       `${this.grupos(orgUnitId, categoriaId)}${groupId}/enrollments/`,
       {
         ...this.opcoes(
-          `a inscricao do usuario ${userId} no grupo ${groupId} da turma ${orgUnitId}`,
+          `a inscrição do usuário ${userId} no grupo ${groupId} da turma ${orgUnitId}`,
           ritmo,
         ),
         metodo: 'POST',
@@ -301,7 +301,7 @@ export class D2lGruposService {
       `${this.grupos(orgUnitId, categoriaId)}${groupId}/enrollments/${userId}`,
       {
         ...this.opcoes(
-          `a remocao do usuario ${userId} do grupo ${groupId} da turma ${orgUnitId}`,
+          `a remoção do usuário ${userId} do grupo ${groupId} da turma ${orgUnitId}`,
           ritmo,
         ),
         metodo: 'DELETE',
@@ -338,8 +338,8 @@ export class D2lGruposService {
       timeoutMs: ritmo.timeoutMs,
       retentar429: true,
       dicaDe404:
-        'Confira se a turma, a categoria e o grupo existem — e, numa inscricao, ' +
-        'se o aluno esta matriculado nesta turma do Brightspace.',
+        'Confira se a turma, a categoria e o grupo existem — e, numa inscrição, ' +
+        'se o aluno esta matriculado nesta turma do AVA.',
     };
   }
 }

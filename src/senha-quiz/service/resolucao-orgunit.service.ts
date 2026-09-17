@@ -187,8 +187,8 @@ export class ResolucaoOrgUnitService {
           ambigua: false,
           motivo:
             motivos.get(turma.id) ??
-            'Nenhuma oferta do periodo letivo vigente casou com esta linha do CSV. ' +
-              'Ou ela e de um semestre passado, ou o codigo divergiu no Brightspace.',
+            'Nenhuma oferta do período letivo vigente casou com esta linha do CSV. ' +
+              'Ou ela é de um semestre passado, ou o código divergiu no AVA.',
         });
         continue;
       }
@@ -203,7 +203,7 @@ export class ResolucaoOrgUnitService {
           ambigua: true,
           motivo:
             `${ids.size} ofertas do semestre casaram esta linha do CSV ` +
-            `(orgUnitId ${[...ids].sort().join(', ')}). Nenhuma foi escolhida.`,
+            `(códigos no AVA: ${[...ids].sort().join(', ')}). Nenhuma foi escolhida.`,
         });
         continue;
       }

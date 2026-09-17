@@ -37,7 +37,7 @@ export interface ConfiguracaoParaSalvar {
  * a hora a mais do NIOP e se o special access SUBSTITUI a troca de datas.
  *
  * No banco, e nao no `.env`, pelo motivo de `ConfiguracaoSenhaQuiz`: muda por
- * semestre, e quem sabe e a secretaria, que nao faz deploy.
+ * semestre, e quem sabe e a administracao, que nao faz deploy.
  *
  * Os valores valem no PROXIMO lote: nada aqui reescreve o que ja foi gravado no
  * Brightspace. Mudar o tempo depois de gravar pede rodar o lote de novo — e ele
@@ -87,7 +87,7 @@ export class ConfiguracaoSpecialAccessService {
       const atual = existentes.get(modalidade.id);
 
       if (!atual) {
-        throw new BadRequestException(`O formato ${modalidade.id} nao existe.`);
+        throw new BadRequestException(`O formato ${modalidade.id} não existe.`);
       }
 
       if (vistas.has(modalidade.id)) {
@@ -105,7 +105,7 @@ export class ConfiguracaoSpecialAccessService {
       ) {
         throw new BadRequestException(
           `${atual.nome}: tempo de prova + tempo extra do NIOP passa de ` +
-            `${TEMPO_MAXIMO_DA_VALENCE} minutos, o maximo que o Brightspace aceita.`,
+            `${TEMPO_MAXIMO_DA_VALENCE} minutos, o máximo que o AVA aceita.`,
         );
       }
     }

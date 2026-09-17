@@ -228,12 +228,12 @@ export class D2lGradesService {
    * ESPERADO, e nao erro: a turma pode ter sido montada sem categorias, ou com
    * "Nota 1" no lugar de "N1". Quem decide o que fazer com isso e a regra
    * (`ElegibilidadeDeNotaService`), que recusa a disciplina e manda o aluno a
-   * secretaria em vez de liberar a prova sem conferir a N1.
+   * administracao em vez de liberar a prova sem conferir a N1.
    *
    * ⚠️ **404 aqui vira `null`, mas 403 SOBE.** Sao coisas opostas: 404 e "esta
    * turma nao tem categorias", 403 e "o consentimento nao tem
    * `grades:gradecategories:read`" — este ultimo atinge TODA turma, e traduzi-lo
-   * para "turma sem N1" mandaria o curso inteiro para a secretaria enquanto a
+   * para "turma sem N1" mandaria o curso inteiro para a administracao enquanto a
    * correcao e um `npm run d2l:autorizar`.
    */
   async categoriaPorNome(
@@ -395,8 +395,8 @@ export class D2lGradesService {
     // que o portal traduz e o lote registra como reprocessavel.
     throw new Error(
       `A listagem de ${oQue} passou de ${maxPaginas} ` +
-        'paginas sem terminar. Os alunos nao lidos apareceriam como "sem nota", ' +
-        'e ninguem sem nota agenda a substitutiva.',
+        'páginas sem terminar. Os alunos não lidos apareceriam como "sem nota", ' +
+        'e ninguém sem nota agenda a substitutiva.',
     );
   }
 
@@ -534,8 +534,8 @@ export class D2lGradesService {
       atrasoMs: ritmo.atrasoMs,
       timeoutMs: ritmo.timeoutMs,
       dicaDe404:
-        'Confira se a turma ainda existe neste tenant e se o usuario da ' +
-        'integracao enxerga as notas dela.',
+        'Confira se a turma ainda existe neste tenant e se o usuário da ' +
+        'integração enxerga as notas dela.',
     };
   }
 }

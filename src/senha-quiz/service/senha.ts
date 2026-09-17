@@ -34,33 +34,33 @@ const CARACTERE_DE_CONTROLE = /\p{C}/u;
  */
 export function validarSenha(valor: unknown): string {
   if (typeof valor !== 'string') {
-    throw new BadRequestException('A senha e obrigatoria e deve ser um texto.');
+    throw new BadRequestException('A senha é obrigatória e deve ser um texto.');
   }
 
   if (valor.trim() === '') {
     throw new BadRequestException(
-      'A senha nao pode ser vazia nem conter apenas espacos: o Brightspace ' +
-        'recusa esse valor. Para deixar a prova SEM senha, apague a celula da grade.',
+      'A senha não pode ser vazia nem conter apenas espaços: o AVA ' +
+        'recusa esse valor. Para deixar a prova SEM senha, apague a célula da grade.',
     );
   }
 
   if (valor !== valor.trim()) {
     throw new BadRequestException(
-      'A senha comeca ou termina com espaco. Isso quase sempre e erro de ' +
-        'digitacao, e faria os alunos errarem a senha no dia da prova.',
+      'A senha começa ou termina com espaço. Isso quase sempre é erro de ' +
+        'digitação, e faria os alunos errarem a senha no dia da prova.',
     );
   }
 
   if (CARACTERE_DE_CONTROLE.test(valor)) {
     throw new BadRequestException(
-      'A senha tem caractere invisivel (quebra de linha, tabulacao ou similar). ' +
+      'A senha tem caractere invisível (quebra de linha, tabulação ou similar). ' +
         'Provavelmente veio de um "colar" da planilha — digite-a novamente.',
     );
   }
 
   if (valor.length > TAMANHO_MAXIMO_SENHA) {
     throw new BadRequestException(
-      `A senha tem ${valor.length} caracteres; o maximo e ${TAMANHO_MAXIMO_SENHA}.`,
+      `A senha tem ${valor.length} caracteres; o máximo é ${TAMANHO_MAXIMO_SENHA}.`,
     );
   }
 

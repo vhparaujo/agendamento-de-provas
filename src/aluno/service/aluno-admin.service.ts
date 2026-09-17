@@ -162,7 +162,10 @@ export class AlunoAdminService {
       },
     });
 
-    if (!aluno) throw new NotFoundException(`Aluno ${id} nao encontrado`);
+    if (!aluno)
+      throw new NotFoundException(
+        'Aluno não encontrado. Atualize a página e tente de novo.',
+      );
 
     const niop = await this.prisma.alunoNiop.findUnique({
       where: { matricula: aluno.matricula },

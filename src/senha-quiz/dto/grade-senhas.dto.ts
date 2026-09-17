@@ -136,7 +136,7 @@ export class CelulaDaGradeDto {
   @ApiProperty({ example: '2026-09-15T18:02:00.000Z' })
   atualizadoEm!: Date;
 
-  @ApiProperty({ example: 'secretaria@ucb.br', nullable: true })
+  @ApiProperty({ example: 'admin@ucb.br', nullable: true })
   atualizadoPor!: string | null;
 
   @ApiProperty({
@@ -168,7 +168,7 @@ export class SalvarAlvoDto {
     description: 'Nome do questionario que o lote procura em cada turma.',
   })
   @IsString()
-  @IsNotEmpty({ message: 'Informe o nome do questionario que o lote procura.' })
+  @IsNotEmpty({ message: 'Informe o nome do questionário que o lote procura.' })
   nomeQuiz!: string;
 
   @ApiProperty({
@@ -195,7 +195,7 @@ export class AlvoDoQuizDto {
   @ApiProperty({ enum: TipoMatchQuiz, example: TipoMatchQuiz.CONTEM })
   matchQuiz!: TipoMatchQuiz;
 
-  @ApiProperty({ example: 'secretaria@ucb.br', nullable: true })
+  @ApiProperty({ example: 'admin@ucb.br', nullable: true })
   atualizadoPor!: string | null;
 
   @ApiProperty({ example: '2026-09-01T12:00:00.000Z', nullable: true })
@@ -249,7 +249,7 @@ export class HorariosDoCronDto {
   })
   horaNoite!: string | null;
 
-  @ApiProperty({ example: 'secretaria@ucb.br', nullable: true })
+  @ApiProperty({ example: 'admin@ucb.br', nullable: true })
   atualizadoPor!: string | null;
 
   @ApiProperty({ example: '2026-09-01T12:00:00.000Z', nullable: true })
@@ -289,7 +289,7 @@ export class CandidataDeModalidadeDto {
     example: 583,
     description:
       'Quantos alunos deste formato tem prova confirmada na turma. E o ' +
-      'numero que a secretaria olha para decidir — 583 contra 1 e uma decisao ' +
+      'numero que a administração olha para decidir — 583 contra 1 e uma decisao ' +
       'diferente de 12 contra 9.',
   })
   reservas!: number;
@@ -358,7 +358,7 @@ export class TurmaDoLoteDto {
   candidatas!: CandidataDeModalidadeDto[];
 
   @ApiProperty({
-    example: 'secretaria@ucb.br',
+    example: 'admin@ucb.br',
     nullable: true,
     description:
       'Quem decidiu o formato desta turma, quando ele veio de uma escolha ' +
@@ -623,7 +623,7 @@ export class JanelasDeProvaDto {
   })
   janelas!: JanelaDeProvaResponseDto[];
 
-  @ApiProperty({ example: 'secretaria@ucb.br', nullable: true })
+  @ApiProperty({ example: 'admin@ucb.br', nullable: true })
   atualizadoPor!: string | null;
 
   @ApiProperty({ example: '2026-09-01T12:00:00.000Z', nullable: true })

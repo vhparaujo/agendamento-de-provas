@@ -6,7 +6,7 @@ describe('descricaoDaRodada', () => {
     expect(descricaoDaRodada('SUB')).toBe('Substitutiva (SUB)');
   });
 
-  /** A rodada e texto livre no cadastro: a secretaria pode ter digitado "sub". */
+  /** A rodada e texto livre no cadastro: a administracao pode ter digitado "sub". */
   it('ignora caixa e espaco', () => {
     expect(descricaoDaRodada(' sub ')).toBe('Substitutiva (SUB)');
   });

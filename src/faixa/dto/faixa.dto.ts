@@ -16,7 +16,7 @@ import {
 import { PADRAO_HORA } from '../../components/horario.util';
 import type { FaixaDetalhe, OfertaResumo } from '../service/faixa.service';
 
-const MSG_HORA = 'Use o formato HH:MM em 24h (ex: 08:30)';
+const MSG_HORA = 'Use o formato HH:MM, de 00:00 a 23:59 (ex.: 08:30)';
 
 export class SalaDaFaixaDto {
   @ApiProperty({
@@ -74,21 +74,18 @@ export class CriarFaixaDto {
       'Dia da PROVA (AAAA-MM-DD). Independe da janela de agendamento, que e ' +
       'controlada pelo periodo.',
   })
-  @IsISO8601(
-    { strict: true },
-    { message: 'data deve estar no formato AAAA-MM-DD' },
-  )
+  @IsISO8601({ strict: true }, { message: 'Informe uma data válida.' })
   data!: string;
 
   @ApiProperty({ example: '08:30', description: MSG_HORA })
-  @Matches(PADRAO_HORA, { message: `horaInicio: ${MSG_HORA}` })
+  @Matches(PADRAO_HORA, { message: `Hora de início inválida. ${MSG_HORA}` })
   horaInicio!: string;
 
   @ApiProperty({
     example: '11:30',
     description: `${MSG_HORA}. A janela precisa comportar a prova mais longa ofertada nela.`,
   })
-  @Matches(PADRAO_HORA, { message: `horaFim: ${MSG_HORA}` })
+  @Matches(PADRAO_HORA, { message: `Hora de fim inválida. ${MSG_HORA}` })
   horaFim!: string;
 
   @ApiProperty({
@@ -98,7 +95,7 @@ export class CriarFaixaDto {
       'sala nao aparece para aluno nenhum, por isso ao menos uma e obrigatoria.',
   })
   @IsArray()
-  @ArrayMinSize(1, { message: 'informe ao menos uma sala' })
+  @ArrayMinSize(1, { message: 'Informe ao menos uma sala.' })
   @ArrayMaxSize(100)
   @ValidateNested({ each: true })
   @Type(() => SalaDaFaixaDto)
@@ -108,15 +105,12 @@ export class CriarFaixaDto {
 export class AtualizarFaixaDto {
   @ApiPropertyOptional({ example: '2026-08-21', format: 'date' })
   @IsOptional()
-  @IsISO8601(
-    { strict: true },
-    { message: 'data deve estar no formato AAAA-MM-DD' },
-  )
+  @IsISO8601({ strict: true }, { message: 'Informe uma data válida.' })
   data?: string;
 
   @ApiPropertyOptional({ example: '09:00', description: MSG_HORA })
   @IsOptional()
-  @Matches(PADRAO_HORA, { message: `horaInicio: ${MSG_HORA}` })
+  @Matches(PADRAO_HORA, { message: `Hora de início inválida. ${MSG_HORA}` })
   horaInicio?: string;
 
   @ApiPropertyOptional({
@@ -124,7 +118,7 @@ export class AtualizarFaixaDto {
     description: `${MSG_HORA}. Encurtar a janela e recusado se ja houver oferta que nao caiba.`,
   })
   @IsOptional()
-  @Matches(PADRAO_HORA, { message: `horaFim: ${MSG_HORA}` })
+  @Matches(PADRAO_HORA, { message: `Hora de fim inválida. ${MSG_HORA}` })
   horaFim?: string;
 
   @ApiPropertyOptional({

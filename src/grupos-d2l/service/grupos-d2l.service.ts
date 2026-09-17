@@ -190,8 +190,9 @@ export class GruposD2lService {
   ): Promise<ExecucaoGruposIniciada> {
     if (!this.d2l.habilitado()) {
       throw new BadRequestException(
-        'Criar grupos e inscrever alunos dependem da integracao com o ' +
-          'Brightspace (D2L_HABILITADO=true, com a autorizacao OAuth feita).',
+        'Criar grupos e inscrever alunos dependem da integração com o ' +
+          'AVA, que está desligada neste servidor — avise o suporte ' +
+          'técnico. (Detalhe técnico: D2L_HABILITADO=true e autorização OAuth.)',
       );
     }
 
@@ -199,9 +200,9 @@ export class GruposD2lService {
 
     if (emAndamento) {
       throw new ConflictException(
-        `A execucao ${emAndamento.id} ainda esta rodando ` +
+        `A execução #${emAndamento.id} ainda está rodando ` +
           `(${emAndamento.turmasProcessadas} de ${emAndamento.totalTurmas} turmas). ` +
-          'Espere terminar: as duas acoes batem no mesmo Brightspace.',
+          'Espere terminar: as duas ações batem no mesmo AVA.',
       );
     }
 
@@ -209,8 +210,8 @@ export class GruposD2lService {
 
     if (!vigente) {
       throw new BadRequestException(
-        'Nenhum periodo de agendamento cadastrado. Sem ele nao ha como saber ' +
-          'de qual prova sao os alunos.',
+        'Nenhum período de agendamento cadastrado. Sem ele não há como saber ' +
+          'de qual prova são os alunos.',
       );
     }
 
@@ -230,7 +231,7 @@ export class GruposD2lService {
 
       if (contexto.turmas.length === 0) {
         throw new BadRequestException(
-          `A turma ${opcoes.orgUnitId} nao entra no lote: ela nao tem prova ` +
+          `A turma ${opcoes.orgUnitId} não entra no lote: ela não tem prova ` +
             'confirmada de EaD, Semipresencial, Modular ou Presencial entre ' +
             `${diaBr(intervalo.de)} e ${diaBr(intervalo.ate)} na rodada ${vigente.rodada}.`,
         );
@@ -270,12 +271,12 @@ export class GruposD2lService {
           totalTurmas: contexto.turmas.length,
           nadaAFazer: true,
           mensagem:
-            `Nada mudou desde a execucao ${nada.id} (${dataHoraBr(nada.concluidoEm)}): ` +
+            `Nada mudou desde a execução #${nada.id} (${dataHoraBr(nada.concluidoEm)}): ` +
             (criar
-              ? `as ${contexto.turmas.length} turma(s) ja receberam os ${totalDeNomes} grupo(s).`
-              : `os alunos das ${contexto.turmas.length} turma(s) ja foram inscritos nos grupos atuais.`) +
-            ' Nenhuma chamada foi feita ao Brightspace. Use "conferir mesmo assim" ' +
-            'se alguem alterou algo direto no Brightspace.',
+              ? `as ${contexto.turmas.length} turma(s) já receberam os ${totalDeNomes} grupo(s).`
+              : `os alunos das ${contexto.turmas.length} turma(s) já foram inscritos nos grupos atuais.`) +
+            ' Nenhuma chamada foi feita ao AVA. Use "conferir mesmo assim" ' +
+            'se alguém alterou algo direto no AVA.',
         };
       }
     }
@@ -322,7 +323,7 @@ export class GruposD2lService {
       where: { id },
     });
 
-    if (!execucao) throw new NotFoundException(`Execucao ${id} nao encontrada`);
+    if (!execucao) throw new NotFoundException(`Execução ${id} não encontrada`);
 
     const porResultado = await this.prisma.itemGruposD2L.groupBy({
       by: ['resultado'],
@@ -375,7 +376,7 @@ export class GruposD2lService {
       select: { id: true, tipo: true },
     });
 
-    if (!execucao) throw new NotFoundException(`Execucao ${id} nao encontrada`);
+    if (!execucao) throw new NotFoundException(`Execução ${id} não encontrada`);
 
     const itens = await this.prisma.itemGruposD2L.findMany({
       where: { execucaoId: id },
@@ -397,12 +398,12 @@ export class GruposD2lService {
       [
         'Turma',
         'Disciplina',
-        'orgUnitId',
+        'Código da turma no AVA',
         'Grupo',
-        'Matricula',
-        'UserId D2L',
+        'Matrícula',
+        'Código do aluno no AVA',
         'Resultado',
-        'Pendencia',
+        'Pendência',
         'O que aconteceu',
       ],
       itens.map((item) => [
@@ -413,7 +414,7 @@ export class GruposD2lService {
         item.matricula,
         item.userIdD2L,
         item.resultado,
-        ehPendencia(item.resultado) ? 'Sim' : 'Nao',
+        ehPendencia(item.resultado) ? 'Sim' : 'Não',
         item.detalhe,
       ]),
     );
@@ -428,7 +429,7 @@ export class GruposD2lService {
         : 'inscricao nos grupos';
 
     return {
-      nomeArquivo: `Grupos D2L - ${acao} ${hoje} (execucao ${id}).csv`,
+      nomeArquivo: `Grupos - ${acao} ${hoje} (execucao ${id}).csv`,
       conteudo,
     };
   }
@@ -448,9 +449,9 @@ export class GruposD2lService {
         data: {
           status: StatusExecucao.FALHOU,
           erro:
-            'O processo foi interrompido durante a execucao (reinicio do ' +
-            'servidor?). O que ja foi feito no Brightspace permanece; rodar de ' +
-            'novo continua de onde parou, porque o lote so escreve o que falta.',
+            'O processo foi interrompido durante a execução (provavelmente o ' +
+            'servidor reiniciou). O que já foi feito no AVA permanece; rodar de ' +
+            'novo continua de onde parou, porque o lote só escreve o que falta.',
           concluidoEm: new Date(),
         },
       });
@@ -853,10 +854,10 @@ export class GruposD2lService {
         itens.push(
           item(turma, ResultadoGruposD2L.CATEGORIA_EM_PROCESSAMENTO, {
             detalhe:
-              `A categoria foi criada (id ${criada.categoriaId}), mas o Brightspace ` +
-              `ainda a processava depois de ${(TENTATIVAS_DA_CATEGORIA * ESPERA_DA_CATEGORIA_MS) / 1000}s. ` +
+              `A categoria foi criada (código ${criada.categoriaId}), mas o AVA ` +
+              `ainda a processava depois de ${(TENTATIVAS_DA_CATEGORIA * ESPERA_DA_CATEGORIA_MS) / 1000} segundos. ` +
               'Rode "Criar categorias e grupos" de novo em alguns minutos: os grupos ' +
-              'genericos dela serao renomeados.',
+              'genéricos dela serão renomeados.',
           }),
         );
         return;
@@ -931,8 +932,8 @@ export class GruposD2lService {
         item(turma, ResultadoGruposD2L.GRUPO_SOBRANDO, {
           nomeGrupo: grupo.Name,
           detalhe:
-            `Tem ${grupo.Enrollments.length} inscrito(s) e nao esta na lista de ` +
-            `${definicao.nome}. Nao foi tocado.`,
+            `Tem ${grupo.Enrollments.length} inscrito(s) e não está na lista de ` +
+            `${definicao.nome}. Não foi tocado.`,
         }),
       );
     }
@@ -995,8 +996,8 @@ export class GruposD2lService {
         pendencia(
           ResultadoGruposD2L.USER_ID_INVALIDO,
           reserva,
-          `O agendamento guarda o UserId "${reserva.userIdD2L}", que nao e numerico. ` +
-            'A inscricao exige o id numerico do Brightspace.',
+          `O agendamento guarda um identificador inválido do aluno no AVA ` +
+            `("${reserva.userIdD2L}"). Sem ele não há como inscrever o aluno no grupo.`,
         );
         continue;
       }
@@ -1015,8 +1016,8 @@ export class GruposD2lService {
         pendencia(
           ResultadoGruposD2L.ALUNO_DE_OUTRA_MODALIDADE,
           reserva,
-          `O aluno e ${reserva.modalidadeCodigo} (${sessao}), mas a turma recebe os ` +
-            `grupos de ${definicao.nome}. O questionario tem uma janela so — confira ` +
+          `O aluno é ${reserva.modalidadeCodigo} (${sessao}), mas a turma recebe os ` +
+            `grupos de ${definicao.nome}. O questionário tem uma janela só — confira ` +
             'o desempate da turma na aba "Senhas e datas".',
         );
         continue;
@@ -1030,8 +1031,8 @@ export class GruposD2lService {
           ResultadoGruposD2L[grupo.falta],
           reserva,
           grupo.falta === 'HORARIO_SEM_JANELA'
-            ? `A faixa ${sessao} nao tem janela de ${reserva.modalidadeCodigo} com o ` +
-                'mesmo horario. Resolva a pendencia de horario na tela de grupos.'
+            ? `A faixa ${sessao} não tem janela de ${reserva.modalidadeCodigo} com o ` +
+                'mesmo horário. Resolva a pendência de horário na tela de grupos.'
             : `Nenhum grupo cadastrado para ${sessao} em ${definicao.nome}.`,
         );
         continue;
@@ -1055,7 +1056,7 @@ export class GruposD2lService {
         itens.push(
           item(turma, ResultadoGruposD2L.CATEGORIA_AUSENTE, {
             detalhe:
-              `A turma nao tem a categoria "${definicao.categoria}". Rode "Criar ` +
+              `A turma não tem a categoria "${definicao.categoria}". Rode "Criar ` +
               `categorias e grupos" antes — ${desejado.size} aluno(s) esperam grupo nela.`,
           }),
         );
@@ -1084,10 +1085,10 @@ export class GruposD2lService {
           matricula: matriculaDe.get(falta.userId),
           userIdD2L: String(falta.userId),
           detalhe: falta.duplicado
-            ? `Ha mais de um grupo "${falta.nomeGrupo}" na categoria. Apague o ` +
-              'duplicado no Brightspace: escolher um no chute poderia por o aluno ' +
-              'no grupo que a condicao do quiz nao aponta.'
-            : `O grupo nao existe na categoria "${definicao.categoria}". Rode ` +
+            ? `Há mais de um grupo "${falta.nomeGrupo}" na categoria. Apague o ` +
+              'duplicado no AVA: escolher um no chute poderia pôr o aluno ' +
+              'no grupo para o qual a condição da prova não aponta.'
+            : `O grupo não existe na categoria "${definicao.categoria}". Rode ` +
               '"Criar categorias e grupos". O aluno continua onde estava.',
         }),
       );
@@ -1185,8 +1186,8 @@ export class GruposD2lService {
         item(turma, ResultadoGruposD2L.CATEGORIA_DUPLICADA, {
           detalhe:
             `A turma tem ${achadas.length} categorias "${nome}" ` +
-            `(ids ${achadas.map((c) => c.GroupCategoryId).join(', ')}). Apague a ` +
-            'que sobra no Brightspace e rode de novo.',
+            `(códigos ${achadas.map((c) => c.GroupCategoryId).join(', ')}). Apague a ` +
+            'que sobra no AVA e rode de novo.',
         }),
       );
       return 'DUPLICADA';
@@ -1297,16 +1298,16 @@ function classificarInscricao(erro: unknown): ResultadoGruposD2L {
 function motivoDaInscricao(erro: unknown): string {
   if (erro instanceof NaoEncontradoNoBrightspace) {
     return (
-      'O Brightspace nao encontrou o usuario neste grupo (404). O mais comum: o ' +
-      'aluno nao esta matriculado nesta turma do Brightspace, ou a conta foi ' +
+      'O AVA não encontrou o aluno neste grupo. O mais comum: o ' +
+      'aluno não está matriculado nesta turma do AVA, ou a conta foi ' +
       'removida.'
     );
   }
 
   if (erro instanceof RecusaDoBrightspace && erro.statusHttp === 409) {
     return (
-      'O Brightspace recusou com 409: o grupo atingiu a capacidade maxima, ou a ' +
-      'categoria ainda esta sendo processada. Rode de novo em alguns minutos.'
+      'O AVA recusou: o grupo atingiu a capacidade máxima, ou a ' +
+      'categoria ainda está sendo processada. Rode de novo em alguns minutos.'
     );
   }
 
@@ -1322,9 +1323,10 @@ function motivo(erro: unknown): string {
 
   if (erro instanceof RecusaDoBrightspace && erro.statusHttp === 403) {
     return (
-      `${texto} — Confira se groups:group:create, groups:enrollment:create e ` +
-      'groups:enrollment:delete estao no D2L_SCOPES e se a autorizacao foi ' +
-      'refeita (npm run d2l:autorizar).'
+      `${texto} — Falta permissão da integração com o AVA para mexer em ` +
+      'grupos; avise o suporte técnico. (Detalhe técnico: confira se ' +
+      'groups:group:create, groups:enrollment:create e groups:enrollment:delete ' +
+      'estão no D2L_SCOPES e se a autorização foi refeita com npm run d2l:autorizar.)'
     );
   }
 

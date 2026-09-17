@@ -104,7 +104,7 @@ export function blocoDaTurma(decisao: ModalidadeDaTurma): BlocoDaTurma {
   return {
     situacao: 'AMBIGUA',
     detalhe:
-      `${decisao.detalhe} Sem saber o formato, nao ha como escolher a ` +
+      `${decisao.detalhe} Sem saber o formato, não há como escolher a ` +
       'categoria. Desempate a turma na aba "Senhas e datas".',
   };
 }

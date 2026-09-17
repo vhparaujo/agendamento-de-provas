@@ -226,7 +226,7 @@ export class AgendamentoService {
       alunoId: vinculo.id,
       curso: vinculo.curso,
       // As notas que vieram do cruzamento NAO saem daqui: nota e assunto do
-      // Brightspace e da secretaria, e o portal so precisa dizer QUAIS
+      // Brightspace e da administracao, e o portal so precisa dizer QUAIS
       // disciplinas a prova cobre. Devolve-las poria as notas de cada materia
       // numa resposta que a tela nem usa — superficie de suporte que ninguem
       // pediu. Elas continuam indo para o banco, em `AgendamentoDisciplina`.
@@ -337,14 +337,14 @@ export class AgendamentoService {
     const vinculo = await this.exigirVinculo(aluno, atual.alunoId);
 
     // A troca e um agendamento novo aos olhos da regra: fora do prazo, nao ha
-    // troca. Quem perdeu o prazo procura a secretaria, que remaneja.
+    // troca. Quem perdeu o prazo procura a administracao, que remaneja.
     const periodo = await this.periodo.exigirAberto(vinculo.modalidade.codigo);
 
     const faixa = await this.exigirFaixaValida(faixaId, vinculo);
 
     if (atual.salaFaixa.faixaId === faixaId) {
       throw new ConflictException(
-        'Voce ja esta neste horario. Escolha um horario diferente.',
+        'Você já está neste horário. Escolha um horário diferente.',
       );
     }
 
@@ -408,7 +408,7 @@ export class AgendamentoService {
    * `DELETE /portal/agendamentos/:id`). Cancelar devolve a vaga e deixa a pessoa
    * SEM prova; num periodo lotando, a vaga sai em segundos e quem so queria
    * mudar de dia fica de fora. O aluno troca de horario (atomico, nunca o deixa
-   * sem nada); desmarcar e da secretaria, em `AgendamentoAdminService.cancelar`,
+   * sem nada); desmarcar e da administracao, em `AgendamentoAdminService.cancelar`,
    * que grava o e-mail de quem cancelou no historico.
    */
 
@@ -527,9 +527,9 @@ export class AgendamentoService {
 
       if (jaAgendado) {
         throw new ConflictException(
-          `Voce ja tem prova marcada para o curso ${dados.curso} nesta prova ` +
-            `(${dados.rodada}, agendamento ${jaAgendado.id}). Use a troca de ` +
-            'horario para mudar.',
+          `Você já tem prova marcada para o curso ${dados.curso} nesta prova ` +
+            `(${dados.rodada}). Use a troca de ` +
+            'horário para mudar.',
         );
       }
 
@@ -617,7 +617,9 @@ export class AgendamentoService {
     });
 
     if (!faixa) {
-      throw new NotFoundException(`Horario ${faixaId} nao encontrado`);
+      throw new NotFoundException(
+        'Horário não encontrado. Atualize a página e escolha outro.',
+      );
     }
 
     // O polo vem do CSV, nao da escolha do aluno: agendar em outro campus seria
@@ -637,12 +639,12 @@ export class AgendamentoService {
 
     if (!faixa.ativo) {
       throw new ConflictException(
-        'Este horario nao esta mais disponivel. Escolha outro.',
+        'Este horário não está mais disponível. Escolha outro.',
       );
     }
 
     if (faixa.data < hojeUtc()) {
-      throw new ConflictException('Este horario ja passou. Escolha outro.');
+      throw new ConflictException('Este horário já passou. Escolha outro.');
     }
 
     return faixa;
@@ -663,7 +665,7 @@ export class AgendamentoService {
 
     if (!agendamento) {
       throw new NotFoundException(
-        `Agendamento ${agendamentoId} nao encontrado`,
+        'Agendamento não encontrado. Atualize a página.',
       );
     }
 
@@ -677,12 +679,12 @@ export class AgendamentoService {
         detalhe: `tentou mexer no agendamento ${agendamentoId}, que e de outra matricula`,
       });
 
-      throw new ForbiddenException('Este agendamento nao e seu.');
+      throw new ForbiddenException('Este agendamento não é seu.');
     }
 
     if (agendamento.status !== StatusAgendamento.CONFIRMADO) {
       throw new ConflictException(
-        'Este agendamento ja foi cancelado. Marque um horario novo.',
+        'Este agendamento já foi cancelado. Marque um horário novo.',
       );
     }
 
@@ -709,7 +711,7 @@ export class AgendamentoService {
       agendamento.rodada !== janela.rodada
     ) {
       throw new NotFoundException(
-        'Este agendamento e de uma prova anterior e nao pode mais ser alterado.',
+        'Este agendamento é de uma prova anterior e não pode mais ser alterado.',
       );
     }
 
@@ -723,7 +725,9 @@ export class AgendamentoService {
     });
 
     if (!agendamento) {
-      throw new NotFoundException(`Agendamento ${id} nao encontrado`);
+      throw new NotFoundException(
+        'Agendamento não encontrado. Atualize a página.',
+      );
     }
 
     return montarConfirmado(agendamento);
@@ -749,7 +753,7 @@ export class AgendamentoService {
       });
 
       throw new ForbiddenException(
-        'Este curso nao pertence a sua matricula. Entre pelo link de agendamento dentro da disciplina.',
+        'Este curso não pertence à sua matrícula. Entre pelo link de agendamento dentro da disciplina.',
       );
     }
 
@@ -760,7 +764,7 @@ export class AgendamentoService {
 
     if (!vinculo) {
       throw new NotFoundException(
-        'Seu cadastro nao foi encontrado na base importada. Procure a secretaria academica.',
+        'Seu cadastro não foi encontrado para o agendamento de provas. Para pedir ajuda, acesse o formulário de suporte disponível na sua turma no AVA.',
       );
     }
 
@@ -774,7 +778,7 @@ export class AgendamentoService {
       });
 
       throw new ForbiddenException(
-        'Seu cadastro mudou desde que voce entrou. Abra o link de agendamento novamente.',
+        'Seu cadastro mudou desde que você entrou. Abra o link de agendamento novamente.',
       );
     }
 
@@ -785,20 +789,19 @@ export class AgendamentoService {
     if (aluno.vinculos.length === 1) return aluno.vinculos[0].alunoId;
 
     throw new BadRequestException(
-      'Voce tem mais de um curso. Informe `alunoId` para dizer de qual curso e esta prova ' +
-        '(os vinculos vem na resposta do launch).',
+      'Você tem mais de um curso. Escolha de qual curso é esta prova antes de continuar.',
     );
   }
 }
 
 const SEM_DISCIPLINA =
-  'Nenhuma disciplina sua tem prova cadastrada neste periodo. ' +
-  'Se voce tem prova, procure a secretaria academica.';
+  'Nenhuma disciplina sua tem prova cadastrada neste período. ' +
+  'Se você tem prova, acesse o formulário de suporte disponível na sua turma no AVA.';
 
 function motivoStatus(curso: string, statusCurso: string): string {
   return (
-    `Sua situacao no curso ${curso} esta como "${statusCurso}", que nao permite ` +
-    'agendar prova. Procure a secretaria academica.'
+    `Sua situação no curso ${curso} está como "${statusCurso}", que não permite ` +
+    'agendar prova. Se você acredita que isso está errado, acesse o formulário de suporte disponível na sua turma no AVA.'
   );
 }
 

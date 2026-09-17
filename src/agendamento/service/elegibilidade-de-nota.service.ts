@@ -44,7 +44,7 @@ import type { DisciplinaAgendavel } from '../../turma/service/turma.service';
  * disciplina.
  *
  * ⚠️ **O gatilho e o `FiltroDeNota` da janela, e nunca `rodada === 'SUB'`.**
- * `rodada` e texto livre — quem a nomeia e a secretaria —, entao comparar a
+ * `rodada` e texto livre — quem a nomeia e a administração —, entao comparar a
  * string faria a regra parar de valer em silencio no dia em que alguem
  * cadastrasse "Substitutiva" ou "sub". Sem filtro, este servico nao faz uma
  * unica chamada de rede: o caminho da N2 continua custando zero.
@@ -54,7 +54,7 @@ import type { DisciplinaAgendavel } from '../../turma/service/turma.service';
  * mora aqui, sozinha, e e por isso que ela cabe num teste sem rede.
  */
 
-/** Por que uma disciplina ficou de fora. Vira texto para a secretaria. */
+/** Por que uma disciplina ficou de fora. Vira texto para a administracao. */
 export type MotivoDaRecusa =
   /** Nota final >= o teto: o aluno ja alcancou a media e passou. */
   | 'FINAL_ATINGIU_A_MEDIA'
@@ -103,7 +103,7 @@ export interface ResultadoDaElegibilidade {
  * duas vezes. Com dois criterios, esse dobro tambem dobrou.
  *
  * Curto porque nota muda: o professor lanca uma pendencia e o aluno que estava
- * fora entra. Cinco minutos e menos que o tempo de um atendimento na secretaria.
+ * fora entra. Cinco minutos e menos que o tempo de um atendimento na administracao.
  */
 const CACHE_MS = 5 * 60_000;
 
@@ -113,12 +113,12 @@ const ALVO_FINAL = 'final';
 /**
  * A Valence caiu e a janela filtra por nota. Mensagem PROPRIA de proposito: a de
  * "nenhuma disciplina sua aparece no periodo letivo" mandaria o aluno cobrar a
- * secretaria por um problema que e nosso, e ela procuraria defeito no CSV.
+ * administracao por um problema que e nosso, e ela procuraria defeito no CSV.
  */
 export const NOTAS_INDISPONIVEIS =
-  'Nao foi possivel confirmar suas notas no Brightspace agora, e a prova ' +
+  'Não foi possível confirmar suas notas no AVA agora, e a prova ' +
   'substitutiva depende delas. Tente de novo em alguns minutos; se continuar, ' +
-  'procure a secretaria academica.';
+  'acesse o formulário de suporte disponível na sua turma no AVA.';
 
 @Injectable()
 export class ElegibilidadeDeNotaService {
@@ -152,11 +152,11 @@ export class ElegibilidadeDeNotaService {
    * criterio — checar a N1 antes faria o portal pagar DUAS chamadas por
    * disciplina para todo mundo, quando uma ja resolve. O efeito colateral e bom:
    * a recusa mais comum ja sai com a nota final preenchida, que e o numero que a
-   * secretaria pede quando o aluno reclama.
+   * administracao pede quando o aluno reclama.
    *
    * **Erro da Valence SOBE.** Nao ha degradacao possivel aqui: liberar sem
    * conferir nota e exatamente o que esta regra existe para impedir, e devolver
-   * lista vazia mandaria o aluno a secretaria por um problema de rede. Quem
+   * lista vazia mandaria o aluno a administracao por um problema de rede. Quem
    * traduz o erro para o aluno e o `DisciplinasDoAlunoService`; quem o registra
    * como reprocessavel e o compulsorio.
    */
@@ -290,7 +290,7 @@ export class ElegibilidadeDeNotaService {
 
         this.logger.warn(
           `Nao foi possivel ler as notas da turma ${orgUnitId} de uma vez; ` +
-            'os alunos dela serao consultados um a um. Causa: ' +
+            'os alunos dela serão consultados um a um. Causa: ' +
             (erro instanceof Error ? erro.message : String(erro)),
         );
       }
@@ -462,14 +462,14 @@ function chaveDaNota(
  * A frase que o aluno le quando NENHUMA disciplina dele passou pelos criterios.
  *
  * Ela existe porque o motivo generico do cruzamento ("nenhuma disciplina sua
- * aparece no periodo letivo") mandaria a secretaria conferir o CSV de turmas — e
+ * aparece no periodo letivo") mandaria a administração conferir o CSV de turmas — e
  * na maioria destes casos nao ha nada para conferir: o aluno passou de ano, ou
  * ja reprovou pela N1.
  *
  * ⚠️ **Nenhuma frase daqui diz os NUMEROS da regra** (decisao do cliente,
  * 08/09/2026), e essa e a razao de este arquivo nao receber mais o
  * `FiltroDeNota`: sem o filtro em maos, ninguem volta a formata-lo aqui por
- * distracao. A nota do aluno e o criterio sao assunto entre ele e a secretaria;
+ * distracao. A nota do aluno e o criterio sao assunto entre ele e a administracao;
  * publicar o limite na tela de agendamento so produz discussao sobre o numero,
  * no lugar errado e com quem nao decide nada.
  *
@@ -491,8 +491,8 @@ export function motivoDeNenhumaElegivel(
   // como descobrir sozinho que o problema esta na turma.
   if (semCategoria > 0 && semCategoria === recusadas.length) {
     return (
-      'Nao foi possivel conferir suas notas para a prova substitutiva: as ' +
-      'notas das suas disciplinas ainda nao estao completas no Brightspace. ' +
+      'Não foi possível conferir suas notas para a prova substitutiva: as ' +
+      'notas das suas disciplinas ainda não estão completas no AVA. ' +
       `${PROCURE_O_SUPORTE}`
     );
   }
@@ -501,18 +501,18 @@ export function motivoDeNenhumaElegivel(
   // simplesmente nao ter fechado as notas ainda.
   if (semNota > 0 && semNota === recusadas.length) {
     return (
-      'Suas disciplinas ainda estao sem nota lancada no Brightspace, e a prova ' +
+      'Suas disciplinas ainda estão sem nota lançada no AVA, e a prova ' +
       `substitutiva depende dela. ${PROCURE_O_SUPORTE}`
     );
   }
 
   const base =
-    'Nenhuma das suas disciplinas tem direito a prova substitutiva neste ' +
-    'periodo.';
+    'Nenhuma das suas disciplinas tem direito à prova substitutiva neste ' +
+    'período.';
 
   if (semNota > 0 || semCategoria > 0) {
     return (
-      `${base} Parte delas ainda esta sem nota lancada no Brightspace. ` +
+      `${base} Parte delas ainda está sem nota lançada no AVA. ` +
       `${PROCURE_O_SUPORTE}`
     );
   }
@@ -523,13 +523,13 @@ export function motivoDeNenhumaElegivel(
 /**
  * O caminho unico do aluno que discorda da lista.
  *
- * Formulario, e nao "procure a secretaria": a disciplina que falta pode ser nota
+ * Formulario, e nao "procure a administracao": a disciplina que falta pode ser nota
  * nao lancada, categoria N1 mal configurada na turma ou erro de cadastro — casos
  * que precisam ser registrados e roteados, nao resolvidos no balcao.
  */
 const PROCURE_O_SUPORTE =
-  'Se voce deveria agendar a prova substitutiva de alguma disciplina, responda ' +
-  'o formulario de suporte para que possamos verificar.';
+  'Se você deveria agendar a prova substitutiva de alguma disciplina, responda ' +
+  'o formulário de suporte disponível na sua turma no AVA para que possamos verificar.';
 
 /** Ver `NOTAS_INDISPONIVEIS`: a Valence caiu e a janela depende dela. */
 export function notasIndisponiveis(erro: unknown): BadGatewayException {

@@ -78,7 +78,7 @@ export interface OpcoesDoSpecialAccess {
    *
    * Existe para fatiar a carga: o lote e uma chamada por aluno em cada
    * questionario, e quem decide quanto o Brightspace recebe de cada vez e a
-   * secretaria — nao o tamanho da rodada.
+   * administração — nao o tamanho da rodada.
    */
   orgUnitIds: string[];
 }
@@ -180,8 +180,9 @@ export class SpecialAccessService {
   ): Promise<ExecucaoSpecialAccessIniciada> {
     if (!this.quizzes.habilitado()) {
       throw new BadRequestException(
-        'O special access depende da integracao com o Brightspace ' +
-          '(D2L_HABILITADO=true, com a autorizacao OAuth feita).',
+        'O acesso especial depende da integração com o AVA, que está ' +
+          'desligada neste servidor — avise o suporte técnico. (Detalhe técnico: ' +
+          'D2L_HABILITADO=true e autorização OAuth.)',
       );
     }
 
@@ -189,7 +190,7 @@ export class SpecialAccessService {
 
     if (emAndamento) {
       throw new ConflictException(
-        `A execucao ${emAndamento.id} ainda esta rodando ` +
+        `A execução #${emAndamento.id} ainda está rodando ` +
           `(${emAndamento.turmasProcessadas} de ${emAndamento.totalTurmas} turmas). ` +
           'Espere terminar.',
       );
@@ -199,8 +200,8 @@ export class SpecialAccessService {
 
     if (!vigente) {
       throw new BadRequestException(
-        'Nenhum periodo de agendamento cadastrado. Sem ele nao ha como saber ' +
-          'de qual prova sao as reservas.',
+        'Nenhum período de agendamento cadastrado. Sem ele não há como saber ' +
+          'de qual prova são as reservas.',
       );
     }
 
@@ -211,7 +212,7 @@ export class SpecialAccessService {
     if (!alvo.nomeQuiz) {
       throw new BadRequestException(
         'Nenhum questionario-alvo configurado. Informe o nome da prova em ' +
-          'Senhas e datas > Questionario antes de gravar o special access.',
+          'Senhas e datas > Questionário antes de gravar o acesso especial.',
       );
     }
 
@@ -245,7 +246,7 @@ export class SpecialAccessService {
 
     if (turmas.length === 0) {
       throw new BadRequestException(
-        `Nenhuma reserva na rodada ${vigente.rodada}: nao ha special access a gravar.`,
+        `Nenhuma reserva na rodada ${vigente.rodada}: não há acesso especial a gravar.`,
       );
     }
 
@@ -306,8 +307,8 @@ export class SpecialAccessService {
 
     if (!vigente) {
       throw new BadRequestException(
-        'Nenhum periodo de agendamento cadastrado. Sem ele nao ha como saber ' +
-          'de qual prova sao as reservas.',
+        'Nenhum período de agendamento cadastrado. Sem ele não há como saber ' +
+          'de qual prova são as reservas.',
       );
     }
 
@@ -338,7 +339,7 @@ export class SpecialAccessService {
       where: { id },
     });
 
-    if (!execucao) throw new NotFoundException(`Execucao ${id} nao encontrada`);
+    if (!execucao) throw new NotFoundException(`Execução ${id} não encontrada`);
 
     const porResultado = await this.prisma.itemSpecialAccess.groupBy({
       by: ['resultado'],
@@ -383,7 +384,7 @@ export class SpecialAccessService {
       select: { id: true, simulacao: true },
     });
 
-    if (!execucao) throw new NotFoundException(`Execucao ${id} nao encontrada`);
+    if (!execucao) throw new NotFoundException(`Execução ${id} não encontrada`);
 
     const itens = await this.prisma.itemSpecialAccess.findMany({
       where: { execucaoId: id },
@@ -404,17 +405,17 @@ export class SpecialAccessService {
       [
         'Turma',
         'Disciplina',
-        'orgUnitId',
-        'Questionario',
-        'QuizId',
-        'Matricula',
-        'UserId D2L',
+        'Código da turma no AVA',
+        'Questionário',
+        'Código do questionário',
+        'Matrícula',
+        'Código do aluno no AVA',
         'NIOP',
-        'Abre em (horario de Brasilia)',
-        'Fecha em (horario de Brasilia)',
+        'Abre em (horário de Brasília)',
+        'Fecha em (horário de Brasília)',
         'Tempo de prova (min)',
         'Resultado',
-        'Pendencia',
+        'Pendência',
         'O que aconteceu',
       ],
       itens.map((item) => [
@@ -425,12 +426,12 @@ export class SpecialAccessService {
         item.quizId,
         item.matricula,
         item.userIdD2L,
-        item.niop ? 'Sim' : 'Nao',
+        item.niop ? 'Sim' : 'Não',
         horarioLegivel(item.startDate),
         horarioLegivel(item.endDate),
         item.minutos,
         item.resultado,
-        ehPendencia(item.resultado) ? 'Sim' : 'Nao',
+        ehPendencia(item.resultado) ? 'Sim' : 'Não',
         item.detalhe,
       ]),
     );
@@ -441,7 +442,7 @@ export class SpecialAccessService {
 
     return {
       nomeArquivo:
-        `Special access${execucao.simulacao ? ' (simulacao)' : ''} ` +
+        `Acesso especial${execucao.simulacao ? ' (simulacao)' : ''} ` +
         `${hoje} (execucao ${id}).csv`,
       conteudo,
     };
@@ -462,9 +463,9 @@ export class SpecialAccessService {
         data: {
           status: StatusExecucao.FALHOU,
           erro:
-            'O processo foi interrompido durante a execucao (reinicio do ' +
-            'servidor?). O que ja foi gravado no Brightspace permanece; rodar de ' +
-            'novo continua de onde parou, porque o lote so escreve o que falta.',
+            'O processo foi interrompido durante a execução (provavelmente o ' +
+            'servidor reiniciou). O que já foi gravado no AVA permanece; rodar de ' +
+            'novo continua de onde parou, porque o lote só escreve o que falta.',
           concluidoEm: new Date(),
         },
       });
@@ -703,8 +704,8 @@ export class SpecialAccessService {
           matricula: invalido.matricula,
           userIdD2L: invalido.userIdD2L,
           detalhe:
-            'O agendamento nao tem um UserId numerico do Brightspace, entao nao ' +
-            'ha para quem gravar o acesso.',
+            'O agendamento não tem um identificador válido do aluno no AVA, ' +
+            'então não há para quem gravar o acesso.',
         }),
       );
     }
@@ -724,7 +725,7 @@ export class SpecialAccessService {
       itens.push(
         item(turma, ResultadoSpecialAccess.QUIZ_NAO_ENCONTRADO, {
           detalhe:
-            `Nenhum questionario casou com "${alvo.nomeQuiz}" (${alvo.matchQuiz}) ` +
+            `Nenhum questionário casou com "${alvo.nomeQuiz}" (${alvo.matchQuiz}) ` +
             `entre os ${lista.length} da turma. Os ${desejados.length} aluno(s) ` +
             'agendado(s) ficam sem acesso.',
         }),
@@ -744,8 +745,8 @@ export class SpecialAccessService {
           item(turma, ResultadoSpecialAccess.QUESTIONARIO_NAO_RESTRITO, {
             ...doQuiz,
             detalhe:
-              'O questionario NAO esta restrito a quem tem special access: ele ' +
-              'segue visivel para a turma inteira. Rode "Preparar questionarios".',
+              'O questionário NÃO está restrito a quem tem acesso especial: ele ' +
+              'segue visível para a turma inteira. Rode "Preparar questionários".',
           }),
         );
       }
@@ -762,7 +763,7 @@ export class SpecialAccessService {
         itens.push(
           item(turma, ResultadoSpecialAccess.FALHA_NA_API, {
             ...doQuiz,
-            detalhe: `Ao ler os special access do questionario: ${motivo(erro)}`,
+            detalhe: `Ao ler os acessos especiais do questionário: ${motivo(erro)}`,
           }),
         );
         continue;
@@ -777,8 +778,8 @@ export class SpecialAccessService {
             ...doQuiz,
             userIdD2L: String(userId),
             detalhe:
-              'Special access de quem nao tem reserva nesta turma na rodada. Nao ' +
-              'foi tocado — pode ter sido dado a mao no AVA.',
+              'Acesso especial de quem não tem reserva nesta turma na rodada. Não ' +
+              'foi tocado — pode ter sido dado à mão no AVA.',
           }),
         );
       }
@@ -884,7 +885,7 @@ function item(
   };
 }
 
-/** Um instante UTC como a secretaria le: dia e hora de Brasilia. */
+/** Um instante UTC como a administracao le: dia e hora de Brasilia. */
 function horarioLegivel(instante: Date | null): string | null {
   if (!instante) return null;
 
@@ -898,8 +899,8 @@ function horarioLegivel(instante: Date | null): string | null {
 function motivoDaEscrita(erro: unknown): string {
   if (erro instanceof NaoEncontradoNoBrightspace) {
     return (
-      'O Brightspace nao encontrou o usuario neste questionario (404). O mais ' +
-      'comum: o aluno nao esta matriculado nesta turma do Brightspace.'
+      'O AVA não encontrou o aluno neste questionário. O mais ' +
+      'comum: o aluno não está matriculado nesta turma do AVA.'
     );
   }
 
@@ -915,8 +916,10 @@ function motivo(erro: unknown): string {
 
   if (erro instanceof RecusaDoBrightspace && erro.statusHttp === 403) {
     return (
-      `${texto} — Confira se quizzing:quizzes:read,write,delete esta no ` +
-      'D2L_SCOPES e se a autorizacao foi refeita (npm run d2l:autorizar).'
+      `${texto} — Falta permissão da integração com o AVA para mexer ` +
+      'em acessos especiais; avise o suporte técnico. (Detalhe técnico: confira se ' +
+      'quizzing:quizzes:read,write,delete está no D2L_SCOPES e se a autorização ' +
+      'foi refeita com npm run d2l:autorizar.)'
     );
   }
 

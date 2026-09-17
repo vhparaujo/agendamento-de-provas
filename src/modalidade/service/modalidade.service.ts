@@ -25,7 +25,9 @@ export class ModalidadeService {
     });
 
     if (!modalidade) {
-      throw new NotFoundException(`Formato ${id} nao encontrado`);
+      throw new NotFoundException(
+        'Formato não encontrado. Atualize a página e tente de novo.',
+      );
     }
 
     return modalidade;

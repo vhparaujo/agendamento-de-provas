@@ -455,7 +455,7 @@ describe('Portal do aluno: listar e agendar (e2e)', () => {
         .send({ faixaId: livre })
         .expect(409);
 
-      expect(res.body.message).toMatch(/ja tem prova marcada/i);
+      expect(res.body.message).toMatch(/já tem prova marcada/i);
     });
 
     it('409 para faixa cuja data ja passou', async () => {
@@ -487,7 +487,7 @@ describe('Portal do aluno: listar e agendar (e2e)', () => {
         .send({ faixaId, alunoId: vitima.alunoId })
         .expect(403);
 
-      expect(res.body.message).toMatch(/nao pertence a sua matricula/i);
+      expect(res.body.message).toMatch(/não pertence à sua matrícula/i);
     });
 
     it('400 para campo fora do DTO', async () => {
@@ -578,9 +578,7 @@ describe('Portal do aluno: listar e agendar (e2e)', () => {
         .send({ faixaId: faixaA, alunoId: psicologia })
         .expect(409);
 
-      expect(conflito.body.message).toMatch(
-        /ja tem prova marcada neste horario/i,
-      );
+      expect(conflito.body.message).toMatch(/prova marcada neste horário/i);
 
       await comoAluno(api().post('/api/portal/agendamentos'), token)
         .send({ faixaId: faixaB, alunoId: psicologia })
@@ -658,7 +656,7 @@ describe('Portal do aluno: listar e agendar (e2e)', () => {
         .send({ faixaId: faixaDaN2 })
         .expect(201);
 
-      // Agora a secretaria abre a substitutiva do MESMO semestre.
+      // Agora a administracao abre a substitutiva do MESMO semestre.
       periodoSubId = (
         await prisma.periodoAgendamento.create({
           data: {
@@ -694,7 +692,7 @@ describe('Portal do aluno: listar e agendar (e2e)', () => {
         .send({ faixaId: outraDaSub })
         .expect(409);
 
-      expect(res.body.message).toMatch(/ja tem prova marcada/i);
+      expect(res.body.message).toMatch(/já tem prova marcada/i);
       expect(res.body.message).toMatch(/SUB/);
     });
 
@@ -737,7 +735,7 @@ describe('Portal do aluno: listar e agendar (e2e)', () => {
         .send({ faixaId: faixaDaN2 })
         .expect(409);
 
-      expect(res.body.message).toMatch(/neste horario/i);
+      expect(res.body.message).toMatch(/neste horário/i);
     });
 
     /** E a tela avisa antes do clique, como no caso dos dois cursos. */
@@ -1045,7 +1043,7 @@ describe('Portal do aluno: listar e agendar (e2e)', () => {
      * declarar — e o papel afirmaria uma prova que a pessoa nao vai fazer.
      *
      * O cancelamento e feito direto no banco porque o aluno nao cancela mais
-     * pelo portal (decisao de 17/08/2026): quem desmarca e a secretaria, por
+     * pelo portal (decisao de 17/08/2026): quem desmarca e a administracao, por
      * `DELETE /agendamentos/:id`. O que este caso prova e o filtro `CONFIRMADO`
      * do service, e nao a rota que gravou o status.
      */

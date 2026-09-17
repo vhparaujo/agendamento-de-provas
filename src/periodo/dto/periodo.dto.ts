@@ -61,7 +61,7 @@ export class LetivoDaModalidadeDto {
     description: 'Codigo do formato: EAD, SEMI, MODULAR ou PRESENCIAL.',
   })
   @IsString()
-  @IsNotEmpty({ message: 'modalidadeCodigo e obrigatorio' })
+  @IsNotEmpty({ message: 'Informe o formato.' })
   @MaxLength(50)
   modalidadeCodigo!: string;
 
@@ -70,7 +70,7 @@ export class LetivoDaModalidadeDto {
     description: 'Id do periodo letivo no Brightspace para este formato.',
   })
   @IsString()
-  @IsNotEmpty({ message: 'periodoLetivoId e obrigatorio' })
+  @IsNotEmpty({ message: 'Informe o período letivo.' })
   @MaxLength(191)
   periodoLetivoId!: string;
 }
@@ -104,7 +104,7 @@ export class CriarPeriodoDto {
       'o que separa um semestre do outro nos relatorios.',
   })
   @IsString()
-  @IsNotEmpty({ message: 'periodoLetivoId e obrigatorio' })
+  @IsNotEmpty({ message: 'Informe o período letivo.' })
   @MaxLength(191)
   periodoLetivoId!: string;
 

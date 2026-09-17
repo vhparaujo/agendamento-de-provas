@@ -60,7 +60,7 @@ export class CompulsorioController {
       'dos alunos alocados e a outra metade nao.\n\n' +
       '**Quem NAO entra:** vinculo inativo (STATUS CURSO bloqueia), quem ja tem ' +
       'prova confirmada, e quem **cancelou e nao remarcou** — este ultimo por ' +
-      'decisao da secretaria, e sai no relatorio para ser tratado caso a caso.\n\n' +
+      'decisao da administracao, e sai no relatorio para ser tratado caso a caso.\n\n' +
       'Exige `D2L_HABILITADO=true`: e a integracao que sabe as disciplinas de ' +
       'quem nunca entrou pelo link do Brightspace.',
   })

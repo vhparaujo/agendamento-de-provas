@@ -71,7 +71,7 @@ export class AuthService {
             : 'senha incorreta',
       });
 
-      throw new UnauthorizedException('Credenciais invalidas');
+      throw new UnauthorizedException('E-mail ou senha inválidos.');
     }
 
     this.auditoria.registrar('LOGIN_OK', { ator: email });
@@ -101,7 +101,7 @@ export class AuthService {
         detalhe: 'assinatura invalida ou token expirado',
       });
 
-      throw new UnauthorizedException('Refresh token invalido ou expirado');
+      throw new UnauthorizedException('Sua sessão expirou. Entre novamente.');
     }
 
     // Um access token nao pode ser trocado por tokens novos.
@@ -112,7 +112,9 @@ export class AuthService {
         detalhe: 'token nao e do tipo refresh de admin',
       });
 
-      throw new UnauthorizedException('Refresh token invalido');
+      throw new UnauthorizedException(
+        'Sua sessão não é válida. Entre novamente.',
+      );
     }
 
     const admin = await this.prisma.admin.findUnique({
@@ -125,7 +127,9 @@ export class AuthService {
         detalhe: 'admin inativo ou inexistente',
       });
 
-      throw new UnauthorizedException('Administrador inativo ou inexistente');
+      throw new UnauthorizedException(
+        'Sua conta de administrador está inativa ou não existe mais. Procure outro administrador.',
+      );
     }
 
     this.auditoria.registrar('REFRESH_OK', { ator: admin.email });
@@ -148,7 +152,9 @@ export class AuthService {
     });
 
     if (!admin || !admin.ativo) {
-      throw new UnauthorizedException('Administrador inativo ou inexistente');
+      throw new UnauthorizedException(
+        'Sua conta de administrador está inativa ou não existe mais. Procure outro administrador.',
+      );
     }
 
     if (!(await bcrypt.compare(senhaAtual, admin.senhaHash))) {
@@ -157,11 +163,13 @@ export class AuthService {
         detalhe: 'senha atual incorreta',
       });
 
-      throw new UnauthorizedException('Senha atual incorreta');
+      throw new UnauthorizedException('Senha atual incorreta.');
     }
 
     if (await bcrypt.compare(novaSenha, admin.senhaHash)) {
-      throw new BadRequestException('A nova senha deve ser diferente da atual');
+      throw new BadRequestException(
+        'A nova senha deve ser diferente da atual.',
+      );
     }
 
     await this.prisma.admin.update({
@@ -177,7 +185,7 @@ export class AuthService {
 
     this.auditoria.registrar('SENHA_TROCADA', { ator: admin.email });
 
-    return { mensagem: 'Senha alterada com sucesso' };
+    return { mensagem: 'Senha alterada com sucesso.' };
   }
 
   /** JWT interno do aluno — curto, so para navegacao no portal. */

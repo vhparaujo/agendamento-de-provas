@@ -444,7 +444,7 @@ describe('Relatorio de grupos para o D2L (e2e)', () => {
 
     it('as duas faixas irmas devolvem o MESMO arquivo', async () => {
       // O `faixaId` da URL e um handle da janela, nao o recorte. Se cada uma
-      // devolvesse a sua metade, a secretaria criaria dois grupos identicos no
+      // devolvesse a sua metade, a administracao criaria dois grupos identicos no
       // D2L — e um deles com metade da turma.
       const peloPoloA = await baixar(faixaCheiaId, HISTORIA.orgUnitId).expect(
         200,
@@ -531,7 +531,7 @@ describe('Relatorio de grupos para o D2L (e2e)', () => {
 
       expect(res.headers['content-type']).toContain('application/zip');
       expect(res.headers['content-disposition']).toMatch(
-        /attachment; filename="Grupos D2L-.*\.zip"/,
+        /attachment; filename="Grupos-.*\.zip"/,
       );
     });
 

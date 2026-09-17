@@ -391,7 +391,7 @@ describe('Catalogo administrativo: alunos e turmas importados (e2e)', () => {
       );
 
       // A resposta avisa da planilha de proposito: sem isso a remocao volta.
-      expect(res.body.mensagem).toContain('proximo upload');
+      expect(res.body.mensagem).toContain('próximo envio do CSV');
 
       await comoAdmin(api().get(`/api/turmas/${id}`)).expect(404);
 

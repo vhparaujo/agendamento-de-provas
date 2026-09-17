@@ -9,14 +9,14 @@ import { dataUtcDeIso, isoDeDataUtc } from './relogio';
  * A GRADE DIA x JANELA — qual grupo libera a prova em cada sessao de cada dia
  * ============================================================================
  * Nasceu em 14/09/2026, revertendo a decisao de 26/08/2026 de um nome fixo por
- * janela. Os grupos de cada dia tem nomes livres, e a secretaria trocava o nome
+ * janela. Os grupos de cada dia tem nomes livres, e a administracao trocava o nome
  * da janela a mao todo dia de prova.
  *
  * Diferencas deliberadas em relacao a grade de SENHAS:
  *
  * - **Nao ha segredo.** Nome de grupo aparece em qualquer tela do AVA, entao a
  *   listagem devolve o valor, e nao existe rota de revelar.
- * - **Salva em lote.** A secretaria preenche uma semana inteira de uma vez
+ * - **Salva em lote.** A administracao preenche uma semana inteira de uma vez
  *   (~14 janelas x 6 dias); uma requisicao por celula seria 84 cliques.
  * - **Nome vazio APAGA a celula.** O dia volta a usar o nome fixo da janela, se
  *   houver. Gravar `""` passaria por "tem grupo?" e produziria uma pendencia por
@@ -74,14 +74,14 @@ export class GradeGruposService {
    * Grava um lote de celulas — cria, atualiza ou (nome vazio) apaga.
    *
    * Tudo numa transacao: uma semana meio salva faria o disparo de um dia usar o
-   * grupo novo e o do dia seguinte o antigo, e a secretaria so descobriria no dia.
+   * grupo novo e o do dia seguinte o antigo, e a administracao so descobriria no dia.
    */
   async salvar(
     entrada: CelulaDeGrupoEntrada[],
     adminEmail: string,
   ): Promise<CelulaDeGrupo[]> {
     if (entrada.length === 0) {
-      throw new BadRequestException('Envie ao menos uma celula.');
+      throw new BadRequestException('Envie ao menos uma célula.');
     }
 
     const celulas = entrada.map((c) => {
@@ -118,8 +118,8 @@ export class GradeGruposService {
 
     if (inexistentes.length > 0) {
       throw new BadRequestException(
-        `Janela(s) ${[...new Set(inexistentes)].join(', ')} nao encontrada(s). ` +
-          'Recarregue a tela: o calendario pode ter sido alterado.',
+        'Uma ou mais janelas não foram encontradas. Atualize a página: o ' +
+          'calendário pode ter sido alterado.',
       );
     }
 
@@ -234,10 +234,10 @@ export class GradeGruposService {
       const chave = `${dataIso}#${janelaDeProvaId}`;
 
       // Duas entradas para a mesma celula: a ultima venceria no loop, e qual das
-      // duas a secretaria queria nao ha como saber.
+      // duas a administracao queria nao ha como saber.
       if (vistas.has(chave)) {
         throw new BadRequestException(
-          `A celula ${dataIso} da janela ${janelaDeProvaId} veio duas vezes.`,
+          `A célula do dia ${dataIso.split('-').reverse().join('/')} foi enviada duas vezes para a mesma janela. Atualize a página e tente de novo.`,
         );
       }
       vistas.add(chave);

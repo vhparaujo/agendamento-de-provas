@@ -129,7 +129,7 @@ export class D2lCondicoesService {
       ),
       {
         ...this.opcoes(
-          `as condicoes do questionario ${quizId} da turma ${orgUnitId}`,
+          `as condições do questionário ${quizId} da turma ${orgUnitId}`,
           ritmo,
         ),
         nuloEm404: true,
@@ -156,7 +156,7 @@ export class D2lCondicoesService {
         `quizzes/${encodeURIComponent(quizId)}`,
       {
         ...this.opcoes(
-          `as condicoes do questionario ${quizId} da turma ${orgUnitId}`,
+          `as condições do questionário ${quizId} da turma ${orgUnitId}`,
           ritmo,
         ),
         metodo: 'PUT',
@@ -189,7 +189,7 @@ export class D2lCondicoesService {
         `D2L_API_VERSION_LP=${cfg.apiVersaoLp} e baixa demais para trocar o ` +
           `grupo da prova: as rotas de conditionalRelease e de groupcategories ` +
           `exigem LP ${LP_MINIMA_PARA_CONDICOES}+ (1.45 e anteriores estao ` +
-          `obsoletas). Confira as versoes deste tenant em ` +
+          `obsoletas). Confira as versões deste tenant em ` +
           `${cfg.baseUrl}/d2l/api/versions/.`,
       );
     }
@@ -211,10 +211,10 @@ export class D2lCondicoesService {
       timeoutMs: ritmo.timeoutMs,
       retentar429: true,
       dicaDe404:
-        'Confira se a LP desta instancia e 1.49+ e se o usuario da integracao ' +
-        'enxerga os grupos e as restricoes da turma. O escopo ' +
-        '`groups:group:read` vive no CONSENTIMENTO: se ele foi adicionado ao ' +
-        '.env sem rodar `npm run d2l:autorizar`, a chamada e recusada.',
+        'Confira se a turma existe e se a integração com o AVA tem ' +
+        'permissão para ver grupos e restrições; se continuar, avise o suporte ' +
+        'técnico. Detalhe técnico: exige LP 1.49+ e o escopo groups:group:read ' +
+        'no consentimento (npm run d2l:autorizar).',
     };
   }
 }

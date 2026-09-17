@@ -24,7 +24,7 @@ import { pdfDeDeclaracao } from './pdf-declaracao';
  * aberto o aluno pode trocar de horario e cancelar (regra 7). Uma declaracao
  * emitida ali afirma um dia e uma hora que o proprio portador pode mudar cinco
  * minutos depois — e quem recebeu o papel (empregador, escola, cartorio) nao
- * tem como conferir. Depois do fechamento, so a secretaria remaneja, e o que o
+ * tem como conferir. Depois do fechamento, so a administracao remaneja, e o que o
  * documento diz para de se mover sozinho.
  *
  * A checagem e `PeriodoService.exigirEncerrado()`, o espelho do `exigirAberto()`
@@ -89,7 +89,7 @@ export class DeclaracaoService {
     // existem — e nenhuma das tres situacoes tem acao diferente para o aluno.
     if (!agendamento) {
       throw new NotFoundException(
-        'Agendamento nao encontrado entre as suas provas confirmadas deste semestre.',
+        'Agendamento não encontrado entre as suas provas confirmadas deste semestre.',
       );
     }
 
@@ -99,13 +99,13 @@ export class DeclaracaoService {
      * cair para a matricula — produziria "Declaramos que UC26425318 esta
      * matriculado(a) sob o RA UC26425318": um documento que nao nomeia
      * ninguem, entregue a um empregador. Recusar e pior para o aluno no
-     * momento, mas e acionavel: a secretaria corrige a planilha e reimporta,
+     * momento, mas e acionavel: a administracao corrige a planilha e reimporta,
      * e a importacao e idempotente.
      */
     if (!agendamento.aluno.nome?.trim()) {
       throw new ConflictException(
-        'Seu cadastro esta sem nome, e a declaracao precisa dele. Procure a ' +
-          'secretaria academica para corrigir o cadastro.',
+        'Seu cadastro está sem nome, e a declaração precisa dele. Para corrigir, ' +
+          'acesse o formulário de suporte disponível na sua turma no AVA.',
       );
     }
 

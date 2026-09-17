@@ -24,7 +24,7 @@ export function intervaloDeDias(
 ): IntervaloDeDias {
   if (!de || !ate || !PADRAO_DIA.test(de) || !PADRAO_DIA.test(ate)) {
     throw new BadRequestException(
-      'Informe `de` e `ate` em AAAA-MM-DD: os grupos sao sempre de um intervalo de dias de prova.',
+      'Informe as datas De e Até: os grupos são sempre de um intervalo de dias de prova.',
     );
   }
 
@@ -32,20 +32,20 @@ export function intervaloDeDias(
   const ateData = dataUtcDeIso(ate);
 
   if (Number.isNaN(deData.getTime()) || Number.isNaN(ateData.getTime())) {
-    throw new BadRequestException(`Data invalida no intervalo ${de} a ${ate}.`);
+    throw new BadRequestException(
+      'Data inválida no intervalo. Confira as datas De e Até.',
+    );
   }
 
   if (ateData < deData) {
-    throw new BadRequestException(
-      `O fim do intervalo (${ate}) vem antes do inicio (${de}).`,
-    );
+    throw new BadRequestException('A data Até vem antes da data De.');
   }
 
   const dias = (ateData.getTime() - deData.getTime()) / 86_400_000 + 1;
 
   if (dias > MAXIMO_DE_DIAS) {
     throw new BadRequestException(
-      `O intervalo tem ${dias} dias; o maximo e ${MAXIMO_DE_DIAS}. Confira o ano das datas.`,
+      `O intervalo tem ${dias} dias; o máximo é ${MAXIMO_DE_DIAS}. Confira o ano das datas.`,
     );
   }
 

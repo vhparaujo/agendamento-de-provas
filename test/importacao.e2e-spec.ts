@@ -182,7 +182,7 @@ describe('Importacao de CSVs (e2e)', () => {
 
       // linha 1: sem codigo · 2: sem disciplina · 4: repete o par da linha 3
       expect(res.body.rejeitadas.map((r: any) => r.linha)).toEqual([1, 2, 4]);
-      expect(res.body.rejeitadas[0].motivo).toMatch(/codigo da turma/);
+      expect(res.body.rejeitadas[0].motivo).toMatch(/código da turma/);
       expect(res.body.rejeitadas[2].motivo).toMatch(/repetida/);
 
       // uma planilha com erro nao trava a importacao inteira
@@ -474,7 +474,7 @@ describe('Importacao de CSVs (e2e)', () => {
       expect(depois.ativo).toBe(false);
       expect(depois.statusCurso).toBe('Transf. Interna');
 
-      // ...e a prova continua de pe. Cancelar e decisao da secretaria.
+      // ...e a prova continua de pe. Cancelar e decisao da administracao.
       const prova = await prisma.agendamento.findFirstOrThrow({
         where: { matricula: RA },
       });
@@ -508,7 +508,7 @@ describe('Importacao de CSVs (e2e)', () => {
 
   /**
    * O ciclo inteiro do curso renomeado: a planilha muda a grafia, o upsert cria
-   * um segundo vinculo, a importacao denuncia, a secretaria mescla e a prova
+   * um segundo vinculo, a importacao denuncia, a administracao mescla e a prova
    * volta para uma linha so.
    */
   describe('curso renomeado: deteccao e mesclagem', () => {

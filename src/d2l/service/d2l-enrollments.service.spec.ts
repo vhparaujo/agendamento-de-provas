@@ -458,7 +458,7 @@ describe('D2lEnrollmentsService', () => {
     });
 
     /**
-     * O caso que decide o desenho do lote: aluno na planilha da secretaria sem
+     * O caso que decide o desenho do lote: aluno na planilha da administracao sem
      * conta no LMS e normal. Se isto virasse excecao, um aluno derrubaria o
      * compulsorio inteiro em vez de sair no relatorio.
      */

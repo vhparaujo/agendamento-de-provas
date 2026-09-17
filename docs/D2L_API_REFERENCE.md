@@ -253,7 +253,7 @@ ela tem).
 |---|---|
 | Descoberta por **nome**, não por id fixo | O `CategoryId` muda por turma; um id cravado leria o item errado, ou nenhum, sem erro aparecer |
 | Cache de 5 min do `CategoryId`, **inclusive do "não achei"** | Sem o cache negativo, cada aluno de uma turma mal nomeada custaria uma listagem inteira de categorias |
-| **404 → `null`** (turma sem categorias), **403 SOBE** | São opostos: 404 é uma turma; 403 é o consentimento sem `grades:gradecategories:read`, e atinge TODAS — traduzi-lo para "turma sem N1" mandaria o curso inteiro à secretaria por um `npm run d2l:autorizar` que falta |
+| **404 → `null`** (turma sem categorias), **403 SOBE** | São opostos: 404 é uma turma; 403 é o consentimento sem `grades:gradecategories:read`, e atinge TODAS — traduzi-lo para "turma sem N1" mandaria o curso inteiro à administração por um `npm run d2l:autorizar` que falta |
 | Só **leitura** | Categorias (tipo 9) e a nota final calculada não aceitam `PUT`: o `IncomingGradeValue` só vale para os tipos 1–4 (Numérico, Aprovado/Reprovado, Caixa de Seleção, Texto). Elas são sempre recalculadas a partir dos itens que as compõem — o que não nos afeta, aqui só se lê |
 
 #### 🔴 A leitura por TURMA não vale para categorias (medido, 08/09/2026)

@@ -46,13 +46,14 @@ export function validarOferta(
   //    Taguatinga poderia ser alocado numa sala de Ceilandia.
   if (sala.poloId !== faixa.poloId) {
     throw new BadRequestException(
-      `A sala "${sala.nome}" pertence a outro polo e nao pode entrar nesta faixa.`,
+      `A sala "${sala.nome}" pertence a outro polo e não pode entrar nesta faixa.`,
     );
   }
 
   if (!sala.ativo) {
     throw new BadRequestException(
-      `A sala "${sala.nome}" esta inativa e nao pode ser ofertada.`,
+      `A sala "${sala.nome}" está inativa e não pode ser usada em faixas. ` +
+        'Reative a sala na tela de Salas, se ela voltou a ser usada.',
     );
   }
 
@@ -72,7 +73,7 @@ export function validarOferta(
   if (vagas > sala.capacidade) {
     throw new BadRequestException(
       `A sala "${sala.nome}" tem ${sala.capacidade} lugares; ` +
-        `nao da para ofertar ${vagas} vagas.`,
+        `não é possível oferecer ${vagas} vagas.`,
     );
   }
 }
@@ -156,14 +157,14 @@ export function exigirSalaLivreNoHorario(
   const outrasSalas = new Set(choques.map((c) => c.salaId)).size - 1;
 
   throw new ConflictException(
-    `A sala "${primeiro.salaNome}" ja tem prova das ${primeiro.horaInicio} as ` +
-      `${primeiro.horaFim} neste dia (faixa ${primeiro.faixaId}), que se ` +
-      `sobrepoe a ${janela.horaInicio}-${janela.horaFim}. ` +
-      'Uma sala nao pode receber duas provas ao mesmo tempo.' +
+    `A sala "${primeiro.salaNome}" já tem prova das ${primeiro.horaInicio} às ` +
+      `${primeiro.horaFim} neste dia (faixa #${primeiro.faixaId}), que se ` +
+      `sobrepõe ao horário ${janela.horaInicio}–${janela.horaFim}. ` +
+      'Uma sala não pode receber duas provas ao mesmo tempo.' +
       (outrasSalas > 0
-        ? ` Outra(s) ${outrasSalas} sala(s) desta faixa tem o mesmo problema.`
+        ? ` Outra(s) ${outrasSalas} sala(s) desta faixa têm o mesmo problema.`
         : '') +
-      ' Use outra sala ou mude o horario.',
+      ' Use outra sala ou mude o horário.',
   );
 }
 
@@ -173,8 +174,8 @@ export function janelaDaFaixa(horaInicio: string, horaFim: string): number {
 
   if (minutos <= 0) {
     throw new BadRequestException(
-      `horaFim (${horaFim}) precisa ser depois de horaInicio (${horaInicio}). ` +
-        'Faixa que vira a meia-noite nao e suportada.',
+      `A hora de fim (${horaFim}) precisa ser depois da hora de início (${horaInicio}). ` +
+        'Não é possível cadastrar faixa que passa da meia-noite.',
     );
   }
 

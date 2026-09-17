@@ -2,7 +2,7 @@
  * ============================================================================
  * GERACAO DO CSV DE RELATORIO
  * ============================================================================
- * O arquivo e aberto no Excel por gente da secretaria, num Windows em pt-BR.
+ * O arquivo e aberto no Excel por gente da administracao, num Windows em pt-BR.
  * Tres detalhes decidem se ele abre certo ou vira uma coluna so de lixo:
  *
  * 1. SEPARADOR `;` — o Excel em pt-BR usa ponto e virgula. Com virgula, a
@@ -30,13 +30,13 @@
 export const BOM_UTF8 = '﻿';
 const QUEBRA = '\r\n';
 
-/** O que muda entre o CSV da secretaria e o do D2L. */
+/** O que muda entre o CSV da administracao e o do D2L. */
 export interface FormatoCsv {
   separador?: string;
   bom?: boolean;
 }
 
-/** Excel em pt-BR: `;` e BOM. E o formato de todo relatorio da secretaria. */
+/** Excel em pt-BR: `;` e BOM. E o formato de todo relatorio da administracao. */
 const EXCEL_BR: Required<FormatoCsv> = { separador: ';', bom: true };
 
 /**
@@ -102,7 +102,7 @@ export function montarCsv(
 }
 
 /**
- * Data no formato que a secretaria le, no fuso de Brasilia.
+ * Data no formato que a administracao le, no fuso de Brasilia.
  *
  * Nao usamos ISO aqui de proposito: o relatorio e para pessoa, nao para maquina.
  * A exportacao guarda `criadoEm` com hora porque "quem agendou primeiro" e a

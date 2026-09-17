@@ -214,7 +214,7 @@ export class CursoRenomeadoDto implements CursoRenomeado {
   @ApiProperty({
     type: [CandidataRenomeacaoDto],
     description:
-      'Mais de uma candidata significa ambiguidade: a secretaria escolhe, o ' +
+      'Mais de uma candidata significa ambiguidade: a administracao escolhe, o ' +
       'sistema nao chuta.',
   })
   candidatas!: CandidataRenomeacaoDto[];

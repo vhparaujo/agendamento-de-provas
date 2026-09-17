@@ -107,7 +107,10 @@ export class TurmaAdminService {
       },
     });
 
-    if (!turma) throw new NotFoundException(`Turma ${id} nao encontrada`);
+    if (!turma)
+      throw new NotFoundException(
+        'Turma não encontrada. Atualize a página e tente de novo.',
+      );
 
     // AgendamentoDisciplina guarda o orgUnitId, nao a turma: a ligacao entre os
     // dois so existe depois que algum launch ensinou o id desta turma.
@@ -145,12 +148,11 @@ export class TurmaAdminService {
 
     if (turma.totalAgendamentos !== null && turma.totalAgendamentos > 0) {
       throw new ConflictException(
-        `A turma "${turma.codigoTurma} — ${turma.nomeDisciplina}" ja tem ` +
-          `${turma.totalAgendamentos} agendamento(s) confirmado(s) e nao pode ser ` +
-          'apagada. Apagar aqui nao desmarcaria prova nenhuma — o agendamento ' +
-          'guarda o orgUnitId como fotografia —, so tiraria o nome da turma do ' +
-          'relatorio. Se as provas nao deviam existir, cancele os agendamentos ' +
-          '(DELETE /agendamentos/:id) antes.',
+        `A turma "${turma.codigoTurma} — ${turma.nomeDisciplina}" já tem ` +
+          `${turma.totalAgendamentos} agendamento(s) confirmado(s) e não pode ser ` +
+          'apagada. Apagar aqui não desmarcaria prova nenhuma — só tiraria o nome ' +
+          'da turma do relatório. Se as provas não deviam existir, cancele os ' +
+          'agendamentos na tela de Agendamentos antes.',
       );
     }
 
@@ -159,7 +161,7 @@ export class TurmaAdminService {
     return {
       mensagem:
         `Turma "${turma.codigoTurma} — ${turma.nomeDisciplina}" removida do ` +
-        'catalogo. Tire a linha da planilha tambem: o proximo upload do CSV a ' +
+        'catálogo. Tire a linha da planilha também: o próximo envio do CSV a ' +
         'traria de volta.',
     };
   }

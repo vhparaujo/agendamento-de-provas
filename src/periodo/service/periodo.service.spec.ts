@@ -1115,7 +1115,7 @@ describe('PeriodoService — o mapa por formato', () => {
     );
 
     await expect(service.remover(90, 'admin@ucb.br')).rejects.toThrow(
-      /nao pode ser apagado/,
+      /não pode ser apagado/,
     );
   });
 

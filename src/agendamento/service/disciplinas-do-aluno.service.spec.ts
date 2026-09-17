@@ -183,7 +183,7 @@ describe('DisciplinasDoAlunoService', () => {
       const r = await service.cruzar(aluno(['EDUCACAO FISICA']), 'EAD');
 
       expect(ofertasDoPeriodo).not.toHaveBeenCalled();
-      expect(r.motivo).toMatch(/periodo letivo ainda nao foi configurado/);
+      expect(r.motivo).toMatch(/período letivo ainda não foi configurado/);
     });
 
     it('aluno sem oferta no semestre recebe o motivo, nao lista vazia sem explicacao', async () => {
@@ -256,7 +256,7 @@ describe('DisciplinasDoAlunoService', () => {
     /**
      * Sem turma clicada nao ha de onde tirar a lista. O que NAO pode acontecer e
      * devolver "nenhuma disciplina sua aparece no periodo letivo vigente": isso
-     * manda o aluno a secretaria, e a secretaria procurar defeito no CSV de
+     * manda o aluno a administracao, e a administracao procurar defeito no CSV de
      * turmas, por um problema que e da integracao.
      */
     it('sem turma clicada, o motivo diz que foi o Brightspace', async () => {
@@ -275,7 +275,7 @@ describe('DisciplinasDoAlunoService', () => {
       );
 
       expect(r.agendaveis).toEqual([]);
-      expect(r.motivo).toMatch(/Brightspace/);
+      expect(r.motivo).toMatch(/AVA/);
       expect(r.motivo).not.toMatch(/periodo letivo vigente/);
     });
 
@@ -381,7 +381,7 @@ describe('DisciplinasDoAlunoService', () => {
       expect(agendaveis).toHaveLength(0);
       expect(causa).toBe('FILTRO_DE_NOTA');
       expect(motivo).toContain('prova substitutiva');
-      expect(motivo).not.toMatch(/turma|CSV/i);
+      expect(motivo).not.toMatch(/CSV|planilha/i);
       // Os limites nao sao ditos ao aluno (decisao do cliente, 08/09/2026).
       expect(motivo).not.toMatch(/\d/);
     });
@@ -478,8 +478,8 @@ describe('DisciplinasDoAlunoService', () => {
       );
 
       expect(agendaveis).toHaveLength(0);
-      expect(motivo).toContain('sem nota lancada');
-      expect(motivo).toContain('formulario de suporte');
+      expect(motivo).toContain('sem nota lançada');
+      expect(motivo).toContain('formulário de suporte');
     });
 
     /**

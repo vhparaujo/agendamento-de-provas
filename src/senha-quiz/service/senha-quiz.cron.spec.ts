@@ -615,7 +615,7 @@ describe('SenhaQuizCron', () => {
 
     /**
      * A grade de grupos (14/09/2026), o mesmo bug de 25/08/2026 num campo novo:
-     * a secretaria corrige o grupo do dia depois do disparo das 12:01. A JANELA
+     * a administracao corrige o grupo do dia depois do disparo das 12:01. A JANELA
      * nao mudou de versao, entao so a celula na chave libera o novo disparo.
      */
     it('corrigir o grupo do dia libera um novo disparo HOJE', async () => {

@@ -316,11 +316,11 @@ export class ModalidadeDaTurmaService {
 
     if (!eleita) {
       throw new BadRequestException(
-        `Nenhum aluno de prova nesta turma este no formato informado. As ` +
-          `formatos em disputa sao: ${candidatas
+        `Nenhum aluno com prova nesta turma está no formato informado. Os ` +
+          `formatos em disputa são: ${candidatas
             .map((c) => `${c.codigo} (${c.reservas})`)
-            .join(', ')}. Escolher outra aplicaria uma janela de horario que ` +
-          'nenhum aluno da turma usa, e ai a prova nao abriria para ninguem.',
+            .join(', ')}. Escolher outra aplicaria uma janela de horário que ` +
+          'nenhum aluno da turma usa, e aí a prova não abriria para ninguém.',
       );
     }
 
@@ -404,16 +404,16 @@ export class ModalidadeDaTurmaService {
       select: { orgUnitId: true, codigoTurma: true, nomeDisciplina: true },
     });
 
-    if (!turma) throw new NotFoundException('Turma nao encontrada.');
+    if (!turma) throw new NotFoundException('Turma não encontrada.');
 
     // Turma sem orgUnitId nem chega ao lote: ela e uma das `naoResolvidas`, que
     // ficam sem senha e sem data. Desempatar o formato dela nao resolveria
     // nada, e a decisao gravada nunca seria lida (o mapa e por orgUnitId).
     if (!turma.orgUnitId) {
       throw new BadRequestException(
-        'Esta turma do CSV ainda nao casou com nenhuma oferta do semestre, ' +
-          'entao ela fica de fora do lote inteiro — nem senha ela recebe. ' +
-          'Resolva isso antes: escolher o formato aqui nao teria efeito.',
+        'Esta turma do CSV ainda não casou com nenhuma oferta do semestre, ' +
+          'então ela fica de fora do lote inteiro — nem senha ela recebe. ' +
+          'Resolva isso antes: escolher o formato aqui não teria efeito.',
       );
     }
 
@@ -445,17 +445,17 @@ export class ModalidadeDaTurmaService {
 
     if (decisao.situacao === 'ENCONTRADA') {
       throw new BadRequestException(
-        `Esta turma nao esta ambigua: todos os alunos com prova nela sao ` +
-          `${decisao.codigo}, e o formato ja foi derivado sozinha. So ha o ` +
-          'que escolher quando alunos de formatos diferentes tem prova na ' +
+        `Esta turma não está ambígua: todos os alunos com prova nela são ` +
+          `${decisao.codigo}, e o formato já foi definido sozinho. Só há o ` +
+          'que escolher quando alunos de formatos diferentes têm prova na ' +
           'mesma turma.',
       );
     }
 
     throw new BadRequestException(
       'Nenhum agendamento confirmado aponta para esta turma nesta rodada, ' +
-        'entao nao ha formato nenhum para escolher — nao e ambiguidade, e ' +
-        'ausencia. Se o prazo de agendamento ainda esta aberto, confira de ' +
+        'então não há formato nenhum para escolher — não é ambiguidade, é ' +
+        'ausência. Se o prazo de agendamento ainda está aberto, confira de ' +
         'novo depois do fechamento.',
     );
   }
@@ -506,8 +506,8 @@ export class ModalidadeDaTurmaService {
         candidatas: [],
         detalhe:
           'Nenhum agendamento confirmado aponta para esta turma na rodada ' +
-          'vigente, entao nao ha de onde derivar o formato. Ou ninguem ' +
-          'agendou ainda, ou a turma do CSV nao tem prova nesta rodada.',
+          'vigente, então não há de onde derivar o formato. Ou ninguém ' +
+          'agendou ainda, ou a turma do CSV não tem prova nesta rodada.',
       };
     }
 
@@ -551,12 +551,12 @@ export class ModalidadeDaTurmaService {
         // ja apareceu resolvida na conferencia de ontem, e sumir do painel sem
         // explicacao seria a pior versao deste aviso.
         detalhe:
-          `Alunos de ${contagens.length} formatos tem prova nesta turma: ` +
-          `${detalhado}. O questionario tem uma janela so, entao nenhuma foi ` +
+          `Alunos de ${contagens.length} formatos têm prova nesta turma: ` +
+          `${detalhado}. O questionário tem uma janela só, então nenhuma foi ` +
           'escolhida.' +
           (escolha
             ? ` A escolha anterior (${escolha.codigo}, de ${escolha.escolhidaPor}) ` +
-              'nao vale mais: nenhum aluno desse formato tem prova aqui. ' +
+              'não vale mais: nenhum aluno desse formato tem prova aqui. ' +
               'Escolha de novo.'
             : ''),
       };

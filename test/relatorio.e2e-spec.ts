@@ -553,8 +553,8 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
       // Sem o BOM, o Excel em Windows le "Câmpus" como "CÃ¢mpus".
       expect(res.text.charCodeAt(0)).toBe(0xfeff);
       expect(res.text.split('\r\n')[0]).toBe(
-        '﻿Matricula;Aluno;E-mail;Curso;Situação do Curso;Formato;Polo;' +
-          'Rodada;Data da prova;Inicio;Fim;Sala;Status;Agendado em;Agendado por',
+        '﻿Matrícula;Aluno;E-mail;Curso;Situação do Curso;Formato;Polo;' +
+          'Rodada;Data da prova;Início;Fim;Sala;Status;Agendado em;Agendado por',
       );
     });
 
@@ -645,7 +645,7 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
       }
     });
 
-    // O motivo de o relatorio existir: a secretaria liga para quem falta.
+    // O motivo de o relatorio existir: a administracao liga para quem falta.
     it('traz TAMBEM quem nunca agendou, como "Não Agendado"', async () => {
       const res = await comoAdmin(
         api().get(`/api/agendamentos/exportacao?poloId=${poloId}`),

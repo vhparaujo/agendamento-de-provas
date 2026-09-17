@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto';
 import type { Request, Response } from 'express';
 import { AuditoriaService } from '../service/auditoria.service';
 import { extrairAtor, extrairIp } from '../requisicao.util';
+import { corpoAmigavel } from './mensagens-amigaveis';
 
 /**
  * Filtro global. Faz duas coisas que a resposta padrao do Nest nao faz:
@@ -22,7 +23,8 @@ import { extrairAtor, extrairIp } from '../requisicao.util';
  *    reporta o id, o time acha a linha — sem expor internals do servidor.
  *
  * Erros de negocio (400/404/409...) passam intactos: a mensagem deles E o
- * contrato com o front.
+ * contrato com o front. So as mensagens automaticas do Nest/class-validator,
+ * em ingles, sao trocadas por texto para leigo (`mensagens-amigaveis.ts`).
  */
 @Catch()
 export class ExcecoesFilter implements ExceptionFilter {
@@ -55,13 +57,14 @@ export class ExcecoesFilter implements ExceptionFilter {
 
     this.auditarSeRelevante(status, excecao, contexto);
 
-    res
-      .status(status)
-      .json(
-        excecao instanceof HttpException
-          ? excecao.getResponse()
-          : { statusCode: status, message: 'Erro' },
-      );
+    res.status(status).json(
+      excecao instanceof HttpException
+        ? corpoAmigavel(excecao.getResponse(), status)
+        : {
+            statusCode: status,
+            message: 'Não foi possível concluir. Tente de novo.',
+          },
+    );
   }
 
   /**
@@ -108,7 +111,9 @@ export class ExcecoesFilter implements ExceptionFilter {
 
     res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
       statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
-      message: 'Erro interno. Informe o codigo abaixo ao suporte.',
+      message:
+        'Ocorreu um erro inesperado. Tente de novo em instantes; se continuar, ' +
+        'informe ao suporte o código abaixo.',
       erroId,
     });
   }

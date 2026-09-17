@@ -33,7 +33,7 @@ export class CriarSalaDto {
     typeof value === 'string' ? value.trim() : value,
   )
   @IsString()
-  @IsNotEmpty({ message: 'nome e obrigatorio' })
+  @IsNotEmpty({ message: 'Informe o nome da sala.' })
   @MaxLength(191)
   nome!: string;
 

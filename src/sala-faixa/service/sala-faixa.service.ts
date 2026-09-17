@@ -44,7 +44,11 @@ export class SalaFaixaService {
       },
     });
 
-    if (!oferta) throw new NotFoundException(`Oferta ${id} nao encontrada`);
+    if (!oferta) {
+      throw new NotFoundException(
+        'Sala da faixa não encontrada. Ela pode ter sido retirada; atualize a página.',
+      );
+    }
 
     return {
       id: oferta.id,
@@ -83,13 +87,17 @@ export class SalaFaixaService {
       },
     });
 
-    if (!oferta) throw new NotFoundException(`Oferta ${id} nao encontrada`);
+    if (!oferta) {
+      throw new NotFoundException(
+        'Sala da faixa não encontrada. Ela pode ter sido retirada; atualize a página.',
+      );
+    }
 
     if (dados.vagas !== undefined) {
       if (dados.vagas > oferta.sala.capacidade) {
         throw new BadRequestException(
           `A sala "${oferta.sala.nome}" tem ${oferta.sala.capacidade} lugares; ` +
-            `nao da para ofertar ${dados.vagas} vagas.`,
+            `não é possível oferecer ${dados.vagas} vagas.`,
         );
       }
 
@@ -97,9 +105,9 @@ export class SalaFaixaService {
       // instantaneo — e sem ninguem para desalocar automaticamente.
       if (dados.vagas < oferta._count.agendamentos) {
         throw new ConflictException(
-          `Ja ha ${oferta._count.agendamentos} agendamento(s) nesta sala; ` +
-            `nao da para reduzir para ${dados.vagas} vagas. ` +
-            'Remaneje os alunos antes de diminuir.',
+          `Já há ${oferta._count.agendamentos} agendamento(s) nesta sala; ` +
+            `não é possível reduzir para ${dados.vagas} vagas. ` +
+            'Remaneje os alunos para outra sala antes de diminuir.',
         );
       }
     }
@@ -117,8 +125,8 @@ export class SalaFaixaService {
 
       if (conflito) {
         throw new ConflictException(
-          `A ordem ${dados.ordem} ja e da sala "${conflito.sala.nome}" na ` +
-            `formato ${oferta.modalidade.nome} desta faixa.`,
+          `A ordem ${dados.ordem} já é da sala "${conflito.sala.nome}" no ` +
+            `formato ${oferta.modalidade.nome} desta faixa. Escolha outra ordem.`,
         );
       }
     }
@@ -136,15 +144,15 @@ export class SalaFaixaService {
 
     if (oferta.ocupadas > 0) {
       throw new ConflictException(
-        `Esta sala ja tem ${oferta.ocupadas} aluno(s) agendado(s) e nao pode sair da faixa. ` +
-          'Remaneje os agendamentos antes de remover a oferta.',
+        `Esta sala já tem ${oferta.ocupadas} aluno(s) agendado(s) e não pode sair da faixa. ` +
+          'Remaneje os alunos para outra sala antes de tirá-la.',
       );
     }
 
     await this.prisma.salaFaixa.delete({ where: { id } });
 
     return {
-      mensagem: `Sala "${oferta.salaNome}" removida da faixa ${oferta.faixaId}`,
+      mensagem: `Sala "${oferta.salaNome}" retirada da faixa.`,
     };
   }
 }

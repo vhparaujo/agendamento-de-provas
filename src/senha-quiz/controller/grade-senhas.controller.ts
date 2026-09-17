@@ -49,12 +49,12 @@ import { PeriodoService } from '../../periodo/service/periodo.service';
 import { BadRequestException } from '@nestjs/common';
 
 /**
- * A grade dia x turno que a secretaria preenche, e a pre-visualizacao do que
+ * A grade dia x turno que a administracao preenche, e a pre-visualizacao do que
  * o lote vai tocar.
  *
  * **A senha nunca sai na listagem.** `GET /senhas-de-prova` devolve `temSenha`;
  * o valor so vem de `/:id/revelar`, que e auditada em toda chamada. A grade fica
- * aberta num monitor compartilhado da secretaria — revelar precisa ser um ATO,
+ * aberta num monitor compartilhado da administração — revelar precisa ser um ATO,
  * e um ato com rastro.
  */
 @ApiTags(TAGS.SENHAS_QUIZ)
@@ -85,7 +85,7 @@ export class GradeSenhasController {
   listar(@Query('de') de?: string, @Query('ate') ate?: string) {
     if (!de || !ate) {
       throw new BadRequestException(
-        'Informe `de` e `ate` (AAAA-MM-DD): a grade e sempre de um intervalo.',
+        'Informe as datas De e Até: a grade é sempre de um intervalo.',
       );
     }
 
@@ -261,7 +261,7 @@ export class GradeSenhasController {
 
     if (!periodoLetivoIds || !rodada) {
       throw new BadRequestException(
-        'Nenhum periodo letivo cadastrado. Sem ele nao ha como separar as turmas ' +
+        'Nenhum período de agendamento cadastrado. Sem ele não há como separar as turmas ' +
           'deste semestre das dos semestres passados.',
       );
     }
@@ -274,7 +274,7 @@ export class GradeSenhasController {
     summary: 'Qual questionario o lote procura',
     description:
       'Fica no BANCO e nao no `.env` porque o nome da prova muda por semestre e a ' +
-      'secretaria precisa troca-lo sem deploy.\n\n' +
+      'administracao precisa troca-lo sem deploy.\n\n' +
       '**Nao ha valor padrao.** Enquanto ninguem escolher, `nomeQuiz` vem nulo, ' +
       '`configurado` vem `false` e o lote recusa comecar — um alvo que ja viesse ' +
       'preenchido faria o lote rodar com o nome errado, em silencio, em toda ' +
@@ -290,7 +290,7 @@ export class GradeSenhasController {
     summary: 'A que horas o cron aplica cada turno',
     description:
       'Saiu do `.env` em 19/08/2026: o calendario dos turnos muda por semestre, e ' +
-      'quem o conhece e a secretaria. Turno sem horario **nao dispara** — e assim ' +
+      'quem o conhece e a administração. Turno sem horario **nao dispara** — e assim ' +
       'que sabado a noite, que nao tem prova, fica de fora.\n\n' +
       '`cronHabilitado` e `toleranciaMin` vem do `.env` e sao **so leitura**: ' +
       'a tela precisa poder avisar que esta instancia nao dispara nada, senao o ' +
@@ -394,7 +394,7 @@ export class GradeSenhasController {
     summary: 'Revela a senha de uma celula (auditado)',
     description:
       'A **unica** rota que devolve o valor. Existe separada da listagem de ' +
-      'proposito: a grade fica aberta num monitor compartilhado da secretaria, e ' +
+      'proposito: a grade fica aberta num monitor compartilhado da administracao, e ' +
       'ver a senha precisa ser um ato deliberado.\n\n' +
       'Toda chamada vira `SENHA_QUIZ_REVELADA` no log de seguranca, com quem ' +
       'pediu e qual celula.',

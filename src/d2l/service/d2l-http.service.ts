@@ -135,8 +135,11 @@ export class D2lHttpService {
 
     if (!cfg.habilitado || faltando.length > 0) {
       throw new BadGatewayException(
-        'Integracao D2L desligada ou incompleta' +
-          (faltando.length ? `: faltam ${faltando.join(', ')}` : '.'),
+        'A integração com o AVA está desligada ou incompleta neste ' +
+          'servidor. Avise o suporte técnico.' +
+          (faltando.length
+            ? ` Detalhe técnico: faltam ${faltando.join(', ')}.`
+            : ''),
       );
     }
 
@@ -218,7 +221,7 @@ export class D2lHttpService {
       const motivo = erro instanceof Error ? erro.message : String(erro);
 
       throw new BadGatewayException(
-        `Nao foi possivel ${this.verbo(metodo)} ${opcoes.oQue} no Brightspace: ${motivo}`,
+        `Não foi possível ${this.verbo(metodo)} ${opcoes.oQue} no AVA (falha de conexão). Detalhe técnico: ${motivo}`,
       );
     }
 
@@ -241,14 +244,14 @@ export class D2lHttpService {
 
       if (resposta.status === 404) {
         throw new NaoEncontradoNoBrightspace(
-          `O Brightspace nao encontrou ${opcoes.oQue} (404).` +
+          `O AVA não encontrou ${opcoes.oQue}.` +
             (opcoes.dicaDe404 ? ` ${opcoes.dicaDe404}` : ''),
         );
       }
 
       throw new RecusaDoBrightspace(
-        `O Brightspace recusou a ${this.substantivo(metodo)} de ${opcoes.oQue} ` +
-          `(HTTP ${resposta.status}). ${corpo}`.trim(),
+        `O AVA recusou a ${this.substantivo(metodo)} de ${opcoes.oQue}. ` +
+          `Detalhe técnico: HTTP ${resposta.status} ${corpo}`.trim(),
         resposta.status,
       );
     }
@@ -284,7 +287,7 @@ export class D2lHttpService {
   }
 
   private substantivo(metodo: string): string {
-    return metodo === 'GET' ? 'leitura' : 'gravacao';
+    return metodo === 'GET' ? 'leitura' : 'gravação';
   }
 
   /**

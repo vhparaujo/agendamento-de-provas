@@ -512,8 +512,8 @@ describe('Estrutura: polo, sala, faixa e oferta (e2e)', () => {
         })
         .expect(409);
 
-      expect(res.body.message).toMatch(/nao pode receber duas provas/);
-      expect(res.body.message).toMatch(new RegExp(`faixa ${manhaId}`));
+      expect(res.body.message).toMatch(/não pode receber duas provas/);
+      expect(res.body.message).toMatch(new RegExp(`faixa #${manhaId}`));
     });
 
     it('ACEITA a sala numa faixa que comeca onde a outra acaba', async () => {
@@ -560,7 +560,7 @@ describe('Estrutura: polo, sala, faixa e oferta (e2e)', () => {
         .send({ salaId: salaGrandeId, modalidadeId: modular.id })
         .expect(409);
 
-      expect(res.body.message).toMatch(/nao pode receber duas provas/);
+      expect(res.body.message).toMatch(/não pode receber duas provas/);
 
       await auth(api().delete(`/api/faixas/${outra.body.id}`)).expect(200);
     });
@@ -586,7 +586,7 @@ describe('Estrutura: polo, sala, faixa e oferta (e2e)', () => {
         .send({ horaInicio: '09:00', horaFim: '10:30' })
         .expect(409);
 
-      expect(res.body.message).toMatch(/nao pode receber duas provas/);
+      expect(res.body.message).toMatch(/não pode receber duas provas/);
     });
 
     it('RECUSA MOVER a faixa para o DIA da outra, no mesmo horario', async () => {

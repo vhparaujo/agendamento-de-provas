@@ -27,7 +27,7 @@ export class CelulaDeGrupoDto {
       'O dia da PROVA (AAAA-MM-DD). Para a janela que dispara a noite, e o dia ' +
       'SEGUINTE ao disparo — o mesmo dia que o questionario passa a ter.',
   })
-  @Matches(PADRAO_DIA, { message: 'data deve estar em AAAA-MM-DD' })
+  @Matches(PADRAO_DIA, { message: 'Informe uma data válida.' })
   data!: string;
 
   @ApiProperty({ example: 10, description: 'A janela (sessao) do formato.' })
@@ -106,7 +106,7 @@ export class CelulaDeGrupoResponseDto implements CelulaDeGrupo {
   })
   versao!: number;
 
-  @ApiProperty({ example: 'secretaria@ucb.br' })
+  @ApiProperty({ example: 'admin@ucb.br' })
   atualizadoPor!: string;
 
   @ApiProperty({ example: '2026-09-14T12:00:00.000Z' })

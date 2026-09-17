@@ -231,11 +231,11 @@ export class PortalController {
     description:
       'A **unica** alteracao que o aluno faz na propria prova: nao existe ' +
       'cancelamento pelo portal (decisao de 17/08/2026) — quem precisa desmarcar ' +
-      'procura a secretaria, que tem `DELETE /agendamentos/:id`.\n\n' +
+      'procura a administracao, que tem `DELETE /agendamentos/:id`.\n\n' +
       'A troca e **atomica**: se o horario novo nao tiver vaga, voce continua com ' +
       'o que ja tinha. Cancelar e marcar de novo, por conta propria, poderia ' +
       'deixar o aluno sem nenhum horario no meio do caminho.\n\n' +
-      'Vale enquanto o prazo estiver aberto. Depois disso, so a secretaria remaneja.',
+      'Vale enquanto o prazo estiver aberto. Depois disso, so a administracao remaneja.',
   })
   @ApiParam({ name: 'id', type: Number, example: 501 })
   @ApiOkResponse({ type: AgendamentoConfirmadoDto })
@@ -264,7 +264,7 @@ export class PortalController {
    * segundos, e o aluno que so queria mudar de dia fica de fora — chegando ao
    * balcao sem horario nenhum, quando a troca resolvia o caso dele sem risco.
    *
-   * Desmarcar de verdade passou a ser decisao da secretaria, em
+   * Desmarcar de verdade passou a ser decisao da administracao, em
    * `DELETE /agendamentos/:id`, que grava o e-mail de quem cancelou no
    * historico. Nao reintroduza esta rota sem o cliente pedir: tirar o botao da
    * tela e deixar o endpoint de pe seria a mesma regra valendo em um lugar so.

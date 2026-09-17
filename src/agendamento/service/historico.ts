@@ -15,7 +15,7 @@ export interface AutorDaOperacao {
  * QUEM MEXEU NO AGENDAMENTO
  * ============================================================================
  * Serve para uma conversa concreta no balcao: o aluno diz que mudaram a prova
- * dele de horario, e a secretaria precisa mostrar quem mudou — ele proprio ou um
+ * dele de horario, e a administração precisa mostrar quem mudou — ele proprio ou um
  * administrador.
  *
  * Por isso o registro e gravado na MESMA transacao da alteracao. Fora dela, uma
@@ -85,7 +85,7 @@ export const AUTOR_ADMIN = (email = 'administrador'): AutorDaOperacao => ({
  * O "e-mail" que o lote compulsorio grava no historico.
  *
  * Constante, e nao string solta nos dois lados, porque a exportacao LE este
- * valor para separar "agendado pelo compulsorio" de "agendado pela secretaria
+ * valor para separar "agendado pelo compulsorio" de "agendado pela administracao
  * no balcao" — os dois sao `ADMIN`, e so a identificacao os distingue.
  */
 export const IDENTIFICACAO_COMPULSORIO = 'compulsorio';

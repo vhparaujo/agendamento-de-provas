@@ -83,7 +83,11 @@ export class IniciarSenhaQuizDto {
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(1000)
-  @Matches(/^\d+$/, { each: true, message: 'orgUnitIds deve ter so numeros' })
+  @Matches(/^\d+$/, {
+    each: true,
+    message:
+      'Uma das turmas escolhidas tem código inválido. Atualize a página.',
+  })
   orgUnitIds?: string[];
 
   /**

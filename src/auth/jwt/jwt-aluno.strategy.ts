@@ -22,7 +22,9 @@ export class JwtAlunoStrategy extends PassportStrategy(
 
   validate(payload: AlunoJwtPayload): AlunoJwtPayload {
     if (payload.perfil !== Perfil.ALUNO) {
-      throw new UnauthorizedException('Token nao pertence a um aluno');
+      throw new UnauthorizedException(
+        'Sua sessão não é válida no portal do aluno. Volte ao AVA e abra o link da prova de novo.',
+      );
     }
 
     return payload;

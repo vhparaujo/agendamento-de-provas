@@ -10,6 +10,9 @@ import { PrismaService } from '../../database/prisma.service';
 import { Prisma, StatusAgendamento } from '../../generated/prisma/client';
 import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 
+const PERIODO_NAO_ENCONTRADO =
+  'Período não encontrado. Ele pode ter sido apagado; atualize a página.';
+
 /**
  * OS CRITERIOS DE NOTA QUE HABILITAM A RODADA — a regra da substitutiva.
  *
@@ -222,7 +225,7 @@ export class PeriodoService {
         // aqui liberaria a declaracao num banco recem-migrado.
         encerrado: false,
         motivo:
-          'O periodo de agendamento ainda nao foi configurado. Procure a secretaria academica.',
+          'O período de agendamento ainda não foi configurado. Tente de novo mais tarde.',
       };
     }
 
@@ -452,12 +455,12 @@ export class PeriodoService {
     if (!situacao.encerrado) {
       throw new ForbiddenException(
         situacao.aberto
-          ? 'A declaracao fica disponivel quando o prazo de agendamento ' +
-              `encerrar, em ${formatar(situacao.dataFechamento!)}. Ate la voce ` +
-              'ainda pode trocar de horario, e o documento diria uma data que ' +
+          ? 'A declaração fica disponível quando o prazo de agendamento ' +
+              `encerrar, em ${formatar(situacao.dataFechamento!)}. Até lá você ` +
+              'ainda pode trocar de horário, e o documento diria uma data que ' +
               'pode mudar.'
           : (situacao.motivo ??
-              'O periodo de agendamento ainda nao encerrou. Procure a secretaria academica.'),
+              'O período de agendamento ainda não encerrou. A declaração fica disponível depois do fim do prazo.'),
       );
     }
 
@@ -577,9 +580,9 @@ export class PeriodoService {
     dataFechamento: string;
   }): Promise<PeriodoAdmin> {
     const abertura = dados.dataAbertura
-      ? exigirData(dados.dataAbertura, 'dataAbertura')
+      ? exigirData(dados.dataAbertura, 'Data de abertura')
       : null;
-    const fechamento = exigirData(dados.dataFechamento, 'dataFechamento');
+    const fechamento = exigirData(dados.dataFechamento, 'Data de fechamento');
 
     validarJanela(abertura, fechamento);
 
@@ -618,9 +621,9 @@ export class PeriodoService {
       atual.rodada === rodada
     ) {
       throw new ConflictException(
-        `Ja existe um periodo vigente para o periodo letivo ${dados.periodoLetivoId} ` +
-          `na rodada ${rodada} (id ${atual.id}). Ajuste aquele em vez de criar ` +
-          'outro — ou informe outra `rodada` se esta e a proxima prova do mesmo semestre.',
+        `Já existe um período vigente para o período letivo ${dados.periodoLetivoId} ` +
+          `na rodada ${rodada} (período #${atual.id}). Edite aquele período em vez de ` +
+          'criar outro — ou escolha outra rodada, se esta for a próxima prova do mesmo semestre.',
       );
     }
 
@@ -689,7 +692,7 @@ export class PeriodoService {
 
       if (!modalidade) {
         throw new BadRequestException(
-          `Formato "${linha.modalidadeCodigo}" nao existe. Os cadastrados sao: ` +
+          `Formato "${linha.modalidadeCodigo}" não existe. Os cadastrados são: ` +
             `${modalidades.map((m) => m.codigo).join(', ')}.`,
         );
       }
@@ -698,8 +701,8 @@ export class PeriodoService {
 
       if (!letivo) {
         throw new BadRequestException(
-          `Informe o periodo letivo do formato ${modalidade.codigo}. Sem ele, ` +
-            'os alunos dela nao teriam disciplina nenhuma para agendar.',
+          `Informe o período letivo do formato ${modalidade.codigo}. Sem ele, ` +
+            'os alunos desse formato não teriam disciplina nenhuma para agendar.',
         );
       }
 
@@ -710,10 +713,10 @@ export class PeriodoService {
 
     if (faltando.length > 0) {
       throw new BadRequestException(
-        `Falta o periodo letivo de: ${faltando.map((m) => m.codigo).join(', ')}. ` +
-          'O mapa tem de cobrir todos os formatos — a que ficar de fora cai no ' +
-          'periodo letivo principal em silencio, e os alunos dela recebem "nenhuma ' +
-          'disciplina sua aparece no periodo letivo vigente" sem nada indicando a causa.',
+        `Falta o período letivo de: ${faltando.map((m) => m.codigo).join(', ')}. ` +
+          'Informe o período letivo de todos os formatos — o que ficar de fora ' +
+          'usaria o período letivo principal sem aviso, e os alunos dele não ' +
+          'encontrariam disciplina para agendar.',
       );
     }
 
@@ -755,7 +758,7 @@ export class PeriodoService {
       include: MAPA_DA_JANELA,
     });
 
-    if (!periodo) throw new NotFoundException(`Periodo ${id} nao encontrado`);
+    if (!periodo) throw new NotFoundException(PERIODO_NAO_ENCONTRADO);
 
     const rodada = dados.rodada?.trim() || undefined;
 
@@ -789,10 +792,10 @@ export class PeriodoService {
         ? periodo.dataAbertura
         : dados.dataAbertura === null
           ? null
-          : exigirData(dados.dataAbertura, 'dataAbertura');
+          : exigirData(dados.dataAbertura, 'Data de abertura');
 
     const fechamento = dados.dataFechamento
-      ? exigirData(dados.dataFechamento, 'dataFechamento')
+      ? exigirData(dados.dataFechamento, 'Data de fechamento')
       : periodo.dataFechamento;
 
     validarJanela(abertura, fechamento);
@@ -815,7 +818,7 @@ export class PeriodoService {
         await this.exigirJanelaVazia(
           tx,
           periodo,
-          'o periodo letivo por formato',
+          'o período letivo por formato',
         );
 
         await tx.periodoLetivoModalidade.deleteMany({
@@ -874,7 +877,7 @@ export class PeriodoService {
    * O que ela FAZ e deixar rastro, porque a consequencia e invisivel na tela:
    * quem estava elegivel ontem pode nao estar hoje, e quem ja agendou continua
    * com a prova marcada — inclusive quem, pela faixa nova, nao poderia te-la.
-   * Essa lista e trabalho da secretaria, e ela precisa saber que existe.
+   * Essa lista e trabalho da administracao, e ela precisa saber que existe.
    */
   private async avisarSeAJanelaJaTemReserva(
     periodo: JanelaComMapa,
@@ -934,7 +937,7 @@ export class PeriodoService {
         include: MAPA_DA_JANELA,
       });
 
-      if (!periodo) throw new NotFoundException(`Periodo ${id} nao encontrado`);
+      if (!periodo) throw new NotFoundException(PERIODO_NAO_ENCONTRADO);
 
       /**
        * Aqui a contagem inclui CANCELADO, ao contrario do `totalAgendamentos`
@@ -962,11 +965,11 @@ export class PeriodoService {
 
       if (agendamentos > 0) {
         throw new ConflictException(
-          `O periodo letivo ${periodo.periodoLetivoId} (rodada ${periodo.rodada}) ` +
-            `ja tem ${agendamentos} agendamento(s) (incluindo cancelados) e nao ` +
-            'pode ser apagado — as provas ficariam sem a janela que as identifica, ' +
-            'e sumiriam do portal do aluno. Para encerrar o prazo, use PATCH com ' +
-            'dataFechamento no passado ou aberto=false; a linha continua no historico.',
+          `O período letivo ${periodo.periodoLetivoId} (rodada ${periodo.rodada}) ` +
+            `já tem ${agendamentos} agendamento(s), contando os cancelados, e não ` +
+            'pode ser apagado — as provas ficariam sem o período que as identifica ' +
+            'e sumiriam do portal do aluno. Para encerrar o prazo, use Fechar ou ' +
+            'mude a data de fechamento em Editar; o período continua no histórico.',
         );
       }
 
@@ -996,7 +999,7 @@ export class PeriodoService {
       });
 
       return {
-        mensagem: `Periodo ${id} (${periodo.descricao || periodo.periodoLetivoId}) removido`,
+        mensagem: `Período #${id} (${periodo.descricao || periodo.periodoLetivoId}) apagado`,
         vigenteAgora: vigente,
       };
     });
@@ -1045,11 +1048,12 @@ export class PeriodoService {
     if (agendamentos === 0) return;
 
     throw new ConflictException(
-      `Esta janela ja tem ${agendamentos} agendamento(s) gravado(s) na rodada ` +
-        `"${periodo.rodada}" (incluindo cancelados), e o que a reserva grava e uma ` +
-        `fotografia: mudar ${oQueMudou} agora nao mexeria em nenhuma delas. As ` +
-        'provas ficariam orfas — sumiriam do portal do aluno e voltariam a contar ' +
-        'como "nao agendado". So da para corrigir enquanto a janela estiver vazia.',
+      `Esta janela já tem ${agendamentos} agendamento(s) na rodada ` +
+        `"${periodo.rodada}", contando os cancelados. Cada agendamento guarda uma ` +
+        `fotografia do momento em que foi feito, então mudar ${oQueMudou} agora ` +
+        'não atualizaria nenhum deles: as provas sumiriam do portal do aluno e ' +
+        'voltariam a contar como "não agendado". Só é possível corrigir enquanto ' +
+        'a janela estiver vazia.',
     );
   }
 
@@ -1057,7 +1061,7 @@ export class PeriodoService {
     const todos = await this.listar();
     const periodo = todos.find((p) => p.id === id);
 
-    if (!periodo) throw new NotFoundException(`Periodo ${id} nao encontrado`);
+    if (!periodo) throw new NotFoundException(PERIODO_NAO_ENCONTRADO);
 
     return periodo;
   }
@@ -1177,7 +1181,7 @@ function exigirData(valor: string, campo: string): Date {
 
   if (Number.isNaN(data.getTime())) {
     throw new BadRequestException(
-      `${campo} invalida: "${valor}". Use ISO 8601 (ex: 2026-08-18T23:59:00-03:00).`,
+      `${campo} inválida. Confira a data e a hora informadas.`,
     );
   }
 
@@ -1187,7 +1191,7 @@ function exigirData(valor: string, campo: string): Date {
 function validarJanela(abertura: Date | null, fechamento: Date): void {
   if (abertura && abertura >= fechamento) {
     throw new BadRequestException(
-      'dataAbertura precisa ser antes de dataFechamento.',
+      'A data de abertura precisa ser antes da data de fechamento.',
     );
   }
 }
@@ -1275,20 +1279,20 @@ function exigirFiltroDeNotaValido(
 
   if (!temN1 || !temFinal) {
     throw new BadRequestException(
-      'notaMinimaN1 e notaMaximaFinal andam juntas: informe as duas para ' +
+      'A N1 mínima e a nota final máxima andam juntas: informe as duas para ' +
         'filtrar por nota (a substitutiva), ou nenhuma para a janela cobrir ' +
-        'todas as disciplinas do semestre. Meio criterio seria lido como ' +
-        '"sem filtro", e a substitutiva abriria para o curso inteiro.',
+        'todas as disciplinas do semestre. Só uma delas faria a substitutiva ' +
+        'abrir para o curso inteiro.',
     );
   }
 
   for (const [campo, valor] of [
-    ['notaMinimaN1', minimaN1],
-    ['notaMaximaFinal', maximaFinal],
+    ['A N1 mínima', minimaN1],
+    ['A nota final máxima', maximaFinal],
   ] as const) {
     if (!Number.isFinite(valor) || valor < 0 || valor > NOTA_MAXIMA_POSSIVEL) {
       throw new BadRequestException(
-        `${campo} precisa ser um numero entre 0 e ${NOTA_MAXIMA_POSSIVEL} ` +
+        `${campo} precisa ser um número entre 0 e ${NOTA_MAXIMA_POSSIVEL} ` +
           `(recebido: ${String(valor)}).`,
       );
     }

@@ -65,7 +65,7 @@ describe('separarDisciplina', () => {
 });
 
 describe('mapRowToTurma', () => {
-  it('le a planilha da secretaria', () => {
+  it('le a planilha da administracao', () => {
     expect(mapRowToTurma(linha(BASE))).toEqual({
       ok: true,
       turma: {
@@ -109,7 +109,7 @@ describe('mapRowToTurma', () => {
       const r = mapRowToTurma(linha({ ...BASE, 'Código da Turma': '' }));
 
       expect(r.ok).toBe(false);
-      expect(r.ok === false && r.motivo).toMatch(/codigo da turma/);
+      expect(r.ok === false && r.motivo).toMatch(/código da turma/);
     });
 
     it('rejeita com motivo quando falta a disciplina', () => {

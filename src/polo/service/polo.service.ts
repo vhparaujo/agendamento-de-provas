@@ -70,7 +70,11 @@ export class PoloService {
       include: CONTAGENS,
     });
 
-    if (!polo) throw new NotFoundException(`Polo ${id} nao encontrado`);
+    if (!polo) {
+      throw new NotFoundException(
+        'Polo não encontrado. Ele pode ter sido apagado; atualize a página.',
+      );
+    }
 
     const { _count, ...dados } = polo;
 
@@ -101,7 +105,7 @@ export class PoloService {
     const jaExiste = await this.prisma.polo.findUnique({ where: { nome } });
 
     if (jaExiste?.ativo) {
-      throw new ConflictException(`Ja existe um polo chamado "${nome}"`);
+      throw new ConflictException(`Já existe um polo chamado "${nome}"`);
     }
 
     if (jaExiste) {
@@ -176,19 +180,19 @@ export class PoloService {
       const usos = [
         totalSalas > 0 && `${totalSalas} sala(s)`,
         totalFaixas > 0 && `${totalFaixas} faixa(s)`,
-        totalAlunos > 0 && `${totalAlunos} vinculo(s) de aluno`,
+        totalAlunos > 0 && `${totalAlunos} vínculo(s) de aluno`,
       ].filter((u): u is string => typeof u === 'string');
 
       throw new ConflictException(
-        `O polo "${polo.nome}" ja tem ${usos.join(', ')} e nao pode ser apagado. ` +
-          'Desative-o (PATCH ativo=false) para que ele nao receba salas nem ' +
-          'faixas novas sem perder o historico. Se o campus voltar a ter prova, ' +
-          'cadastre-o de novo pelo POST /polos com o mesmo nome — ele e reativado.',
+        `O polo "${polo.nome}" não pode ser apagado porque já tem ${usos.join(', ')}. ` +
+          'Em vez de apagar, desative o polo: ele deixa de receber salas e ' +
+          'faixas novas, e o histórico é preservado. Se o campus voltar a ter ' +
+          'prova, cadastre-o de novo com o mesmo nome para reativá-lo.',
       );
     }
 
     await this.prisma.polo.delete({ where: { id } });
 
-    return { mensagem: `Polo "${polo.nome}" removido` };
+    return { mensagem: `Polo "${polo.nome}" apagado.` };
   }
 }

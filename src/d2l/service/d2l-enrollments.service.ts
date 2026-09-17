@@ -105,7 +105,7 @@ const MAX_PAGINAS = 100;
  * Por quanto tempo a arvore do periodo letivo fica em cache.
  *
  * A lista de ofertas de um semestre e IGUAL para todos os alunos e muda no ritmo
- * da secretaria (dias), nao no ritmo dos acessos. Sem cache, cada abertura do
+ * da administracao (dias), nao no ritmo dos acessos. Sem cache, cada abertura do
  * portal baixaria a estrutura inteira do semestre — a chamada mais cara das duas
  * — para descartar 99% dela.
  *
@@ -207,7 +207,7 @@ export class D2lEnrollmentsService {
    *
    * **404 aqui e estado ESPERADO, nao falha** — e a resposta do tenant para
    * matricula inexistente (`{"Errors":[{"Message":"Resource Not Found"}]}`).
-   * Um aluno pode estar na planilha da secretaria e nao ter conta no LMS. Por
+   * Um aluno pode estar na planilha da administracao e nao ter conta no LMS. Por
    * isso este e o unico ponto que pede `nuloEm404`.
    *
    * **O filtro do tenant e por igualdade, nao por prefixo** (verificado: um RA
@@ -220,7 +220,7 @@ export class D2lEnrollmentsService {
 
     const url = this.url(cfg, 'lp', 'users/', { orgDefinedId: matricula });
 
-    const dados = await this.pedir<UsuarioD2L[]>(url, 'usuario por matricula', {
+    const dados = await this.pedir<UsuarioD2L[]>(url, 'usuário por matrícula', {
       nuloEm404: true,
     });
 
@@ -374,7 +374,7 @@ export class D2lEnrollmentsService {
 
       const dados = await this.pedir<Descendente[] | PaginaDeOrgUnits>(
         url,
-        'periodos letivos',
+        'períodos letivos',
       );
 
       // Versoes antigas da API devolvem array puro, sem envelope de paginacao.
@@ -592,7 +592,7 @@ export class D2lEnrollmentsService {
       // 404 aqui quase sempre e id errado no cadastro — do periodo letivo ou do
       // aluno —, nao instabilidade. A mensagem diz onde procurar.
       dicaDe404:
-        'Confira o periodo letivo cadastrado e o UserId do aluno — ' +
+        'Confira o período letivo cadastrado e o UserId do aluno — ' +
         'ambos precisam existir neste tenant.',
     } as { oQue: string; nuloEm404: true; dicaDe404: string });
   }

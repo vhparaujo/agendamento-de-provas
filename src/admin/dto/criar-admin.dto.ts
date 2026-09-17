@@ -16,7 +16,7 @@ export class CriarAdminDto {
   @Transform(({ value }): unknown =>
     typeof value === 'string' ? value.trim().toLowerCase() : value,
   )
-  @IsEmail({}, { message: 'E-mail invalido' })
+  @IsEmail({}, { message: 'E-mail inválido.' })
   email!: string;
 
   @ApiPropertyOptional({ example: 'Maria da Silva', maxLength: 150 })
@@ -34,7 +34,7 @@ export class CriarAdminDto {
   })
   @IsOptional()
   @IsString()
-  @MinLength(8, { message: 'A senha deve ter ao menos 8 caracteres' })
+  @MinLength(8, { message: 'A senha deve ter ao menos 8 caracteres.' })
   @MaxLength(72)
   senha?: string;
 }

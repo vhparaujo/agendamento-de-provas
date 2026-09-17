@@ -19,7 +19,7 @@ import { PrismaClient } from '../src/generated/prisma/client';
  *
  * ⚠️ **Ele NAO sobrescreve janela existente.** A regra e do proprio
  * `seedJanelas`, e vale aqui: o admin edita os horarios na tela, e um seed que
- * sobrescrevesse devolveria o calendario semeado por cima do que a secretaria
+ * sobrescrevesse devolveria o calendario semeado por cima do que a administracao
  * acabou de ajustar. Ele CRIA o que falta e nao encosta no que existe — a saida
  * diz quantas foram criadas e quantas ficaram como estavam.
  *

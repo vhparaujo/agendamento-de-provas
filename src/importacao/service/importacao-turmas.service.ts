@@ -81,7 +81,7 @@ export class ImportacaoTurmasService {
                 linha: numero,
                 motivo:
                   `Turma "${turma.codigoTurma} — ${turma.nomeDisciplina}" repetida ` +
-                  `(ja veio na linha ${anterior}).`,
+                  `(já veio na linha ${anterior}).`,
               },
             };
           }

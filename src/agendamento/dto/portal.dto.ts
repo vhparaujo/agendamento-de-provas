@@ -212,7 +212,7 @@ export class DisciplinasAgendaveisDto implements DisciplinasDoVinculo {
 
   @ApiPropertyOptional({
     example:
-      'Nenhuma disciplina sua tem prova cadastrada neste periodo. Se voce tem prova, procure a secretaria academica.',
+      'Nenhuma disciplina sua tem prova cadastrada neste período. Se você tem prova, acesse o formulário de suporte disponível na sua turma no AVA.',
     description: 'Texto pronto para exibir quando `podeAgendar` for false.',
   })
   motivo?: string;
@@ -259,7 +259,7 @@ export class SituacaoPeriodoDto implements SituacaoPeriodo {
       'ATENCAO: a tela usa este campo como SINALIZADOR ("esta janela e a ' +
       'substitutiva"), e **nao** imprime os numeros. Por decisao do cliente ' +
       '(08/09/2026) os limites nao sao ditos ao aluno: a nota dele e o criterio ' +
-      'sao assunto com a secretaria, e a tela de agendamento so produziria ' +
+      'sao assunto com a administracao, e a tela de agendamento so produziria ' +
       'discussao sobre o numero com quem nao decide nada.',
   })
   filtroDeNota?: FiltroDeNota | null;

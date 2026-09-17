@@ -146,7 +146,7 @@ describe('exigirSalaLivreNoHorario', () => {
 
   it('a mensagem nomeia a sala, o horario e a faixa em conflito', () => {
     expect(() => exigirSalaLivreNoHorario(NOVA, [CONCORRENTE])).toThrow(
-      /Sala 1.*09:00 as 12:00.*faixa 42/s,
+      /Sala 1.*09:00 às 12:00.*faixa #42/s,
     );
   });
 

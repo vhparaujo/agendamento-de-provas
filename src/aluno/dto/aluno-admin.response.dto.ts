@@ -73,7 +73,7 @@ export class SituacaoNiopDto implements SituacaoNiop {
   @ApiProperty({ example: true })
   niop!: boolean;
 
-  @ApiProperty({ example: 'secretaria@ucb.br', nullable: true, type: String })
+  @ApiProperty({ example: 'admin@ucb.br', nullable: true, type: String })
   marcadoPor!: string | null;
 
   @ApiProperty({

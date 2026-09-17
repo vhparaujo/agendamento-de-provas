@@ -36,24 +36,24 @@ export interface DisciplinasParaAgendar {
    * O `motivo` e uma frase para o aluno ler, e comparar frase e a receita para
    * a regra silenciosamente parar de valer quando alguem melhorar o texto. Quem
    * usa isto e o compulsorio: `FILTRO_DE_NOTA` vira uma linha de relatorio que
-   * NAO manda a secretaria conferir o CSV de turmas, porque nao ha nada la para
+   * NAO manda a administracao conferir o CSV de turmas, porque nao ha nada la para
    * conferir — o aluno passou de ano.
    */
   causa?: 'FILTRO_DE_NOTA';
 }
 
 const SEM_PERIODO_LETIVO =
-  'O periodo letivo ainda nao foi configurado. Procure a secretaria academica.';
+  'O período letivo ainda não foi configurado. Tente de novo mais tarde.';
 
 /**
  * A Valence caiu E o launch nao trouxe turma nenhuma — nao ha de onde tirar a
  * lista. Mensagem PROPRIA de proposito: devolver "nenhuma disciplina sua aparece
- * no periodo letivo vigente" mandaria o aluno a secretaria por um problema que e
- * nosso, e a secretaria procuraria defeito no CSV de turmas.
+ * no periodo letivo vigente" mandaria o aluno a administracao por um problema que e
+ * nosso, e a administracao procuraria defeito no CSV de turmas.
  */
 const VALENCE_FORA_SEM_LAUNCH =
-  'Nao foi possivel consultar suas disciplinas no Brightspace agora. ' +
-  'Tente de novo em alguns minutos; se continuar, procure a secretaria academica.';
+  'Não foi possível consultar suas disciplinas no AVA agora. ' +
+  'Tente de novo em alguns minutos; se continuar, acesse o formulário de suporte disponível na sua turma no AVA.';
 
 /** Intervalo minimo entre dois avisos de Valence fora. Ver `avisarIndisponivel`. */
 const INTERVALO_AVISO_MS = 60_000;
@@ -207,7 +207,7 @@ export class DisciplinasDoAlunoService {
    *
    * **E por isso que aqui NAO ha o fallback de `cairParaOLaunch`.** Sem turma
    * clicada ele degradaria para lista vazia, e o lote registraria
-   * `SEM_DISCIPLINA_AGENDAVEL` — motivo que manda a secretaria conferir o CSV de
+   * `SEM_DISCIPLINA_AGENDAVEL` — motivo que manda a administração conferir o CSV de
    * turmas — quando a causa foi a rede. O erro sobe, `resolverUm` o classifica
    * como `FALHA_NA_INTEGRACAO`, e rodar de novo reprocessa so aquele aluno.
    */
@@ -219,7 +219,7 @@ export class DisciplinasDoAlunoService {
       return {
         agendaveis: [],
         motivo:
-          'O compulsorio depende da integracao com o Brightspace (D2L_HABILITADO), ' +
+          'O compulsório depende da integração com o AVA (D2L_HABILITADO), ' +
           'que e quem sabe as disciplinas de quem nunca fez login.',
       };
     }
@@ -320,7 +320,7 @@ export class DisciplinasDoAlunoService {
       // A janela pede nota e a integracao esta desligada: nao ha de onde tirar
       // a nota, e a turma do launch entregaria a substitutiva SEM conferir
       // nenhuma. E erro de configuracao, nao do aluno — mas quem esta na tela e
-      // ele, entao a frase manda para a secretaria e o log diz o que fazer.
+      // ele, entao a frase manda para a administracao e o log diz o que fazer.
       if (filtroDeNota) {
         this.logger.error(
           'A janela vigente filtra por nota e D2L_HABILITADO esta desligado. ' +
@@ -485,9 +485,9 @@ export class DisciplinasDoAlunoService {
       // errado, e nao a matricula dele.
       motivo:
         ofertas.length === 0
-          ? `Nenhuma disciplina sua aparece no periodo letivo vigente ` +
+          ? `Nenhuma disciplina sua aparece no período letivo vigente ` +
             `(${vigente.periodoLetivoId}, formato ${modalidadeCodigo}). ` +
-            'Procure a secretaria academica.'
+            'Se você tem prova, acesse o formulário de suporte disponível na sua turma no AVA.'
           : undefined,
     };
   }

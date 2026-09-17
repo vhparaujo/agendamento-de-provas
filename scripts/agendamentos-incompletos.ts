@@ -38,7 +38,7 @@ import { TurmaService } from '../src/turma/service/turma.service';
  * ---------------------------------------------------------------------------
  * Porque UMA disciplina e o estado CORRETO de muita gente: aluno que cursa uma
  * materia so, ou que na substitutiva ficou elegivel em uma so. Uma lista feita
- * por contagem misturaria esses com as vitimas do fallback, e a secretaria
+ * por contagem misturaria esses com as vitimas do fallback, e a administracao
  * remanejaria prova de quem estava certo. A unica pergunta que separa os dois e
  * "quantas ele teria HOJE?", e e essa que este script faz.
  *
@@ -56,12 +56,12 @@ import { TurmaService } from '../src/turma/service/turma.service';
  * NAO ESCREVE NADA. NUNCA.
  * ---------------------------------------------------------------------------
  * A correcao — acrescentar as disciplinas que faltam a um agendamento ja
- * confirmado — muda prova de aluno e e decisao da secretaria, nao de um script
+ * confirmado — muda prova de aluno e e decisao da administração, nao de um script
  * de diagnostico. Aqui so sai a lista.
  *
  * RODA EM PRODUCAO de proposito, ao contrario de `d2l:notas`: e la que estao os
  * agendamentos, e a saida e uma lista de matriculas e disciplinas (o mesmo que
- * a secretaria ja ve na tela), nao nota de aluno.
+ * a administracao ja ve na tela), nao nota de aluno.
  *
  * RITMO: uma chamada a Valence por aluno, em serie, com `--delay` entre elas
  * (default 200ms). A arvore do periodo letivo e baixada UMA vez e fica em cache
@@ -144,7 +144,7 @@ async function main(): Promise<void> {
 
   try {
     // Sem a integracao de pe, TODO aluno pareceria incompleto (o cruzamento
-    // devolveria vazio) e o relatorio mandaria a secretaria remanejar a
+    // devolveria vazio) e o relatorio mandaria a administracao remanejar a
     // instituicao inteira. Melhor recusar do que produzir essa lista.
     if (!enrollments.habilitado()) {
       throw new Error(

@@ -10,7 +10,7 @@ import { ConfigService } from '@nestjs/config';
  *   nao entra em arquivo de configuracao, e o cron precisa dela sem humano);
  * - o questionario-alvo e os HORARIOS de cada turno moram em
  *   `configuracao_senha_quiz` (19/08/2026): mudam por semestre, e quem sabe os
- *   dois e a secretaria, que nao faz deploy.
+ *   dois e a administracao, que nao faz deploy.
  *
  * O que sobra aqui e infraestrutura: a CHAVE que permite o cron rodar nesta
  * instancia, e a velocidade com que o lote fala com a Valence. Sao decisoes de

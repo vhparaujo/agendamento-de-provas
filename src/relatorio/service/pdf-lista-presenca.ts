@@ -331,7 +331,7 @@ function desenharMoldura(doc: Doc, y: number, altura: number): void {
 
 /**
  * O total, no fim da ultima pagina da sala. E o numero que o fiscal usa para
- * conferir a sala contra a folha antes de devolve-la a secretaria.
+ * conferir a sala contra a folha antes de devolve-la a administracao.
  */
 function desenharRodape(doc: Doc, y: number, lista: ListaDePresenca): void {
   doc

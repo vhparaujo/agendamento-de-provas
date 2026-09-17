@@ -411,10 +411,10 @@ enum StatusAgendamento {
 // HISTORICO DO AGENDAMENTO — quem mexeu, quando, e do que para o que
 // ----------------------------------------------------------------------------
 // Existe para responder UMA pergunta concreta: quando o aluno reclamar que
-// "mudaram minha prova de horario", provar se foi ele mesmo ou a secretaria.
+// "mudaram minha prova de horario", provar se foi ele mesmo ou a administracao.
 //
 // Por que uma TABELA e nao o log de seguranca (AuditoriaService): o log vai para
-// a saida do processo, e quem precisa da resposta e a secretaria, na tela, com o
+// a saida do processo, e quem precisa da resposta e a administracao, na tela, com o
 // aluno na frente. Log que so o time de infra consegue ler nao resolve
 // atendimento.
 //
@@ -468,14 +468,14 @@ model AgendamentoDisciplina {
   ///
   /// So sao preenchidas quando a janela tinha filtro de nota (a substitutiva);
   /// na N2 ficam nulas, porque nota nenhuma foi consultada. Existem para
-  /// responder a pergunta que a secretaria recebe com o aluno na frente — "por
+  /// responder a pergunta que a administração recebe com o aluno na frente — "por
   /// que ele agendou substitutiva desta materia?" —, e a nota no Brightspace
   /// pode ter mudado depois. Sem as colunas, a unica resposta seria consultar a
   /// Valence de novo e ver numeros que talvez ja nao sejam os que decidiram.
   ///
   /// Sao DUAS desde 08/09/2026 porque a regra passou a olhar duas notas: com so
   /// a final gravada, "ele tinha N1 suficiente?" ficaria sem resposta — e e
-  /// justamente o criterio novo, o que a secretaria ainda nao conhece de cor.
+  /// justamente o criterio novo, o que a administracao ainda nao conhece de cor.
   /// `notaN1` fica nula tambem nas reservas gravadas ANTES desta data: elas
   /// foram decididas pela regra antiga, e inventar um valor seria mentir sobre
   /// o que aconteceu.
@@ -589,7 +589,7 @@ model PeriodoAgendamento {
   ///    formato nao pode derrubar o agendamento dos outros quatro.
   periodoLetivoId String // Id do Periodo Letivo no Brightspace (ex: 103)
   /// Qual prova do semestre e esta janela: "N2", "SUB", "N1"... Texto livre de
-  /// proposito: quem nomeia a rodada e a secretaria, e um enum obrigaria uma
+  /// proposito: quem nomeia a rodada e a administracao, e um enum obrigaria uma
   /// migration a cada nome novo. O default mantem os semestres ja cadastrados,
   /// que sao todos da prova regular.
   rodada          String    @default("N2")
@@ -610,7 +610,7 @@ model PeriodoAgendamento {
   /// Nao ha piso na nota final, nem teto na N1.
   ///
   /// ⚠️ O gatilho e ESTE PAR, e nunca `rodada == "SUB"`: `rodada` e texto livre
-  /// (quem a nomeia e a secretaria), entao comparar a string faria a regra parar
+  /// (quem a nomeia e a administracao), entao comparar a string faria a regra parar
   /// de valer no dia em que alguem cadastrasse "Substitutiva" ou "sub".
   notaMinimaN1    Decimal?  @db.Decimal(5, 2)
   notaMaximaFinal Decimal?  @db.Decimal(5, 2)
@@ -640,7 +640,7 @@ model PeriodoAgendamento {
 // POR QUE UMA TABELA, e nao duas colunas (`periodoLetivoIdModular` /
 // `...Semestral`): duas colunas embutem no schema a suposicao de que existem
 // exatamente duas grades e de que se sabe, aqui, qual formato cai em qual.
-// Quem sabe disso e a secretaria, no cadastro. Uma linha por formato tambem
+// Quem sabe disso e a administracao, no cadastro. Uma linha por formato tambem
 // deixa o mapa APARECER na tela do admin, que e o unico jeito de um id errado
 // deixar de ser invisivel.
 //
@@ -673,7 +673,7 @@ model PeriodoLetivoModalidade {
 // ----------------------------------------------------------------------------
 // AGENDAMENTO COMPULSORIO — o lote que agenda por quem nao agendou
 // ----------------------------------------------------------------------------
-// Fechado o periodo, quem nao marcou prova E alocado pela secretaria: enche a
+// Fechado o periodo, quem nao marcou prova E alocado pela administracao: enche a
 // sala de menor `ordem` ate lotar (igual ao portal) e os dias da data mais
 // proxima para a mais distante (`ordenarPorProximidade`).
 //
@@ -684,7 +684,7 @@ model PeriodoLetivoModalidade {
 //    proxy segura essa conexao aberta, entao quem dispara recebe um id e volta
 //    para perguntar como esta.
 // 2. O resultado precisa sobreviver ao fim da execucao. "Faltaram 130 vagas em
-//    Taguatinga/EAD" e a informacao que faz a secretaria abrir mais uma sala; se
+//    Taguatinga/EAD" e a informacao que faz a administracao abrir mais uma sala; se
 //    ela vivesse so na tela, sumiria no primeiro F5.
 // 3. E o registro de que o compulsorio ACONTECEU, com quem mandou e quando —
 //    mesma necessidade que criou o HistoricoAgendamento.
@@ -740,7 +740,7 @@ enum StatusExecucao {
 // EXCECAO DO COMPULSORIO — quem NAO foi alocado, e por que
 // ----------------------------------------------------------------------------
 // A saida mais importante do lote. Alocar 4.600 pessoas nao gera trabalho para
-// ninguem; os 200 que ficaram de fora sao a fila da secretaria, e cada motivo
+// ninguem; os 200 que ficaram de fora sao a fila da administracao, e cada motivo
 // pede uma acao diferente: SEM_VAGA abre sala, SEM_CONTA_D2L vira chamado no
 // suporte do LMS, SEM_DISCIPLINA_AGENDAVEL manda conferir o CSV de turmas.
 //
@@ -753,7 +753,7 @@ model ExcecaoCompulsorio {
   alunoId    Int
   matricula  String // desnormalizado: o relatorio precisa dela sem join
   motivo     MotivoExcecao
-  /// O texto que a secretaria le ("Taguatinga / EAD: 130 sem vaga").
+  /// O texto que a administracao le ("Taguatinga / EAD: 130 sem vaga").
   detalhe    String?       @db.Text
 
   execucao ExecucaoCompulsorio @relation(fields: [execucaoId], references: [id], onDelete: Cascade)
@@ -776,7 +776,7 @@ enum MotivoExcecao {
   /// A janela tem filtro de nota (a substitutiva) e NENHUMA disciplina dele caiu
   /// na faixa. Nao e defeito de cadastro: e o aluno que passou, ou que ja
   /// reprovou por nota. Separado de SEM_DISCIPLINA_AGENDAVEL de proposito —
-  /// aquele motivo manda a secretaria conferir o CSV de turmas, e aqui nao ha
+  /// aquele motivo manda a administracao conferir o CSV de turmas, e aqui nao ha
   /// nada para conferir.
   NAO_ELEGIVEL_PELA_NOTA
   /// O polo do aluno nao tem faixa cadastrada para o formato dele.
@@ -784,7 +784,7 @@ enum MotivoExcecao {
   /// Ha faixa, mas todas as salas do formato lotaram. Abrir mais sala.
   SEM_VAGA
   /// Cancelou e nao remarcou. Fica de fora POR DECISAO do cliente, e aparece
-  /// aqui para a secretaria ver quem ficou sem lugar nenhum.
+  /// aqui para a administracao ver quem ficou sem lugar nenhum.
   CANCELOU_E_NAO_REMARCOU
   /// A Valence falhou so para este aluno (rede, timeout). Reprocessavel.
   FALHA_NA_INTEGRACAO
@@ -794,7 +794,7 @@ enum MotivoExcecao {
 }
 
 // ----------------------------------------------------------------------------
-// SENHA DOS QUESTIONARIOS — a grade que a secretaria preenche, e o lote que a
+// SENHA DOS QUESTIONARIOS — a grade que a administração preenche, e o lote que a
 // aplica no campo `Password` dos quizzes do Brightspace
 // ----------------------------------------------------------------------------
 // A senha e um segredo com validade de UM TURNO. A mesma turma recebe a senha de
@@ -872,7 +872,7 @@ model SenhaDeProva {
   turno Turno
 
   /// TEXTO CLARO, e nao ha alternativa: o D2L exige o valor literal no PUT e a
-  /// secretaria imprime a folha para os fiscais. Hash impossibilitaria as duas.
+  /// administracao imprime a folha para os fiscais. Hash impossibilitaria as duas.
   ///
   /// Esta e a UNICA coluna do banco com o valor. Ele NAO entra em
   /// ExecucaoSenhaQuiz, ItemSenhaQuiz, auditoria, log, CSV nem na listagem da
@@ -908,7 +908,7 @@ model SenhaDeProva {
 ///
 /// Fica no BANCO e nao no .env porque as duas coisas mudam por semestre — o nome
 /// da prova ("Prova N2 2026/1") e o calendario dos turnos — e quem sabe os dois
-/// e a secretaria, que nao faz deploy. Nada aqui tem semente no .env: um valor
+/// e a administracao, que nao faz deploy. Nada aqui tem semente no .env: um valor
 /// que "ja vem preenchido" e um lote que roda com o alvo errado calado.
 model ConfiguracaoSenhaQuiz {
   id Int @id @default(1)
@@ -1259,7 +1259,7 @@ model ItemSenhaQuiz {
 //
 // POR QUE NO BANCO, E NAO CONSTANTE NO CODIGO: mesmo caminho que
 // `ConfiguracaoSenhaQuiz.horaManha/Tarde/Noite` seguiu em 19/08/2026, e pelo
-// mesmo motivo — quem conhece o calendario e a secretaria, que nao faz deploy.
+// mesmo motivo — quem conhece o calendario e a administração, que nao faz deploy.
 // Diferenca deliberada em relacao aquela tabela: AQUI HA SEED. O alvo do quiz
 // nao podia ter default (um nome plausivel casaria com o questionario errado em
 // silencio), mas um horario errado nao "casa" com nada: ou o admin o corrige na
@@ -1297,7 +1297,7 @@ model JanelaDeProva {
   /// E DECLARADO, nao derivado de `horaInicio`. Derivar exigiria cravar no
   /// codigo onde a manha vira tarde, e a resposta muda por instituicao e por
   /// semestre; a grade tem tres turnos e o calendario de Semi/Modular tem seis
-  /// janelas, entao o mapa e N:1 e quem o conhece e a secretaria. E a mesma
+  /// janelas, entao o mapa e N:1 e quem o conhece e a administracao. E a mesma
   /// recusa que `turno.ts` ja faz para `Faixa.horaInicio`.
   ///
   /// Consequencia aceita (decisao do cliente, 25/08/2026): em Semi/Modular, duas
@@ -1409,7 +1409,7 @@ model JanelaDeProva {
 //
 // REVERTE a decisao 1 de 26/08/2026 ("o nome do grupo e FIXO POR JANELA e
 // reusado nos seis dias"). Na operacao real os grupos de cada dia de prova tem
-// nomes proprios e LIVRES, e a secretaria passou a trocar `nomeGrupo` da janela
+// nomes proprios e LIVRES, e a administracao passou a trocar `nomeGrupo` da janela
 // a mao todo dia — exatamente o trabalho que o disparo automatico existia para
 // tirar dela, com o risco extra de esquecer a troca de um dia.
 //

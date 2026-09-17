@@ -54,7 +54,7 @@ export class JwtAdminGuard extends AuthGuard(ESTRATEGIA_ADMIN) {
 
       if (!liberada) {
         throw new ForbiddenException(
-          'Troque a senha provisoria antes de usar o sistema',
+          'Troque a senha provisória antes de usar o sistema.',
         );
       }
     }

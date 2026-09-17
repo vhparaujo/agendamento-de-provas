@@ -6,7 +6,7 @@ import { montarCsv } from '../../agendamento/service/csv-relatorio';
  * ============================================================================
  * Este arquivo NAO e lido por pessoa no Excel: ele e enviado ao *Groups Import*
  * do Brightspace, que espera VIRGULA e UTF-8 puro. Sao exatamente as duas
- * escolhas contrarias as do CSV da secretaria (`;` + BOM, em
+ * escolhas contrarias as do CSV da administracao (`;` + BOM, em
  * `agendamento/service/csv-relatorio.ts`), e trocar uma pela outra quebra em
  * silencio:
  *

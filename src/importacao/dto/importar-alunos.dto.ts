@@ -25,7 +25,7 @@ export class ImportarAlunosDto {
     typeof value === 'string' ? value.trim().toUpperCase() : value,
   )
   @IsIn(MODALIDADES_UPLOAD, {
-    message: `formato deve ser um de: ${MODALIDADES_UPLOAD.join(', ')}`,
+    message: `Escolha o formato do arquivo: ${MODALIDADES_UPLOAD.join(', ')}.`,
   })
   modalidade!: (typeof MODALIDADES_UPLOAD)[number];
 }

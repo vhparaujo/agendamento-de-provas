@@ -358,7 +358,7 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
 
     /**
      * O aluno perdeu o cancelamento, e a vaga continua tendo de voltar quando
-     * alguem sai — agora pela unica porta que restou, a da secretaria.
+     * alguem sai — agora pela unica porta que restou, a da administração.
      */
     it('o cancelamento do admin devolve a vaga, e o aluno pode marcar de novo', async () => {
       const aluno = await criarAluno('CANCELA');
@@ -403,8 +403,8 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
         api().delete(`/api/faixas/${faixaId}`),
       ).expect(409);
 
-      expect(res.body.message).toContain('CANCELADO');
-      expect(res.body.message).toContain('ativo=false');
+      expect(res.body.message).toContain('cancelado(s)');
+      expect(res.body.message).toContain('desative a faixa');
 
       // e o caminho que a mensagem indica funciona
       await comoAdmin(api().patch(`/api/faixas/${faixaId}`))
@@ -566,7 +566,7 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
    * ==========================================================================
    * Regra do cliente, 14/08/2026. O portal recusa, e o REMANEJO tambem — mover
    * o aluno para o horario da outra prova dele criaria em silencio exatamente
-   * o estado que a regra existe para evitar. Nao trava a secretaria: basta
+   * o estado que a regra existe para evitar. Nao trava a administracao: basta
    * mover primeiro a outra prova, e o teste abaixo prova esse caminho.
    */
   describe('dois vinculos do mesmo RA no mesmo horario', () => {
@@ -639,7 +639,7 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
         .send({ faixaId: (await faixaDe(daPedagogia)).faixaId })
         .expect(409);
 
-      expect(res.body.message).toMatch(/ja tem prova marcada neste horario/i);
+      expect(res.body.message).toMatch(/prova marcada neste horário/i);
       expect(res.body.message).toMatch(/PEDAGOGIA REMANEJO/);
     });
 
@@ -668,7 +668,7 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
     it('libera depois que a outra prova sai da frente', async () => {
       const alvo = (await faixaDe(daPedagogia)).faixaId;
 
-      // A secretaria move primeiro a de PEDAGOGIA para o horario livre...
+      // A administracao move primeiro a de PEDAGOGIA para o horario livre...
       await comoAdmin(api().patch(`/api/agendamentos/${daPedagogia}/remanejar`))
         .send({ faixaId: faixaLivre })
         .expect(409);
@@ -815,7 +815,7 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
 
     /**
      * Todo CANCELADO e de ADMIN desde 17/08/2026 — nao ha mais como o aluno
-     * cancelar. E exatamente o que a secretaria precisa poder mostrar no balcao:
+     * cancelar. E exatamente o que a administracao precisa poder mostrar no balcao:
      * "cancelaram minha prova" tem um e-mail com nome e sobrenome do outro lado.
      */
     it('registra o cancelamento com o e-mail de quem cancelou', async () => {
@@ -933,7 +933,7 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
    * Estes testes rodam com `D2L_HABILITADO=false` (fixado em test/setup-e2e.ts;
    * o default do codigo virou `true` em 18/08/2026), entao todos
    * passam pelo caminho da RESERVA_ANTERIOR. E de proposito: e o caminho que a
-   * secretaria mais usa (quem cancelou e nao remarcou) e o unico que funciona
+   * administracao mais usa (quem cancelou e nao remarcou) e o unico que funciona
    * sem a Valence de pe.
    */
   describe('agendamento administrativo (POST /agendamentos)', () => {
@@ -965,7 +965,7 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
     });
 
     /**
-     * Agenda pelo portal e a secretaria cancela: e assim que nasce a reserva
+     * Agenda pelo portal e a administracao cancela: e assim que nasce a reserva
      * anterior de onde esta rota copia as disciplinas.
      *
      * O cancelamento e do ADMIN porque e o unico que existe (17/08/2026) — o que
@@ -1110,7 +1110,7 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
     /**
      * A situacao do curso bloqueia por padrao (como no portal) e libera com uma
      * decisao EXPLICITA — que volta em `avisos` e vai para a auditoria. Sem a
-     * saida, a secretaria ficaria travada justamente no caso em que precisa da
+     * saida, a administracao ficaria travada justamente no caso em que precisa da
      * valvula de escape.
      */
     it('RECUSA statusCurso bloqueado, e agenda com ignorarStatusCurso avisando', async () => {
@@ -1184,7 +1184,7 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
         .send({ alunoId: outroCurso.id, faixaId: faixaAdmin })
         .expect(409);
 
-      expect(res.body.message).toMatch(/ja tem prova marcada neste horario/i);
+      expect(res.body.message).toMatch(/prova marcada neste horário/i);
     });
   });
 

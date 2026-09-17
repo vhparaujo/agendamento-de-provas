@@ -275,7 +275,7 @@ segredo ausente em produção.
 ⚠️ **Os horários do cron e o questionário-alvo não estão no `.env`** (desde
 19/08/2026): o admin os cadastra na tela, e eles moram em
 `configuracao_senha_quiz`. Os dois mudam por semestre, e quem os conhece é a
-secretaria — pedir deploy para trocar `07:30` garantia que o horário ficasse
+administração — pedir deploy para trocar `07:30` garantia que o horário ficasse
 errado no primeiro dia em que a prova mudasse de hora. O que ficou no `.env` é
 o que é **da instância**: se ela pode disparar, e a que ritmo fala com a Valence.
 
@@ -573,14 +573,14 @@ pode ver só uma na tela.
 - **Os dois andam juntos.** Mandar um só responde 400: meio critério seria lido
   como "sem filtro" e a prova abriria para todos, sem erro nenhum aparecendo.
 - ⚠️ **O gatilho são estes campos, nunca `rodada === "SUB"`.** `rodada` é texto
-  livre — quem a nomeia é a secretaria —, e amarrar a regra à string a faria
+  livre — quem a nomeia é a administração —, e amarrar a regra à string a faria
   parar de valer no dia em que alguém cadastrasse "Substitutiva".
 - **São editáveis mesmo com a janela cheia**, ao contrário da `rodada`: não ficam
   gravados em reserva nenhuma. Mas as provas já marcadas **não** são revistas, e
   a alteração vai para a auditoria.
 - **Sem conseguir ler as notas, ninguém agenda** (*fail-closed*). Valence fora,
   `D2L_HABILITADO=false` ou escopo faltando: a tela diz que não foi possível
-  confirmar as notas e manda à secretaria. Não há degradação possível — liberar
+  confirmar as notas e manda à administração. Não há degradação possível — liberar
   sem conferir é o que a regra existe para impedir. Na N2 o fallback de sempre
   continua valendo.
 - **Exige os escopos `grades:gradevalues:read` e `grades:gradecategories:read`**
@@ -594,11 +594,11 @@ pode ver só uma na tela.
 - ⚠️ **O aluno não vê os números.** Nem os limites, nem a nota dele: a tela só
   diz que a lista traz as disciplinas em que ele tem direito, e que ele deve
   **responder o formulário de suporte** se faltar alguma. A nota e o critério são
-  assunto dele com a secretaria — a tela de agendamento só produziria discussão
+  assunto dele com a administração — a tela de agendamento só produziria discussão
   sobre o número com quem não decide nada. Vale para as duas mensagens: a do
   portal e a do backend (quando nenhuma disciplina passa).
 - No compulsório, quem fica de fora por nota aparece no relatório como
-  `NAO_ELEGIVEL_PELA_NOTA` — o único motivo que **não pede ação** da secretaria,
+  `NAO_ELEGIVEL_PELA_NOTA` — o único motivo que **não pede ação** da administração,
   e o mais numeroso num lote de substitutiva.
 
 **Vigente = o cadastrado mais recentemente**, e não existe como marcar outro no
@@ -629,7 +629,7 @@ telas mandam a janela inteira. Sem ele, o recorte é a janela vigente completa.
 | `GET` | `/agendamentos/exportacao` | **CSV de TODOS os alunos** — agendados ou não |
 | `GET` | `/agendamentos/:id` | Detalhe |
 | `GET` | `/agendamentos/:id/historico` | **Quem alterou**: o próprio aluno ou qual administrador |
-| `POST` | `/agendamentos` | **Agenda a prova de um aluno específico**, em nome da secretaria |
+| `POST` | `/agendamentos` | **Agenda a prova de um aluno específico**, em nome da administração |
 | `PATCH` | `/agendamentos/:id/remanejar` | Move de sala (`salaFaixaId`) ou de horário (`faixaId`) |
 | `DELETE` | `/agendamentos/:id` | Cancela (vira `CANCELADO`, não apaga) |
 
@@ -670,7 +670,7 @@ mesma pessoa duas vezes no mesmo horário), mais o que só faz sentido ao criar:
 aluno que já tem prova no semestre (para mudar de horário existe o remanejo) e
 situação de curso que bloqueia — esta última liberável com
 `"ignorarStatusCurso": true`, que volta em `avisos` e vai para a auditoria.
-Bloquear de vez trancaria a secretaria justamente no caso em que ela precisa da
+Bloquear de vez trancaria a administração justamente no caso em que ela precisa da
 válvula de escape.
 
 **As disciplinas cobertas** vêm do Brightspace quando `D2L_HABILITADO`; sem ele,
@@ -685,7 +685,7 @@ Como o remanejo, **não depende do período estar aberto**.
 
 ### Agendamento compulsório
 
-Fechado o prazo, **quem não agendou não fica sem prova**: a secretaria dispara um
+Fechado o prazo, **quem não agendou não fica sem prova**: a administração dispara um
 lote que aloca todo mundo automaticamente.
 
 | Método | Rota | Descrição |
@@ -735,7 +735,7 @@ Brightspace e do jeito que está não abriria a prova.
 
 #### A exportação é de alunos, não de agendamentos
 
-`GET /agendamentos/exportacao` responde outra pergunta: **com quem a secretaria
+`GET /agendamentos/exportacao` responde outra pergunta: **com quem a administração
 precisa falar.** Por isso a base são os **vínculos importados, todos eles**, e o
 agendamento entra como coluna — quem ainda não marcou sai no arquivo com as
 colunas da prova vazias e `Status = Não Agendado`.
@@ -840,7 +840,7 @@ com **default no formato do Excel**.
 
 ### Grupos no Brightspace — criar e inscrever pela API
 
-Tela **Grupos D2L**. Substitui o import manual dos CSVs da seção anterior (que
+Tela **Grupos**. Substitui o import manual dos CSVs da seção anterior (que
 continuam disponíveis). O admin escreve os nomes dos grupos de cada bloco — **EaD**
 (categoria `Provas Presenciais - EAD`), **Semipresencial/Modular** (categoria
 `Provas Presenciais - Semi e Modular`) e **Presencial** (categoria
@@ -932,7 +932,7 @@ grupos até substituí-la.
 
 ### Listas de presença (PDF) — o papel que vai para a sala
 
-O documento que a secretaria imprime, o fiscal leva para a sala e volta assinado.
+O documento que a administração imprime, o fiscal leva para a sala e volta assinado.
 **Uma página por sala de aplicação.** Mesma aba **Relatorios** do painel, mesmos
 filtros (`poloId`, `periodoLetivoId`, `de`, `ate` — data da **prova**). Na rota de
 uma sala só, `poloId`/`de`/`ate` são ignorados, pela mesma razão de sempre: quem
@@ -999,7 +999,7 @@ devolve `Buffer`), separado das consultas (`lista-presenca.service.ts`).
 
 ### Senha das provas nos questionários do Brightspace
 
-A secretaria cadastra uma grade **dia × turno → senha** e o sistema troca o campo
+A administração cadastra uma grade **dia × turno → senha** e o sistema troca o campo
 `Password` do questionário da prova em todas as turmas — manualmente por um botão,
 ou sozinho por cron nos horários configurados.
 
@@ -1067,7 +1067,7 @@ na turma. Isso é o que impede a rota de virar uma coluna de formato no
 cadastro, que a decisão de 10/08/2026 recusou.
 
 **A senha em texto claro existe em uma coluna só** (`senha_de_prova.senha`): o
-Brightspace exige o valor literal e a secretaria imprime a folha dos fiscais. Ela
+Brightspace exige o valor literal e a administração imprime a folha dos fiscais. Ela
 não entra em log, auditoria, tabela de execução nem no CSV, e a listagem da grade
 devolve apenas `temSenha`. Ver o valor é uma rota separada e auditada, porque a
 grade fica aberta num monitor compartilhado.
@@ -1173,14 +1173,14 @@ quem tem um só pode omitir.
 | `GET` | `/portal/agendamentos/:id/declaracao` | **Declaração de agendamento em PDF** — só depois de o prazo encerrar |
 | `PATCH` | `/portal/agendamentos/:id` | **Troca de horário** — atômica: sem vaga no novo, mantém o antigo |
 
-A troca vale **enquanto o prazo estiver aberto**. Depois disso, só a secretaria
+A troca vale **enquanto o prazo estiver aberto**. Depois disso, só a administração
 remaneja.
 
 **O aluno não cancela a própria prova** (17/08/2026): a troca é a única alteração
 que ele faz, e `DELETE /portal/agendamentos/:id` **não existe mais**. Cancelar
 devolve a vaga e o deixa *sem* prova — num período que está lotando, a vaga sai
 em segundos e quem só queria mudar de dia chega ao balcão sem horário nenhum,
-quando a troca resolvia o caso dele sem risco. Desmarcar é decisão da secretaria,
+quando a troca resolvia o caso dele sem risco. Desmarcar é decisão da administração,
 em `DELETE /agendamentos/:id`, que grava no histórico o e-mail de quem cancelou.
 
 O aluno enxerga **apenas o período vigente**: provas de semestres anteriores não
@@ -1192,7 +1192,7 @@ aparecem nem podem ser alteradas. Mas fechar o prazo **não esconde** a prova de
 `GET /portal/agendamentos/:id/declaracao` devolve uma folha A4 em PDF declarando
 que o aluno está matriculado sob aquele RA e marcou a prova presencial para tal
 dia e hora. É o papel que ele leva ao trabalho para justificar a ausência — e o
-único documento do sistema que sai pela mão do aluno, não da secretaria.
+único documento do sistema que sai pela mão do aluno, não da administração.
 
 **Ela só existe depois de o prazo ENCERRAR.** Enquanto o período está aberto o
 aluno ainda troca de horário, e o documento afirmaria uma data que o próprio
@@ -1272,7 +1272,7 @@ A resposta traz o aluno (`nome`), os **vínculos** (curso, situação, formato e
 polo da matrícula) e cada **prova confirmada** — rodada (`N2`/`SUB` e o nome por
 extenso), período letivo, a janela de agendamento com `prazoEncerrado`, data
 (`AAAA-MM-DD`), horário, formato, polo e sala da prova, disciplinas, quando foi
-agendada e se a secretaria alocou.
+agendada e se a administração alocou.
 
 - **Histórico completo**, só `CONFIRMADO`, da mais recente para a mais antiga.
   Cancelada não aparece: não reserva cadeira, e declará-la afirmaria uma prova
@@ -1466,7 +1466,7 @@ Um campus que deixa de ter prova **se desativa, não se apaga**:
 | `DELETE /polos/:id` | Só apaga polo **virgem** (sem sala, sem faixa, sem aluno). Serve para desfazer cadastro errado, já que `nome` não é editável. Com histórico: 409 |
 
 Sem faixa nova, ninguém agenda naquele polo, e o agendamento compulsório reporta
-esses alunos como `SEM_FAIXA_NO_POLO` — a lista que a secretaria precisa ver.
+esses alunos como `SEM_FAIXA_NO_POLO` — a lista que a administração precisa ver.
 O portal do aluno **não** consulta `Polo.ativo` de propósito: desativar um campus
 no meio do semestre não pode esconder a prova de quem já agendou.
 
@@ -1701,7 +1701,7 @@ que o `alunoId` escolhido pelo portal pertence mesmo àquela matrícula, sem
 confiar em nada vindo do cliente.
 
 Matrícula fora do CSV resulta em `403` com mensagem orientando procurar a
-secretaria — não é "senha errada", é ausência de cadastro: sem a linha do CSV não
+administração — não é "senha errada", é ausência de cadastro: sem a linha do CSV não
 há como saber formato nem polo.
 
 ---

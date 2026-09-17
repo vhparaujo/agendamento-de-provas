@@ -103,7 +103,7 @@ const chave = (janela: Janela, orgUnitId: string): ChaveDoGrupo =>
  * GRUPOS PARA O BRIGHTSPACE — UM ARQUIVO POR HORARIO **E** TURMA
  * ============================================================================
  * A pergunta aqui e outra, e nao se confunda com `GET /agendamentos/exportacao`:
- * aquele responde "com quem a secretaria precisa falar" (TODOS os vinculos,
+ * aquele responde "com quem a administracao precisa falar" (TODOS os vinculos,
  * agendados ou nao, 12 colunas, formato de Excel). Este responde "quem entra no
  * grupo desta prova no Brightspace" — so quem tem prova marcada, so a matricula,
  * no formato que o *Groups Import* aceita.
@@ -133,7 +133,7 @@ const chave = (janela: Janela, orgUnitId: string): ChaveDoGrupo =>
  * Ate esta data o recorte era o par (`faixaId`, `orgUnitId`) — e `Faixa` carrega
  * `poloId`. O polo entrou no recorte DE CARONA, sem ninguem decidir isso: duas
  * faixas do mesmo dia e horario em campi diferentes viravam dois grupos, na
- * mesma disciplina, com exatamente o mesmo special access. A secretaria criava
+ * mesma disciplina, com exatamente o mesmo special access. A administracao criava
  * dois grupos identicos no Brightspace e importava dois arquivos — e o
  * `caminhoNoZip` ainda precisava de um `#faixaId` para os dois nao se
  * sobrescreverem dentro do zip.
@@ -197,7 +197,7 @@ export class RelatorioService {
 
     if (!grupo) {
       throw new NotFoundException(
-        'Nenhum aluno confirmado nesta turma e neste horario',
+        'Nenhum aluno confirmado nesta turma e neste horário.',
       );
     }
 
@@ -226,7 +226,7 @@ export class RelatorioService {
     }
 
     return {
-      nomeArquivo: `Grupos D2L-${carimboDeHora()}.zip`,
+      nomeArquivo: `Grupos-${carimboDeHora()}.zip`,
       conteudo: await zip.generateAsync({
         type: 'nodebuffer',
         compression: 'DEFLATE',
@@ -287,7 +287,7 @@ export class RelatorioService {
 
       if (!grupo) {
         // O nome do CSV de turmas manda sobre o que veio do launch: e o que a
-        // secretaria reconhece, e e ele que aparece no resto do sistema.
+        // administracao reconhece, e e ele que aparece no resto do sistema.
         const turma: TurmaDoArquivo = {
           orgUnitId: inscricao.orgUnitId,
           codigoTurma: turmas.get(inscricao.orgUnitId)?.codigoTurma ?? null,
@@ -435,7 +435,7 @@ export class RelatorioService {
 }
 
 /**
- * Dia, horario e depois turma — a ordem em que a secretaria pensa a prova.
+ * Dia, horario e depois turma — a ordem em que a administração pensa a prova.
  *
  * A ordenacao e em memoria porque o agrupamento ja e: os grupos nao existem como
  * linha em tabela nenhuma, sao montados a partir das inscricoes.

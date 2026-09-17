@@ -261,8 +261,8 @@ export class NomesDosGruposService {
 
     if (janelas.length === 0) {
       throw new BadRequestException(
-        `Nenhuma janela ativa de ${definicao.nome}. Os horarios dos grupos sao ` +
-          'os das janelas do questionario — cadastre-as na aba "Senhas e datas".',
+        `Nenhuma janela ativa de ${definicao.nome}. Os horários dos grupos são ` +
+          'os das janelas do questionário — cadastre-as na aba "Senhas e datas".',
       );
     }
 
@@ -281,7 +281,7 @@ export class NomesDosGruposService {
 
       if (linha.data < intervalo.de || linha.data > intervalo.ate) {
         throw new BadRequestException(
-          `${onde}: o dia ${diaBr(linha.data)} esta fora do intervalo ` +
+          `${onde}: o dia ${diaBr(linha.data)} está fora do intervalo ` +
             `${diaBr(intervalo.de)} a ${diaBr(intervalo.ate)}.`,
         );
       }
@@ -292,9 +292,9 @@ export class NomesDosGruposService {
 
       if (daSessao.length === 0) {
         throw new BadRequestException(
-          `${onde}: nao ha janela ativa de ${definicao.nome} das ` +
-            `${linha.horaInicio} as ${linha.horaFim}. O horario do grupo e o de ` +
-            'uma janela do questionario.',
+          `${onde}: não há janela ativa de ${definicao.nome} das ` +
+            `${linha.horaInicio} às ${linha.horaFim}. O horário do grupo é o de ` +
+            'uma janela do questionário.',
         );
       }
 
@@ -303,9 +303,9 @@ export class NomesDosGruposService {
 
       if (sessaoRepetida !== undefined) {
         throw new BadRequestException(
-          `${onde}: a linha ${sessaoRepetida + 1} ja da um grupo a ` +
-            `${diaBr(linha.data)} das ${linha.horaInicio} as ${linha.horaFim}. ` +
-            'Cada sessao tem um grupo so.',
+          `${onde}: a linha ${sessaoRepetida + 1} já dá um grupo a ` +
+            `${diaBr(linha.data)} das ${linha.horaInicio} às ${linha.horaFim}. ` +
+            'Cada sessão tem um grupo só.',
         );
       }
       sessoes.set(sessao, indice);
@@ -316,8 +316,8 @@ export class NomesDosGruposService {
 
       if (nomeRepetido !== undefined) {
         throw new BadRequestException(
-          `${onde}: o nome "${nome}" ja esta na linha ${nomeRepetido + 1}. ` +
-            'Com o mesmo nome, as duas sessoes cairiam no mesmo grupo.',
+          `${onde}: o nome "${nome}" já está na linha ${nomeRepetido + 1}. ` +
+            'Com o mesmo nome, as duas sessões cairiam no mesmo grupo.',
         );
       }
       nomes.set(normalizarNomeDeGrupo(nome), indice);
@@ -327,15 +327,15 @@ export class NomesDosGruposService {
 
       if (!codigo) {
         throw new BadRequestException(
-          `${onde}: o nome "${nome}" nao gera um codigo de grupo valido no Brightspace.`,
+          `${onde}: o nome "${nome}" não gera um código de grupo válido no AVA.`,
         );
       }
 
       if (codigoRepetido !== undefined) {
         throw new BadRequestException(
           `${onde}: "${nome}" e o nome da linha ${codigoRepetido + 1} geram o ` +
-            'mesmo codigo de grupo no Brightspace (os primeiros 50 caracteres, ' +
-            'sem pontuacao proibida). Diferencie os nomes no inicio.',
+            'mesmo código de grupo no AVA (os primeiros 50 caracteres, ' +
+            'sem pontuação proibida). Diferencie os nomes no início.',
         );
       }
       codigos.set(codigo, indice);
@@ -395,11 +395,11 @@ export class NomesDosGruposService {
     const intervalo = intervaloDeDias(entrada.de, entrada.ate);
 
     for (const [campo, hora] of [
-      ['horaInicio', entrada.horaInicio],
-      ['horaFim', entrada.horaFim],
+      ['A hora de início', entrada.horaInicio],
+      ['A hora de fim', entrada.horaFim],
     ] as const) {
       if (minutosDaHora(hora) == null) {
-        throw new BadRequestException(`${campo} deve estar em HH:MM.`);
+        throw new BadRequestException(`${campo} deve estar no formato HH:MM.`);
       }
     }
 
@@ -410,14 +410,14 @@ export class NomesDosGruposService {
 
     if (!janela || janela.modalidadeId !== entrada.modalidadeId) {
       throw new BadRequestException(
-        'A janela escolhida nao e do formato desta pendencia. Recarregue a tela.',
+        'A janela escolhida não é do formato desta pendência. Atualize a página.',
       );
     }
 
     if (!janela.ativo) {
       throw new BadRequestException(
-        'A janela escolhida esta desativada: ela nao dispara, entao casar a ' +
-          'faixa com ela nao resolveria nada.',
+        'A janela escolhida está desativada: ela não dispara, então casar a ' +
+          'faixa com ela não resolveria nada.',
       );
     }
 
@@ -450,9 +450,9 @@ export class NomesDosGruposService {
 
     if (faixas.length === 0) {
       throw new BadRequestException(
-        `Nenhuma faixa ativa de ${codigo} das ${entrada.horaInicio} as ` +
-          `${entrada.horaFim} no intervalo. A pendencia pode ja ter sido ` +
-          'resolvida — recarregue a tela.',
+        `Nenhuma faixa ativa de ${codigo} das ${entrada.horaInicio} às ` +
+          `${entrada.horaFim} no intervalo. A pendência pode já ter sido ` +
+          'resolvida — atualize a página.',
       );
     }
 
@@ -518,11 +518,11 @@ export class NomesDosGruposService {
     // amanha — a prova de hoje abriria no dia seguinte.
     if (diaSeguinte !== janela.diaSeguinte) {
       throw new BadRequestException(
-        `Esta janela dispara as ${janela.horaDisparo}. Com abertura as ` +
+        `Esta janela dispara às ${janela.horaDisparo}. Com abertura às ` +
           `${entrada.horaInicio}, o disparo passaria a armar a prova de ` +
-          `${diaSeguinte ? 'AMANHA' : 'HOJE'} em vez da de ` +
-          `${diaSeguinte ? 'hoje' : 'amanha'}. Ajuste a hora do disparo na aba ` +
-          '"Senhas e datas", ou escolha que vale o horario da janela.',
+          `${diaSeguinte ? 'AMANHÃ' : 'HOJE'} em vez da de ` +
+          `${diaSeguinte ? 'hoje' : 'amanhã'}. Ajuste a hora do disparo na aba ` +
+          '"Senhas e datas", ou escolha que vale o horário da janela.',
       );
     }
 
@@ -549,8 +549,8 @@ export class NomesDosGruposService {
 
     return {
       mensagem:
-        `A janela de ${janela.modalidade.codigo} passou a abrir as ` +
-        `${entrada.horaInicio} e fechar as ${entrada.horaFim}.`,
+        `A janela de ${janela.modalidade.codigo} passou a abrir às ` +
+        `${entrada.horaInicio} e fechar às ${entrada.horaFim}.`,
       faixasAtualizadas: 0,
       recusadas: [],
     };

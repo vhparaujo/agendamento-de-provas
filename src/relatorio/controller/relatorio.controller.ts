@@ -51,7 +51,7 @@ const aplicarFiltros = () =>
  *   papel — o PDF que o fiscal leva para a sala e devolve assinado.
  *
  * Nenhum dos dois se confunde com `GET /agendamentos/exportacao`, que e a lista
- * de cobranca da secretaria (todos os vinculos, agendados ou nao, em Excel).
+ * de cobranca da administracao (todos os vinculos, agendados ou nao, em Excel).
  */
 @ApiTags(TAGS.RELATORIOS)
 @Controller('relatorios')
@@ -163,7 +163,7 @@ export class RelatorioController {
       '**uma unica vez**: o grupo no D2L e por usuario, e um RA com dois ' +
       'vinculos na mesma janela nao pode virar duas linhas.\n\n' +
       'Sai separado por **virgula** e **sem BOM** — ao contrario do CSV da ' +
-      'secretaria (`;` + BOM), porque quem le este arquivo e o Brightspace, nao ' +
+      'administracao (`;` + BOM), porque quem le este arquivo e o Brightspace, nao ' +
       'o Excel.\n\n' +
       'Baixa como **`20-08-2026 08h30-11h30 - GSPS0I10227 - HISTORIA E ' +
       'CULTURA.csv`**, sem acento (ver `nome-de-arquivo.ts`).\n\n' +

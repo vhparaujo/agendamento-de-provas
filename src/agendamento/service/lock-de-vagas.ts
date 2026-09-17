@@ -116,10 +116,9 @@ export async function exigirUmaProvaPorFaixa(
   if (!outra) return;
 
   throw new ConflictException(
-    `Voce ja tem prova marcada neste horario para o curso ` +
-      `${outra.aluno.curso} (agendamento ${outra.id}). Sao duas provas ` +
-      'diferentes e nao da para fazer as duas ao mesmo tempo — escolha outro ' +
-      'horario para esta.',
+    'Já há prova marcada neste horário para esta matrícula, no curso ' +
+      `${outra.aluno.curso}. São duas provas diferentes e não dá para fazer ` +
+      'as duas ao mesmo tempo — escolha outro horário para esta.',
   );
 }
 
@@ -150,7 +149,7 @@ export async function escolherOfertaComLock(
 
   if (travadas.length === 0) {
     throw new ConflictException(
-      'Este horario nao atende o formato deste curso.',
+      'Este horário não atende o formato deste curso.',
     );
   }
 
@@ -181,7 +180,7 @@ export async function escolherOfertaComLock(
 
   if (!escolhida) {
     throw new ConflictException(
-      'As vagas deste horario acabaram de se esgotar. Escolha outro horario.',
+      'As vagas deste horário acabaram de se esgotar. Escolha outro horário.',
     );
   }
 
@@ -201,7 +200,9 @@ export async function exigirVagaNaOferta(
     SELECT id, vagas FROM sala_faixa WHERE id = ${salaFaixaId} FOR UPDATE`;
 
   if (!travada) {
-    throw new ConflictException(`Oferta ${salaFaixaId} nao existe mais.`);
+    throw new ConflictException(
+      'Esta sala não está mais disponível neste horário. Atualize a página e escolha outra.',
+    );
   }
 
   const ocupadas = await tx.agendamento.count({
@@ -214,8 +215,8 @@ export async function exigirVagaNaOferta(
 
   if (ocupadas >= Number(travada.vagas)) {
     throw new ConflictException(
-      `Esta sala ja esta com ${ocupadas} de ${travada.vagas} lugares ocupados. ` +
-        'Aumente as vagas da oferta ou escolha outra sala.',
+      `Esta sala já está com ${ocupadas} de ${travada.vagas} lugares ocupados. ` +
+        'Aumente as vagas da sala na tela de Faixas ou escolha outra sala.',
     );
   }
 }

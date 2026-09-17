@@ -261,9 +261,10 @@ export class SenhaQuizService {
       // Sem a Valence nao ha como resolver o orgUnitId das turmas do CSV nem
       // falar com os quizzes — o lote rodaria em zero turma relatando sucesso.
       throw new BadRequestException(
-        'A troca de senhas e datas depende da integracao com o Brightspace ' +
-          '(D2L_HABILITADO). Sem ela nao ha como descobrir o orgUnitId das ' +
-          'turmas do CSV nem gravar no questionario.',
+        'A troca de senhas e datas depende da integração com o AVA, ' +
+          'que está desligada neste servidor — avise o suporte técnico. Sem ela ' +
+          'não há como encontrar as turmas no AVA nem gravar no questionário. ' +
+          '(Detalhe técnico: D2L_HABILITADO.)',
       );
     }
 
@@ -282,7 +283,7 @@ export class SenhaQuizService {
 
     if (!periodoLetivoIds || !periodoLetivoId || !rodada) {
       throw new BadRequestException(
-        'Nenhum periodo letivo cadastrado. Sem ele nao ha como separar as ' +
+        'Nenhum período de agendamento cadastrado. Sem ele não há como separar as ' +
           'turmas deste semestre das dos semestres passados.',
       );
     }
@@ -295,8 +296,8 @@ export class SenhaQuizService {
     // por perto e ninguem descobriria ate o dia da prova.
     if (!configurado.nomeQuiz) {
       throw new BadRequestException(
-        'Nenhum questionario-alvo configurado. Informe o nome da prova em ' +
-          'Senhas e datas > Questionario antes de aplicar.',
+        'Nenhum questionário-alvo configurado. Informe o nome da prova em ' +
+          'Senhas e datas > Questionário-alvo antes de aplicar.',
       );
     }
 
@@ -340,9 +341,9 @@ export class SenhaQuizService {
     // unica fonte autoritativa em texto claro. Ver `quiz-body.ts`.
     if (!celula) {
       throw new BadRequestException(
-        `Nao ha senha cadastrada para ${opcoes.data} (${rotuloDoTurno(turnoDaSenha)}). ` +
-          'Preencha a celula na grade antes de aplicar — o questionario precisa ' +
-          'receber a senha junto com a janela, senao ela seria apagada.',
+        `Não há senha cadastrada para ${opcoes.data.split('-').reverse().join('/')} (${rotuloDoTurno(turnoDaSenha)}). ` +
+          'Preencha a célula na grade antes de aplicar — o questionário precisa ' +
+          'receber a senha junto com a janela, senão ela seria apagada.',
       );
     }
 
@@ -405,7 +406,7 @@ export class SenhaQuizService {
       if (faltando.length > 0) {
         throw new BadRequestException(
           `Turma(s) ${faltando.join(', ')} fora das turmas do CSV resolvidas no ` +
-            'periodo vigente. Confira em Senhas e datas > Conferir.',
+            'período vigente. Confira em Senhas e datas > Conferir.',
         );
       }
     }
@@ -561,7 +562,7 @@ export class SenhaQuizService {
    * A ultima execucao de DATAS de CADA formato.
    *
    * `ultima()` responde "qual foi a mais recente?", e essa nao e a pergunta que
-   * a secretaria faz. Um unico minuto de disparo produz VARIAS execucoes — as
+   * a administração faz. Um unico minuto de disparo produz VARIAS execucoes — as
    * 12:01 sao tres (EaD, Semi e Modular), aplicadas em ticks seguidos porque os
    * dois lotes escrevem no mesmo questionario e o servidor serializa. Mostrar so
    * a mais recente exibe a terceira delas e esconde as outras duas, e quem le
@@ -624,7 +625,7 @@ export class SenhaQuizService {
     });
 
     if (!execucao)
-      throw new NotFoundException(`Execucao ${id} nao encontrada.`);
+      throw new NotFoundException(`Execução ${id} não encontrada.`);
 
     const porResultado = await this.prisma.itemSenhaQuiz.groupBy({
       by: ['resultado'],
@@ -692,7 +693,7 @@ export class SenhaQuizService {
     });
 
     if (!execucao)
-      throw new NotFoundException(`Execucao ${id} nao encontrada.`);
+      throw new NotFoundException(`Execução ${id} não encontrada.`);
 
     const itens = await this.prisma.itemSenhaQuiz.findMany({
       where: { execucaoId: id },
@@ -700,7 +701,7 @@ export class SenhaQuizService {
     });
 
     // As colunas de janela so entram no relatorio de DATAS: no de senhas elas
-    // sairiam vazias em toda linha, e coluna vazia num CSV que a secretaria abre
+    // sairiam vazias em toda linha, e coluna vazia num CSV que a administracao abre
     // no Excel e convite a procurar o que nao existe.
     const comDatas = execucao.tipo === TipoExecucaoQuiz.DATA;
 
@@ -712,17 +713,17 @@ export class SenhaQuizService {
 
     const cabecalho = [
       'Resultado',
-      'Codigo da turma',
+      'Código da turma',
       'Disciplina',
-      'OrgUnitId',
-      'Questionario',
-      'QuizId',
+      'Código da turma no AVA',
+      'Questionário',
+      'Código do questionário',
       'Tinha senha antes',
       ...(comDatas ? ['Formato', 'Abre em', 'Fecha em'] : []),
       ...(comGrupos
         ? ['Resultado do grupo', 'Grupo antes', 'Grupo depois']
         : []),
-      'Observacao',
+      'Observação',
     ];
 
     return montarCsv(
@@ -734,12 +735,12 @@ export class SenhaQuizService {
         i.orgUnitId,
         i.nomeQuiz,
         i.quizId,
-        i.senhaAnteriorLida ? 'Sim' : 'Nao',
+        i.senhaAnteriorLida ? 'Sim' : 'Não',
         ...(comDatas
           ? [
               i.modalidadeCodigo,
               // No FUSO DA OPERACAO, e nao em UTC. O CSV e lido por pessoas, e
-              // "18:00Z" faria a secretaria achar que a prova das 15h abre as 18h.
+              // "18:00Z" faria a administracao achar que a prova das 15h abre as 18h.
               this.horarioLegivel(i.startDateAplicado),
               this.horarioLegivel(i.endDateAplicado),
             ]
@@ -814,7 +815,7 @@ export class SenhaQuizService {
     });
 
     if (!execucao)
-      throw new NotFoundException(`Execucao ${id} nao encontrada.`);
+      throw new NotFoundException(`Execução ${id} não encontrada.`);
 
     return {
       ...execucao,
@@ -841,9 +842,9 @@ export class SenhaQuizService {
     if (!config?.substituiJanelas) return;
 
     throw new BadRequestException(
-      'O special access esta substituindo as janelas (Special access > ' +
-        'Configuracao). Desligue essa opcao para voltar a aplicar datas nos ' +
-        'questionarios.',
+      'O acesso especial está substituindo as janelas (Acesso especial > ' +
+        'Configuração). Desligue essa opção para voltar a aplicar datas nos ' +
+        'questionários.',
     );
   }
 
@@ -864,7 +865,7 @@ export class SenhaQuizService {
         where: { id: emAndamento.id },
         data: {
           status: StatusExecucao.FALHOU,
-          erro: 'Execucao interrompida: o processo parou de dar sinal de vida.',
+          erro: 'Execução interrompida: o processo parou de dar sinal de vida.',
           concluidoEm: new Date(),
         },
       });
@@ -872,9 +873,9 @@ export class SenhaQuizService {
     }
 
     throw new ConflictException(
-      `A execucao ${emAndamento.id} ainda esta rodando ` +
+      `A execução #${emAndamento.id} ainda está rodando ` +
         `(${emAndamento.processadas} de ${emAndamento.turmasResolvidas} turmas). ` +
-        'Espere terminar antes de comecar outra.',
+        'Espere terminar antes de começar outra.',
     );
   }
 
@@ -900,8 +901,8 @@ export class SenhaQuizService {
     if (!ja) return;
 
     throw new ConflictException(
-      `Esta senha ja foi aplicada pela execucao ${ja.id}. ` +
-        'Se quiser aplicar de novo, use a opcao de forcar.',
+      `Esta senha já foi aplicada pela execução #${ja.id}. ` +
+        'Se quiser aplicar de novo, use a opção de forçar.',
     );
   }
 
@@ -929,12 +930,12 @@ export class SenhaQuizService {
     });
 
     if (!janela) {
-      throw new NotFoundException(`Janela ${janelaId} nao encontrada.`);
+      throw new NotFoundException(`Janela ${janelaId} não encontrada.`);
     }
 
     // Desativada NAO bloqueia o disparo MANUAL, so o do cron (que nem a
     // enxerga, porque `janelasParaDisparar` a filtra). E a mesma logica da faixa
-    // inativa no agendamento administrativo: quem esta clicando e a secretaria,
+    // inativa no agendamento administrativo: quem esta clicando e a administracao,
     // e usar uma janela fora do calendario e caso de uso real — consertar o dia
     // em que o cron falhou. Recusar seria decidir no lugar dela.
     if (!janela.ativo) {
@@ -1070,9 +1071,9 @@ export class SenhaQuizService {
     if (!ja) return;
 
     throw new ConflictException(
-      `Esta janela ja foi aplicada em ${isoDeDataUtc(data)} pela execucao ${ja.id}, ` +
-        'com estes mesmos horarios. Se quiser aplicar de novo sem mudar nada, ' +
-        'use a opcao de forcar — corrigir o horario na tela ja libera sozinho.',
+      `Esta janela já foi aplicada em ${isoDeDataUtc(data).split('-').reverse().join('/')} pela execução #${ja.id}, ` +
+        'com estes mesmos horários. Se quiser aplicar de novo sem mudar nada, ' +
+        'use a opção de forçar — corrigir o horário na tela já libera sozinho.',
     );
   }
 
@@ -1378,7 +1379,7 @@ export class SenhaQuizService {
           nomeQuiz: null,
           resultado: ResultadoSenhaQuiz.QUIZ_NAO_ENCONTRADO,
           detalhe:
-            `Nenhum questionario casou com "${alvo.nomeQuiz}" (${alvo.matchQuiz}) ` +
+            `Nenhum questionário casou com "${alvo.nomeQuiz}" (${alvo.matchQuiz}) ` +
             `entre os ${lista.length} da turma.`,
         },
       ];
@@ -1422,8 +1423,8 @@ export class SenhaQuizService {
       falhaDoGrupo = {
         resultadoGrupo: ResultadoGrupoQuiz.SEM_GRUPO_NO_DIA,
         detalhe:
-          'A grade de grupos nao tem este dia para esta janela, e a janela nao ' +
-          'tem nome padrao. A condicao de acesso nao foi trocada.',
+          'A grade de grupos não tem este dia para esta janela, e a janela não ' +
+          'tem nome padrão. A condição de acesso não foi trocada.',
       };
     }
 
@@ -1795,7 +1796,7 @@ export class SenhaQuizService {
     };
 
     const situacao = jaPreparado(quiz)
-      ? 'Ja estava sem data e restrito a special access.'
+      ? 'Já estava sem data e restrito a quem tem acesso especial.'
       : null;
 
     if (!simulacao) {
@@ -1811,7 +1812,7 @@ export class SenhaQuizService {
           ...comum,
           resultado: ResultadoSenhaQuiz.FALHA_AO_GRAVAR,
           detalhe:
-            `${this.motivo(erro)} As condicoes de liberacao NAO foram tocadas.`.slice(
+            `${this.motivo(erro)} As condições de liberação NÃO foram tocadas.`.slice(
               0,
               900,
             ),
@@ -1962,7 +1963,7 @@ export class SenhaQuizService {
   }
 
   /**
-   * Um instante UTC como a secretaria le: dia e hora de Brasilia.
+   * Um instante UTC como a administracao le: dia e hora de Brasilia.
    *
    * O relatorio e um documento para PESSOAS. Despejar o ISO em UTC faria a
    * janela das 15:00 aparecer como 18:00 e alguem "corrigir" o que estava certo.
@@ -1987,7 +1988,7 @@ export class SenhaQuizService {
    *
    * Os dois desfechos moram em colunas separadas (`resultado` e
    * `resultadoGrupo`), mas o `detalhe` e um campo unico — e ele e o que a
-   * secretaria le no CSV. Prefixar a parte do grupo evita a leitura mais cara
+   * administracao le no CSV. Prefixar a parte do grupo evita a leitura mais cara
    * possivel: "a prova falhou ao gravar" quando o que falhou foi o grupo, e a
    * data entrou.
    */

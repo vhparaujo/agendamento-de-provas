@@ -313,7 +313,7 @@ describe('Formato escolhido da turma ambigua (e2e)', () => {
         .send({ modalidadeId: eadId })
         .expect(400);
 
-      expect(res.body.message).toMatch(/nao esta ambigua/i);
+      expect(res.body.message).toMatch(/não está ambígua/i);
       expect(
         await prisma.modalidadeEscolhidaDaTurma.count({
           where: { orgUnitId: ORG_UNANIME },
@@ -326,7 +326,7 @@ describe('Formato escolhido da turma ambigua (e2e)', () => {
         .send({ modalidadeId: eadId })
         .expect(400);
 
-      expect(res.body.message).toMatch(/ausencia/i);
+      expect(res.body.message).toMatch(/ausência/i);
     });
 
     /**

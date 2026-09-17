@@ -26,7 +26,7 @@ import { PrismaClient } from '../src/generated/prisma/client';
  *
  * ⚠️ Quem PERDE a elegibilidade e ja tem prova marcada **continua com a
  * reserva** — este script nao cancela nada. A lista sai no relatorio para a
- * secretaria decidir; cancelar em massa por causa de uma mudanca de regra seria
+ * administracao decidir; cancelar em massa por causa de uma mudanca de regra seria
  * uma decisao de negocio, nao de script.
  */
 async function main(): Promise<void> {

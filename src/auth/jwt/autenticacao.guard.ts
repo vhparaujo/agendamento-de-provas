@@ -91,6 +91,8 @@ export class AutenticacaoGuard implements CanActivate {
         'Adicione @SomenteAdmin(), @SomenteAluno(), @SomenteIntegracao() ou @Publico().',
     );
 
-    throw new ForbiddenException('Rota sem controle de acesso configurado');
+    throw new ForbiddenException(
+      'Esta função não está disponível no momento. Avise o suporte.',
+    );
   }
 }

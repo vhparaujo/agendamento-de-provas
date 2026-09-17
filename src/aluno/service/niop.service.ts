@@ -42,7 +42,7 @@ export class NiopService {
 
     if (!aluno) {
       throw new NotFoundException(
-        `Nenhum aluno importado com a matricula ${ra}.`,
+        `Nenhum aluno importado com a matrícula ${ra}.`,
       );
     }
 
@@ -95,7 +95,7 @@ export class NiopService {
     const ra = String(matricula ?? '').trim();
 
     if (!ra || ra.length > 64) {
-      throw new BadRequestException('Matricula invalida.');
+      throw new BadRequestException('Matrícula inválida.');
     }
 
     return ra;

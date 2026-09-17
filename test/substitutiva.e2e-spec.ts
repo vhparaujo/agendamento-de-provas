@@ -373,10 +373,10 @@ describe('Prova substitutiva: os criterios de nota (e2e)', () => {
     expect(lista.body.podeAgendar).toBe(false);
     expect(lista.body.motivo).toContain('prova substitutiva');
     // Os limites NAO chegam ao aluno (decisao do cliente, 08/09/2026): a nota e
-    // o criterio sao assunto dele com a secretaria, e a tela de agendamento nao
+    // o criterio sao assunto dele com a administracao, e a tela de agendamento nao
     // e o lugar de discuti-los.
     expect(lista.body.motivo).not.toMatch(/\d/);
-    expect(lista.body.motivo).toContain('formulario de suporte');
+    expect(lista.body.motivo).toContain('formulário de suporte');
 
     // A tela ja desabilita o botao, mas quem chamar a rota direto tambem tem de
     // ser recusado: o `POST` refaz o cruzamento inteiro, sem confiar na tela.

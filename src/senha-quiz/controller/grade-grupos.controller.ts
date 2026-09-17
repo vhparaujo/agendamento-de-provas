@@ -55,7 +55,7 @@ export class GradeGruposController {
 
     if (!de || !ate || !dia.test(de) || !dia.test(ate)) {
       throw new BadRequestException(
-        'Informe `de` e `ate` (AAAA-MM-DD): a grade e sempre de um intervalo.',
+        'Informe as datas De e Até: a grade é sempre de um intervalo.',
       );
     }
 

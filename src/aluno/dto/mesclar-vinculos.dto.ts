@@ -71,7 +71,7 @@ export class ResultadoMesclagemDto implements ResultadoMesclagem {
     description:
       'O que a mesclagem deixou inconsistente: os dois vinculos divergiam em ' +
       'formato ou polo, e as provas herdadas continuam nas salas antigas. ' +
-      'Nao bloqueia — quem decide entre remanejar e cancelar e a secretaria.',
+      'Nao bloqueia — quem decide entre remanejar e cancelar e a administração.',
   })
   avisos!: string[];
 }

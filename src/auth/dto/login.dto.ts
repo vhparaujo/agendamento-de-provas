@@ -10,7 +10,7 @@ export class LoginDto {
   @Transform(({ value }): unknown =>
     typeof value === 'string' ? value.trim().toLowerCase() : value,
   )
-  @IsEmail({}, { message: 'E-mail invalido' })
+  @IsEmail({}, { message: 'E-mail inválido.' })
   email!: string;
 
   @ApiProperty({
@@ -19,8 +19,8 @@ export class LoginDto {
     description: 'Senha em texto puro; trafega apenas sob TLS.',
   })
   @IsString()
-  @IsNotEmpty({ message: 'Senha e obrigatoria' })
+  @IsNotEmpty({ message: 'Informe a senha.' })
   // bcrypt so considera os primeiros 72 bytes; limitar evita payload absurdo
-  @MaxLength(72, { message: 'Senha deve ter no maximo 72 caracteres' })
+  @MaxLength(72, { message: 'A senha deve ter no máximo 72 caracteres.' })
   senha!: string;
 }

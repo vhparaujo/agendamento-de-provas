@@ -161,7 +161,7 @@ export class AgendamentoIntegracaoDto implements AgendamentoIntegracao {
 
   @ApiProperty({
     example: false,
-    description: 'A secretaria alocou ou remanejou esta prova.',
+    description: 'A administracao alocou ou remanejou esta prova.',
   })
   alocadoManual!: boolean;
 }

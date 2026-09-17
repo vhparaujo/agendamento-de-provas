@@ -23,7 +23,7 @@ import type { ArquivoGerado, FiltroRelatorio } from './relatorio.service';
  *
  * | | quem le | recorte | quem entra |
  * |---|---|---|---|
- * | `/agendamentos/exportacao` | secretaria, no Excel | um periodo letivo | TODOS os vinculos |
+ * | `/agendamentos/exportacao` | administracao, no Excel | um periodo letivo | TODOS os vinculos |
  * | `/relatorios/grupos-d2l` | o Brightspace | faixa **x turma** | confirmados, 1 linha por RA |
  * | **lista de presenca** | o **fiscal**, no papel | **sala x faixa** | confirmados, 1 linha por RA |
  *
@@ -78,7 +78,7 @@ export class ListaPresencaService {
 
     if (listas.length === 0) {
       throw new NotFoundException(
-        'Nenhuma sala com aluno confirmado neste recorte',
+        'Nenhuma sala com aluno confirmado neste filtro.',
       );
     }
 
@@ -100,7 +100,7 @@ export class ListaPresencaService {
     const [lista] = await this.montarListas({ id: salaFaixaId }, filtro);
 
     if (!lista) {
-      throw new NotFoundException('Nenhum aluno confirmado nesta sala');
+      throw new NotFoundException('Nenhum aluno confirmado nesta sala.');
     }
 
     return {

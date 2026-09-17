@@ -172,8 +172,9 @@ export class D2lOauthService {
 
     if (!guardado?.refreshToken) {
       throw new ServiceUnavailableException(
-        'Nenhum refresh token gravado: a integracao com o D2L nunca foi autorizada. ' +
-          'Autorize uma vez pelo browser (o redirect cai em GET /d2l/callback) — o passo a passo esta no README.',
+        'A integração com o AVA ainda não foi autorizada. Avise o suporte ' +
+          'técnico. Detalhe técnico: nenhum refresh token gravado; autorize uma vez ' +
+          'pelo navegador (npm run d2l:autorizar), o passo a passo está no README.',
       );
     }
 
@@ -226,7 +227,8 @@ export class D2lOauthService {
       this.auditarFalha(fluxo, `falha de rede no token endpoint: ${motivo}`);
 
       throw new BadGatewayException(
-        `Nao foi possivel falar com o token endpoint do Brightspace: ${motivo}`,
+        'Não foi possível conectar ao AVA. Tente de novo em instantes; ' +
+          `se continuar, avise o suporte técnico. Detalhe técnico: token endpoint — ${motivo}`,
       );
     }
 
@@ -284,7 +286,8 @@ export class D2lOauthService {
   private exigirConfig(faltando: string[]): void {
     if (faltando.length > 0) {
       throw new ServiceUnavailableException(
-        `Integracao D2L ainda nao configurada. Faltam no .env: ${faltando.join(', ')}`,
+        'A integração com o AVA ainda não foi configurada neste servidor. ' +
+          `Avise o suporte técnico. Detalhe técnico: faltam no .env ${faltando.join(', ')}.`,
       );
     }
   }
@@ -343,14 +346,15 @@ export class D2lOauthService {
       // perdeu a autorizacao. Nenhum retry recupera.
       if (fluxo === 'refresh') {
         return new ServiceUnavailableException(
-          'O refresh token gravado nao e mais valido (rotacionado, revogado ou expirado). ' +
-            'E preciso reautorizar a integracao pelo browser — GET /d2l/callback recebe o novo code.',
+          'A autorização da integração com o AVA expirou. Avise o suporte ' +
+            'técnico: é preciso reautorizar a integração pelo navegador. Detalhe ' +
+            'técnico: o refresh token gravado foi rotacionado, revogado ou expirou.',
         );
       }
 
       return new BadRequestException(
-        'O code de autorizacao e invalido, expirado ou ja foi usado (ele vale uma vez so). ' +
-          'Refaca a autorizacao no Brightspace para obter um novo.',
+        'O código de autorização é inválido, expirou ou já foi usado (ele vale uma vez só). ' +
+          'Refaça a autorização no AVA para obter um novo.',
       );
     }
 
@@ -358,14 +362,14 @@ export class D2lOauthService {
     // resolve, o cadastro e o .env e que precisam bater.
     if (erro === 'invalid_client' || erro === 'invalid_request') {
       return new BadRequestException(
-        `O Brightspace recusou a troca (${erro}${descricao ? `: ${descricao}` : ''}). ` +
-          'Confira se D2L_CLIENT_ID, D2L_CLIENT_SECRET e D2L_REDIRECT_URI sao exatamente ' +
-          'os do registro do aplicativo — o redirect_uri e comparado byte a byte.',
+        `O AVA recusou a troca (${erro}${descricao ? `: ${descricao}` : ''}). ` +
+          'Confira se D2L_CLIENT_ID, D2L_CLIENT_SECRET e D2L_REDIRECT_URI são exatamente ' +
+          'os do registro do aplicativo — o redirect_uri é comparado byte a byte.',
       );
     }
 
     return new BadGatewayException(
-      `Resposta inesperada do token endpoint do Brightspace: ${erro}${descricao ? ` (${descricao})` : ''}`,
+      `Resposta inesperada do token endpoint do AVA: ${erro}${descricao ? ` (${descricao})` : ''}`,
     );
   }
 }

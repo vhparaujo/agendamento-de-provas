@@ -120,7 +120,7 @@ export class SenhaQuizController {
     if (dto.tipo === TipoExecucaoQuiz.DATA) {
       if (dto.janelaId === undefined) {
         throw new BadRequestException(
-          'Informe `janelaId`: uma execucao de datas aplica UMA janela.',
+          'Escolha a janela: cada execução de datas aplica UMA janela.',
         );
       }
 
@@ -133,7 +133,7 @@ export class SenhaQuizController {
     if (dto.tipo === TipoExecucaoQuiz.PREPARO) {
       if (dto.turno === undefined) {
         throw new BadRequestException(
-          'Informe `turno`: o preparo grava a senha de UMA celula da grade junto.',
+          'Escolha o turno: o preparo grava junto a senha de UMA célula da grade.',
         );
       }
 
@@ -150,7 +150,7 @@ export class SenhaQuizController {
 
     if (dto.turno === undefined) {
       throw new BadRequestException(
-        'Informe `turno`: uma execucao de senhas aplica UMA celula da grade.',
+        'Escolha o turno: cada execução de senhas aplica UMA célula da grade.',
       );
     }
 
@@ -197,13 +197,13 @@ export class SenhaQuizController {
   ultima(@Query('origem') origem?: string, @Query('tipo') tipo?: string) {
     if (origem !== undefined && !(origem in OrigemExecucao)) {
       throw new BadRequestException(
-        `Origem invalida: use ${Object.keys(OrigemExecucao).join(' ou ')}.`,
+        `Origem inválida: use ${Object.keys(OrigemExecucao).join(' ou ')}.`,
       );
     }
 
     if (tipo !== undefined && !(tipo in TipoExecucaoQuiz)) {
       throw new BadRequestException(
-        `Tipo invalido: use ${Object.keys(TipoExecucaoQuiz).join(' ou ')}.`,
+        `Tipo inválido: use ${Object.keys(TipoExecucaoQuiz).join(' ou ')}.`,
       );
     }
 
@@ -221,7 +221,7 @@ export class SenhaQuizController {
     summary: 'A ultima mudanca de datas de CADA formato',
     description:
       '`/ultima` responde "qual foi a mais recente?", e essa nao e a pergunta ' +
-      'que a secretaria faz.\n\n' +
+      'que a administracao faz.\n\n' +
       'Um unico minuto de disparo produz **varias** execucoes: as 12:01 sao ' +
       'tres (EaD 15:00-18:00, Semi e Modular 14:00-15:30), aplicadas em ticks ' +
       'seguidos porque os dois lotes escrevem no mesmo questionario e o servidor ' +
@@ -245,7 +245,7 @@ export class SenhaQuizController {
   datasPorModalidade(@Query('origem') origem?: string) {
     if (origem !== undefined && !(origem in OrigemExecucao)) {
       throw new BadRequestException(
-        `Origem invalida: use ${Object.keys(OrigemExecucao).join(' ou ')}.`,
+        `Origem inválida: use ${Object.keys(OrigemExecucao).join(' ou ')}.`,
       );
     }
 

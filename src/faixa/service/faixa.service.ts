@@ -14,6 +14,9 @@ import {
   validarOferta,
 } from './sala-faixa.validacao';
 
+const FAIXA_NAO_ENCONTRADA =
+  'Faixa não encontrada. Ela pode ter sido apagada; atualize a página.';
+
 export interface OfertaResumo {
   /** Id da SalaFaixa — e ele que o agendamento aponta. */
   id: number;
@@ -70,7 +73,7 @@ export class FaixaService {
 
     const polo = exigirEncontrado(
       await this.prisma.polo.findUnique({ where: { id: dados.poloId } }),
-      `Polo ${dados.poloId} nao encontrado`,
+      'Polo não encontrado. Ele pode ter sido apagado; atualize a página.',
     );
 
     // Polo inativo = campus fora da oferta. Esta e a trava que faz "desativar o
@@ -79,8 +82,8 @@ export class FaixaService {
     // As faixas JA criadas continuam de pe — quem agendou nao perde a prova.
     if (!polo.ativo) {
       throw new ConflictException(
-        `O polo "${polo.nome}" esta inativo e nao recebe faixas novas. ` +
-          'Reative-o (PATCH ativo=true) se o campus voltou a ter prova.',
+        `O polo "${polo.nome}" está inativo e não recebe faixas novas. ` +
+          'Se o campus voltou a ter prova, reative o polo na tela de Polos.',
       );
     }
 
@@ -99,8 +102,9 @@ export class FaixaService {
 
     if (duplicada) {
       throw new ConflictException(
-        `Ja existe uma faixa em ${polo.nome} no dia ${dados.data} das ` +
-          `${dados.horaInicio} as ${dados.horaFim} (id ${duplicada.id}). ` +
+        `Já existe uma faixa em ${polo.nome} no dia ` +
+          `${dados.data.split('-').reverse().join('/')} das ` +
+          `${dados.horaInicio} às ${dados.horaFim} (faixa #${duplicada.id}). ` +
           'Adicione salas a ela em vez de criar outra.',
       );
     }
@@ -172,7 +176,7 @@ export class FaixaService {
       include: INCLUDE_DETALHE,
     });
 
-    if (!faixa) throw new NotFoundException(`Faixa ${id} nao encontrada`);
+    if (!faixa) throw new NotFoundException(FAIXA_NAO_ENCONTRADA);
 
     return montarDetalhe(faixa);
   }
@@ -196,7 +200,7 @@ export class FaixaService {
       include: { salaFaixas: { include: { modalidade: true } } },
     });
 
-    if (!faixa) throw new NotFoundException(`Faixa ${id} nao encontrada`);
+    if (!faixa) throw new NotFoundException(FAIXA_NAO_ENCONTRADA);
 
     const horaInicio = dados.horaInicio ?? faixa.horaInicio;
     const horaFim = dados.horaFim ?? faixa.horaFim;
@@ -208,9 +212,9 @@ export class FaixaService {
 
     if (naoCabe) {
       throw new BadRequestException(
-        `A faixa passaria a ter ${janela} min, mas ja oferta o formato ` +
-          `${naoCabe.modalidade.nome} (${naoCabe.modalidade.duracaoMinutos} min). ` +
-          'Remova essa oferta antes de encurtar o horario.',
+        `A faixa passaria a ter ${janela} min, mas já tem sala no formato ` +
+          `${naoCabe.modalidade.nome}, cuja prova dura ${naoCabe.modalidade.duracaoMinutos} min. ` +
+          'Tire essa sala da faixa antes de encurtar o horário.',
       );
     }
 
@@ -261,11 +265,11 @@ export class FaixaService {
       include: { salaFaixas: true },
     });
 
-    if (!faixa) throw new NotFoundException(`Faixa ${faixaId} nao encontrada`);
+    if (!faixa) throw new NotFoundException(FAIXA_NAO_ENCONTRADA);
 
     if (faixa.salaFaixas.some((sf) => sf.salaId === entrada.salaId)) {
       throw new ConflictException(
-        'Esta sala ja esta nesta faixa. Uma sala entra uma unica vez por faixa, ' +
+        'Esta sala já está nesta faixa. Uma sala entra uma única vez por faixa, ' +
           'porque dentro de uma faixa ela fica travada num formato.',
       );
     }
@@ -289,7 +293,7 @@ export class FaixaService {
       include: { _count: { select: { salaFaixas: true } } },
     });
 
-    if (!faixa) throw new NotFoundException(`Faixa ${id} nao encontrada`);
+    if (!faixa) throw new NotFoundException(FAIXA_NAO_ENCONTRADA);
 
     // O CANCELADO conta tanto quanto o confirmado, e a mensagem precisa dizer
     // isso: quem cancelou os agendamentos acha que "tirou tudo" e nao entende o
@@ -310,14 +314,13 @@ export class FaixaService {
         confirmados > 0
           ? `${confirmados} agendamento(s) confirmado(s)` +
             (cancelados > 0 ? ` e ${cancelados} cancelado(s)` : '')
-          : `${cancelados} agendamento(s) CANCELADO(s) — nenhum confirmado`;
+          : `${cancelados} agendamento(s) cancelado(s), nenhum confirmado`;
 
       throw new ConflictException(
-        `Esta faixa tem ${situacao} e nao pode ser apagada. ` +
-          'Cancelar nao apaga o agendamento: ele vira CANCELADO e continua ' +
-          'registrado, com o historico de quem marcou e desmarcou. ' +
-          'Desative a faixa (PATCH ativo=false) para tira-la da lista dos alunos ' +
-          'sem perder esse registro.',
+        `Esta faixa não pode ser apagada porque tem ${situacao}. ` +
+          'Mesmo cancelado, o agendamento continua registrado, com o histórico ' +
+          'de quem marcou e desmarcou. Em vez de apagar, desative a faixa: ela ' +
+          'sai da lista dos alunos e esse registro é preservado.',
       );
     }
 
@@ -326,7 +329,7 @@ export class FaixaService {
       this.prisma.faixa.delete({ where: { id } }),
     ]);
 
-    return { mensagem: `Faixa ${id} removida` };
+    return { mensagem: 'Faixa removida.' };
   }
 
   /**
@@ -398,7 +401,7 @@ export class FaixaService {
   ) {
     if (entradas.length === 0) {
       throw new BadRequestException(
-        'Informe ao menos uma sala: faixa sem sala nao aparece para aluno nenhum.',
+        'Informe ao menos uma sala: faixa sem sala não aparece para aluno nenhum.',
       );
     }
 
@@ -408,8 +411,8 @@ export class FaixaService {
 
     if (idsRepetidos.length > 0) {
       throw new BadRequestException(
-        `Sala repetida na mesma faixa: ${[...new Set(idsRepetidos)].join(', ')}. ` +
-          'Dentro de uma faixa, a sala fica travada num unico formato.',
+        'A mesma sala foi escolhida mais de uma vez nesta faixa. ' +
+          'Dentro de uma faixa, a sala fica travada num único formato.',
       );
     }
 
@@ -441,12 +444,12 @@ export class FaixaService {
     return entradas.map((entrada) => {
       const sala = exigirEncontrado(
         salas.find((s) => s.id === entrada.salaId) ?? null,
-        `Sala ${entrada.salaId} nao encontrada`,
+        'Uma das salas escolhidas não foi encontrada. Ela pode ter sido apagada; atualize a página.',
       );
 
       const modalidade = exigirEncontrado(
         modalidades.find((m) => m.id === entrada.modalidadeId) ?? null,
-        `Formato ${entrada.modalidadeId} nao encontrado`,
+        'Formato não encontrado. Atualize a página e tente de novo.',
       );
 
       const vagas = entrada.vagas ?? sala.capacidade;
@@ -462,8 +465,8 @@ export class FaixaService {
       const chave = `${modalidade.id}:${ordem}`;
       if (ordensUsadas.has(chave)) {
         throw new ConflictException(
-          `A ordem ${ordem} ja esta usada no formato ${modalidade.nome} desta faixa. ` +
-            'A ordem define a sequencia de preenchimento e precisa ser unica.',
+          `A ordem ${ordem} já está sendo usada no formato ${modalidade.nome} desta faixa. ` +
+            'A ordem define a sequência de preenchimento e precisa ser única.',
         );
       }
 
@@ -563,15 +566,13 @@ function montarDetalhe(faixa: FaixaComRelacoes): FaixaDetalhe {
  */
 function paraData(data: string): Date {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) {
-    throw new BadRequestException(
-      `Data invalida: "${data}". Use o formato AAAA-MM-DD.`,
-    );
+    throw new BadRequestException('Data inválida. Confira a data informada.');
   }
 
   const quando = new Date(`${data}T00:00:00.000Z`);
 
   if (Number.isNaN(quando.getTime())) {
-    throw new BadRequestException(`Data invalida: "${data}"`);
+    throw new BadRequestException('Data inválida. Confira a data informada.');
   }
 
   return quando;

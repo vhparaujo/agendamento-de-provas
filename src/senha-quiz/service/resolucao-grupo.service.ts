@@ -28,7 +28,7 @@ import { normalizarNomeDeGrupo } from './grupo';
  * abaixo e o que evita relistar os grupos de uma turma que aparece em varios
  * quizzes; mante-lo entre execucoes faria um grupo criado (ou renomeado) no
  * Brightspace as 11h continuar invisivel no disparo das 12:01, sem nada no log
- * dizendo por que. Grupo e cadastro que a secretaria mexe no dia.
+ * dizendo por que. Grupo e cadastro que a administracao mexe no dia.
  *
  * Portado de `brightspace-change-conditions/src/groupResolver.js`.
  */
@@ -121,7 +121,7 @@ export class SessaoDeResolucao {
         alvo: null,
         falha: ResultadoGrupoQuiz.SEM_CATEGORIA_DE_GRUPO,
         motivo:
-          'A turma nao tem nenhuma categoria de grupo, entao nao ha onde ' +
+          'A turma não tem nenhuma categoria de grupo, então não há onde ' +
           `procurar "${this.nome}". Como toda turma deveria ter os grupos de ` +
           'prova criados, isto e falta de cadastro nesta turma.',
         nomePorId,
@@ -145,7 +145,7 @@ export class SessaoDeResolucao {
         alvo: null,
         falha: ResultadoGrupoQuiz.GRUPO_NAO_ENCONTRADO,
         motivo:
-          `A categoria "${this.categoria}" nao existe nesta turma. ` +
+          `A categoria "${this.categoria}" não existe nesta turma. ` +
           `Existem: ${categorias.map((c) => c.Name).join(', ')}.`,
         nomePorId,
       };
@@ -203,7 +203,7 @@ export class SessaoDeResolucao {
           `Nenhum grupo chamado "${this.nome}" nesta turma. ` +
           (disponiveis.length
             ? `Grupos existentes: ${disponiveis.join(' | ')}.`
-            : 'A turma nao tem grupos nessa(s) categoria(s).'),
+            : 'A turma não tem grupos nessa(s) categoria(s).'),
         nomePorId,
       };
     }

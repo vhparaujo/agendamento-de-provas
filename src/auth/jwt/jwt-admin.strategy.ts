@@ -23,7 +23,9 @@ export class JwtAdminStrategy extends PassportStrategy(
   validate(payload: AdminJwtPayload): AdminJwtPayload {
     // Um refresh token nunca deve ser aceito como access token.
     if (payload.perfil !== Perfil.ADMIN) {
-      throw new UnauthorizedException('Token nao pertence a um administrador');
+      throw new UnauthorizedException(
+        'Sua sessão não é de administrador. Entre novamente com a sua conta.',
+      );
     }
 
     return payload;

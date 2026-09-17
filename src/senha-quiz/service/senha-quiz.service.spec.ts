@@ -889,7 +889,7 @@ describe('SenhaQuizService', () => {
       const { servico } = montar({ ...tresTurmas, janela: null });
 
       await expect(servico.iniciar(OPCOES, 'admin@ucb.br')).rejects.toThrow(
-        /Janela 10 nao encontrada/,
+        /Janela 10 não encontrada/,
       );
     });
 
@@ -981,7 +981,7 @@ describe('SenhaQuizService', () => {
      * ========================================================================
      * A GRADE DE GRUPOS (14/09/2026)
      * ========================================================================
-     * Os grupos de cada dia tem nomes livres, e a secretaria trocava o nome da
+     * Os grupos de cada dia tem nomes livres, e a administracao trocava o nome da
      * janela a mao todo dia. A celula do dia vence o nome fixo.
      */
     describe('grade de grupos do dia', () => {

@@ -170,7 +170,7 @@ export function alunosDaTurma(
       userId,
       matricula,
       detalhe:
-        `${acessos.length} reservas confirmadas nesta turma, em horarios ` +
+        `${acessos.length} reservas confirmadas nesta turma, em horários ` +
         'diferentes (em geral, o RA de dois cursos). Nenhuma foi escolhida: ' +
         'cancele a que sobra e rode de novo.',
     });

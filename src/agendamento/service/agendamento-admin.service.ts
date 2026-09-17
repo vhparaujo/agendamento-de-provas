@@ -34,6 +34,9 @@ import {
   travarAluno,
 } from './lock-de-vagas';
 
+const AGENDAMENTO_NAO_ENCONTRADO =
+  'Agendamento não encontrado. Atualize a página e tente de novo.';
+
 export interface FiltroAgendamentos {
   poloId?: number;
   faixaId?: number;
@@ -235,7 +238,7 @@ export class AgendamentoAdminService {
    * que so faz sentido ao CRIAR: aluno que ja tem prova neste semestre (para
    * isso existe o remanejo) e situacao de curso que nao permite agendar — esta
    * ultima liberavel com `ignorarStatusCurso`, porque bloquear de vez trancaria
-   * a secretaria no unico caso em que ela precisa da valvula de escape.
+   * a administracao no unico caso em que ela precisa da valvula de escape.
    */
   async agendarPeloAdmin(
     dados: {
@@ -247,9 +250,7 @@ export class AgendamentoAdminService {
     ator?: string,
   ): Promise<AgendamentoPeloAdmin> {
     if (!dados.salaFaixaId === !dados.faixaId) {
-      throw new BadRequestException(
-        'Informe `salaFaixaId` (sala exata) OU `faixaId` (deixa a alocacao escolher) — um dos dois.',
-      );
+      throw new BadRequestException('Escolha o horário ou a sala de destino.');
     }
 
     const vinculo = await this.prisma.alunoImportado.findUnique({
@@ -258,7 +259,9 @@ export class AgendamentoAdminService {
     });
 
     if (!vinculo) {
-      throw new NotFoundException(`Vinculo ${dados.alunoId} nao encontrado`);
+      throw new NotFoundException(
+        'Aluno não encontrado. Atualize a página e tente de novo.',
+      );
     }
 
     // Duas leituras porque sao duas perguntas: o periodo letivo DESTE vinculo
@@ -272,8 +275,8 @@ export class AgendamentoAdminService {
 
     if (!vigente || !janela) {
       throw new BadRequestException(
-        'Nenhum periodo de agendamento cadastrado: sem periodo letivo nao ha ' +
-          'como saber de qual semestre e esta prova. Cadastre em /periodos.',
+        'Nenhum período de agendamento cadastrado: sem ele não há como saber ' +
+          'de qual semestre é esta prova. Cadastre um período na tela de Períodos.',
       );
     }
 
@@ -287,15 +290,15 @@ export class AgendamentoAdminService {
     if (!vinculo.ativo) {
       if (!dados.ignorarStatusCurso) {
         throw new ConflictException(
-          `A situacao deste aluno no curso ${vinculo.curso} esta como ` +
-            `"${vinculo.statusCurso}", que nao permite agendar prova. Se for o ` +
-            'caso mesmo assim, reenvie com `ignorarStatusCurso: true`.',
+          `A situação deste aluno no curso ${vinculo.curso} está como ` +
+            `"${vinculo.statusCurso}", que não permite agendar prova. Se for o ` +
+            'caso mesmo assim, marque "Agendar mesmo assim" e confirme de novo.',
         );
       }
 
       avisos.push(
-        `Agendado apesar da situacao no curso ser "${vinculo.statusCurso}", ` +
-          'que normalmente nao permite agendar.',
+        `Agendado apesar da situação no curso ser "${vinculo.statusCurso}", ` +
+          'que normalmente não permite agendar.',
       );
     }
 
@@ -303,7 +306,7 @@ export class AgendamentoAdminService {
     // mensagem: "use o remanejo" resolve o problema; "409" nao diz nada.
     //
     // O recorte inclui a RODADA, como no portal: quem ja fez a N2 pode e deve
-    // ser agendado na substitutiva, e mandar a secretaria "usar o remanejo"
+    // ser agendado na substitutiva, e mandar a administracao "usar o remanejo"
     // nesse caso a faria mover a prova ja realizada.
     const jaTem = await this.prisma.agendamento.findFirst({
       where: { alunoId: vinculo.id, periodoLetivoId, rodada, ...CONFIRMADO },
@@ -312,9 +315,9 @@ export class AgendamentoAdminService {
 
     if (jaTem) {
       throw new ConflictException(
-        `Este aluno ja tem prova marcada para o curso ${vinculo.curso} nesta ` +
-          `prova do semestre (${rodada}, agendamento ${jaTem.id}). Para mudar ` +
-          'de sala ou horario, use o remanejo.',
+        `Este aluno já tem prova marcada para o curso ${vinculo.curso} nesta ` +
+          `prova do semestre (${rodada}, agendamento #${jaTem.id}). Para mudar ` +
+          'de sala ou horário, use o remanejo.',
       );
     }
 
@@ -343,8 +346,8 @@ export class AgendamentoAdminService {
       if (existente) {
         throw new ConflictException(
           `Este aluno acabou de receber prova nesta prova do semestre ` +
-            `(${rodada}, agendamento ${existente.id}), enquanto esta tela ` +
-            'estava aberta. Recarregue e use o remanejo se precisar mudar de horario.',
+            `(${rodada}, agendamento #${existente.id}), enquanto esta tela ` +
+            'estava aberta. Atualize a página e use o remanejo se precisar mudar de horário.',
         );
       }
 
@@ -479,7 +482,7 @@ export class AgendamentoAdminService {
     const semBrightspace = (motivo: string) => {
       if (!anterior) {
         throw new ConflictException(
-          `${motivo} E este aluno nao tem nenhuma reserva anterior neste ` +
+          `${motivo} E este aluno não tem nenhuma reserva anterior neste ` +
             'semestre de onde copiar as disciplinas — sem elas, a prova seria ' +
             'marcada sem cobrir disciplina nenhuma.',
         );
@@ -487,8 +490,8 @@ export class AgendamentoAdminService {
 
       const avisos = [
         `${motivo} As disciplinas foram copiadas da reserva anterior deste ` +
-          `aluno neste semestre (agendamento ${anterior.id}). Confira antes ` +
-          'de liberar a prova no Brightspace.',
+          `aluno neste semestre (agendamento #${anterior.id}). Confira antes ` +
+          'de liberar a prova no AVA.',
       ];
 
       // ⚠️ A reserva copiada NAO passou pelos criterios desta janela — em
@@ -498,12 +501,12 @@ export class AgendamentoAdminService {
       // saida e dizer em voz alta o que a lista NAO garante.
       if (filtroDeNota) {
         avisos.push(
-          'ATENCAO: esta janela so admite disciplina com N1 de pelo menos ' +
+          'ATENÇÃO: esta janela só admite disciplina com N1 de pelo menos ' +
             `${filtroDeNota.minimaN1} e nota final abaixo de ` +
-            `${filtroDeNota.maximaFinal}, e a lista copiada NAO foi conferida ` +
-            'contra as notas — ela veio de outra reserva, nao do Brightspace. ' +
-            'Confira as notas antes de confirmar, ou refaca quando a ' +
-            'integracao voltar.',
+            `${filtroDeNota.maximaFinal}, e a lista copiada NÃO foi conferida ` +
+            'contra as notas — ela veio de outra reserva, não do AVA. ' +
+            'Confira as notas antes de confirmar, ou refaça quando a ' +
+            'integração com o AVA voltar.',
         );
       }
 
@@ -516,8 +519,8 @@ export class AgendamentoAdminService {
 
     if (!this.d2l.habilitado()) {
       return semBrightspace(
-        'A integracao com o Brightspace esta desligada (D2L_HABILITADO), e e ' +
-          'ela quem sabe as disciplinas de quem nao agendou pelo portal.',
+        'A integração com o AVA está desligada neste servidor, e é ' +
+          'ela quem sabe as disciplinas de quem não agendou pelo portal.',
       );
     }
 
@@ -528,21 +531,21 @@ export class AgendamentoAdminService {
 
       if (identidade.situacao === 'SEM_CONTA') {
         return semBrightspace(
-          `A matricula ${vinculo.matricula} nao existe no Brightspace.`,
+          `A matrícula ${vinculo.matricula} não existe no AVA.`,
         );
       }
 
       if (identidade.situacao === 'AMBIGUA') {
         return semBrightspace(
-          `Ha ${identidade.quantos} contas no Brightspace com a matricula ` +
-            `${vinculo.matricula}, e escolher uma nao e decisao do sistema.`,
+          `Há ${identidade.quantos} contas no AVA com a matrícula ` +
+            `${vinculo.matricula}, e o sistema não escolhe entre elas.`,
         );
       }
 
       if (identidade.situacao === 'ID_INVALIDO') {
         return semBrightspace(
-          `O UserId "${identidade.valor}" no Brightspace nao e numerico e ` +
-            'seria recusado pela Valence.',
+          `A conta desta matrícula no AVA tem um identificador inválido ` +
+            `("${identidade.valor}"). Abra chamado no suporte do AVA.`,
         );
       }
 
@@ -554,8 +557,8 @@ export class AgendamentoAdminService {
       if (cruzamento.agendaveis.length === 0) {
         return semBrightspace(
           cruzamento.motivo ??
-            `Nenhuma disciplina dele no periodo letivo ${periodoLetivoId} ` +
-              'cruzou com o CSV de turmas com prova.',
+            `Nenhuma disciplina deste aluno no período letivo ${periodoLetivoId} ` +
+              'está na planilha de turmas com prova.',
         );
       }
 
@@ -566,9 +569,9 @@ export class AgendamentoAdminService {
         avisos: identidade.ativoNoD2L
           ? []
           : [
-              'A conta deste aluno esta DESATIVADA no Brightspace: ele tem ' +
-                'lugar na sala, mas do jeito que esta nao conseguiria abrir a ' +
-                'prova. Abra chamado no suporte do LMS.',
+              'A conta deste aluno está DESATIVADA no AVA: ele tem ' +
+                'lugar na sala, mas do jeito que está não conseguiria abrir a ' +
+                'prova. Abra chamado no suporte do AVA.',
             ],
       };
     } catch (erro) {
@@ -576,8 +579,8 @@ export class AgendamentoAdminService {
       // e ao contrario do compulsorio: aqui ha um humano esperando resposta, e
       // uma lista velha o deixa resolver o atendimento agora.
       return semBrightspace(
-        'Nao foi possivel consultar o Brightspace agora ' +
-          `(${erro instanceof Error ? erro.message : String(erro)}).`,
+        'Não foi possível consultar o AVA agora ' +
+          `(detalhe técnico: ${erro instanceof Error ? erro.message : String(erro)}).`,
       );
     }
   }
@@ -669,7 +672,7 @@ export class AgendamentoAdminService {
    * Faixa inativa ou com data passada AVISA, nao bloqueia.
    *
    * O portal recusa as duas, e com razao: o aluno escolhendo sozinho um horario
-   * que ja passou so pode ser engano. Aqui quem escolhe e a secretaria, e os
+   * que ja passou so pode ser engano. Aqui quem escolhe e a administracao, e os
    * dois casos tem uso real — registrar quem fez a prova sem estar na lista, ou
    * usar uma faixa que foi desativada para sair do portal. Recusar seria
    * decidir no lugar dela; ficar calado esconderia um erro de digitacao.
@@ -686,15 +689,15 @@ export class AgendamentoAdminService {
 
     if (!faixa.ativo) {
       avisos.push(
-        'Este horario esta INATIVO: ele nao aparece no portal do aluno.',
+        'Este horário está INATIVO: ele não aparece no portal do aluno.',
       );
     }
 
     if (faixa.data < hojeUtc()) {
       avisos.push(
-        `A data deste horario (${faixa.data.toLocaleDateString('pt-BR', {
+        `A data deste horário (${faixa.data.toLocaleDateString('pt-BR', {
           timeZone: 'UTC',
-        })}) ja passou.`,
+        })}) já passou.`,
       );
     }
 
@@ -728,9 +731,7 @@ export class AgendamentoAdminService {
     ator?: string,
   ): Promise<AgendamentoAdmin> {
     if (!destino.salaFaixaId === !destino.faixaId) {
-      throw new BadRequestException(
-        'Informe `salaFaixaId` (sala exata) OU `faixaId` (deixa a alocacao escolher) — um dos dois.',
-      );
+      throw new BadRequestException('Escolha o horário ou a sala de destino.');
     }
 
     const atual = await this.prisma.agendamento.findUnique({
@@ -741,18 +742,18 @@ export class AgendamentoAdminService {
       },
     });
 
-    if (!atual) throw new NotFoundException(`Agendamento ${id} nao encontrado`);
+    if (!atual) throw new NotFoundException(AGENDAMENTO_NAO_ENCONTRADO);
 
     if (atual.status !== StatusAgendamento.CONFIRMADO) {
       throw new ConflictException(
-        'Agendamento cancelado nao pode ser remanejado.',
+        'Agendamento cancelado não pode ser remanejado.',
       );
     }
 
     const alvo = await this.resolverDestino(destino, atual.aluno);
 
     if (alvo.salaFaixaId === atual.salaFaixa.id) {
-      throw new ConflictException('O agendamento ja esta nesta sala.');
+      throw new ConflictException('O agendamento já está nesta sala.');
     }
 
     // Sem janela cadastrada nao ha o que remanejar contra: cai no periodo
@@ -770,7 +771,7 @@ export class AgendamentoAdminService {
       // Vale para o admin tambem (decisao do cliente, 14/08/2026): mover o aluno
       // para o horario da OUTRA prova dele criaria, em silencio, exatamente o
       // estado que o portal recusa — duas provas ao mesmo tempo para a mesma
-      // pessoa. Nao trava a secretaria: basta mover primeiro a outra prova.
+      // pessoa. Nao trava a administracao: basta mover primeiro a outra prova.
       await exigirUmaProvaPorFaixa(tx, {
         matricula: atual.matricula,
         faixaId: alvo.faixaId,
@@ -839,10 +840,10 @@ export class AgendamentoAdminService {
       select: { id: true, matricula: true, status: true, salaFaixaId: true },
     });
 
-    if (!atual) throw new NotFoundException(`Agendamento ${id} nao encontrado`);
+    if (!atual) throw new NotFoundException(AGENDAMENTO_NAO_ENCONTRADO);
 
     if (atual.status !== StatusAgendamento.CONFIRMADO) {
-      throw new ConflictException('Este agendamento ja esta cancelado.');
+      throw new ConflictException('Este agendamento já está cancelado.');
     }
 
     await this.prisma.$transaction(async (tx) => {
@@ -868,13 +869,13 @@ export class AgendamentoAdminService {
       detalhe: `agendamento ${id} (${atual.matricula}) cancelado pelo administrador`,
     });
 
-    return { mensagem: `Agendamento ${id} cancelado. A vaga foi liberada.` };
+    return { mensagem: `Agendamento #${id} cancelado. A vaga foi liberada.` };
   }
 
   /**
    * Quem mexeu neste agendamento, do mais recente para o mais antigo.
    *
-   * E a tela que a secretaria abre quando o aluno reclama que mudaram a prova
+   * E a tela que a administracao abre quando o aluno reclama que mudaram a prova
    * dele: cada linha diz o que aconteceu, QUEM fez (o proprio aluno ou qual
    * administrador) e de que horario para qual.
    */
@@ -882,7 +883,7 @@ export class AgendamentoAdminService {
     const existe = await this.prisma.agendamento.count({ where: { id } });
 
     if (existe === 0) {
-      throw new NotFoundException(`Agendamento ${id} nao encontrado`);
+      throw new NotFoundException(AGENDAMENTO_NAO_ENCONTRADO);
     }
 
     const linhas = await this.prisma.historicoAgendamento.findMany({
@@ -920,7 +921,7 @@ export class AgendamentoAdminService {
 
       if (!oferta) {
         throw new NotFoundException(
-          `Oferta ${destino.salaFaixaId} nao encontrada`,
+          'Sala não encontrada neste horário. Atualize a página e tente de novo.',
         );
       }
 
@@ -939,7 +940,9 @@ export class AgendamentoAdminService {
     });
 
     if (!faixa) {
-      throw new NotFoundException(`Faixa ${destino.faixaId} nao encontrada`);
+      throw new NotFoundException(
+        'Horário não encontrado. Atualize a página e tente de novo.',
+      );
     }
 
     this.exigirCompativel(
@@ -958,15 +961,15 @@ export class AgendamentoAdminService {
   ): void {
     if (local.poloId !== aluno.poloId) {
       throw new BadRequestException(
-        `O destino e do polo "${local.poloNome}", que nao e o polo do aluno. ` +
+        `O destino é do polo "${local.poloNome}", que não é o polo do aluno. ` +
           'Remanejar entre polos mandaria o aluno para o campus errado.',
       );
     }
 
     if (modalidade && modalidade.modalidadeId !== aluno.modalidadeId) {
       throw new BadRequestException(
-        `Esta sala esta ofertada como "${modalidade.nome}", que nao e o formato ` +
-          'do aluno. A duracao da prova seria outra.',
+        `Neste horário a sala é do formato "${modalidade.nome}", que não é o ` +
+          'formato do aluno. A duração da prova seria outra.',
       );
     }
   }
@@ -1016,7 +1019,7 @@ export class AgendamentoAdminService {
     });
 
     if (!agendamento) {
-      throw new NotFoundException(`Agendamento ${id} nao encontrado`);
+      throw new NotFoundException(AGENDAMENTO_NAO_ENCONTRADO);
     }
 
     return montarAdmin(agendamento);
@@ -1026,7 +1029,7 @@ export class AgendamentoAdminService {
    * ==========================================================================
    * COMO ESTA INDO O AGENDAMENTO — a tela de Inicio
    * ==========================================================================
-   * As perguntas da secretaria durante a janela: quantos ja agendaram, em
+   * As perguntas da administracao durante a janela: quantos ja agendaram, em
    * qual formato esta faltando gente, quanto disso o aluno fez sozinho
    * versus o compulsorio, em que ritmo, e se as vagas que sobram cabem quem
    * falta (por polo + formato, que e onde a vaga existe de fato).
@@ -1287,7 +1290,7 @@ export class AgendamentoAdminService {
    * A EXPORTACAO E DE ALUNOS, NAO DE AGENDAMENTOS
    * ==========================================================================
    * A pergunta que este arquivo responde nao e "quem marcou prova" — a tela ja
-   * responde essa —, e sim "COM QUEM A SECRETARIA PRECISA FALAR". Por isso a
+   * responde essa —, e sim "COM QUEM A ADMINISTRAÇÃO PRECISA FALAR". Por isso a
    * base sao os vinculos importados, TODOS eles, e o agendamento entra como
    * coluna: quem nao agendou aparece com as colunas da prova vazias e
    * `Status = Não Agendado`, que e exatamente a lista de quem sera cobrado.
@@ -1541,7 +1544,7 @@ export class AgendamentoAdminService {
 }
 
 const CABECALHOS_EXPORTACAO = [
-  'Matricula',
+  'Matrícula',
   'Aluno',
   'E-mail',
   'Curso',
@@ -1550,7 +1553,7 @@ const CABECALHOS_EXPORTACAO = [
   'Polo',
   'Rodada',
   'Data da prova',
-  'Inicio',
+  'Início',
   'Fim',
   'Sala',
   'Status',
@@ -1563,7 +1566,7 @@ const CABECALHOS_EXPORTACAO = [
  *
  * O arquivo e trabalhado no Excel: quem vai cobrar filtra a coluna por "Não
  * Agendado" e liga. `CONFIRMADO`/`CANCELADO` (o enum do banco) obrigaria a
- * secretaria a saber que "cancelado" tambem significa "precisa agendar".
+ * administracao a saber que "cancelado" tambem significa "precisa agendar".
  */
 const AGENDADO = 'Agendado';
 const NAO_AGENDADO = 'Não Agendado';
@@ -1573,9 +1576,9 @@ const NAO_AGENDADO = 'Não Agendado';
  * historico.
  *
  * `alocadoManual` nao serve para isto: o remanejo tambem o liga, e uma reserva
- * feita pelo aluno e depois movida pela secretaria sairia como "nao foi ele".
+ * feita pelo aluno e depois movida pela administracao sairia como "nao foi ele".
  *
- * Tres valores, e nao dois: alem do aluno e do lote compulsorio, a secretaria
+ * Tres valores, e nao dois: alem do aluno e do lote compulsorio, a administracao
  * agenda uma pessoa no balcao ("Agendar aluno"). Juntar esse caso ao
  * compulsorio diria que o lote rodou para quem foi atendido pessoalmente.
  *

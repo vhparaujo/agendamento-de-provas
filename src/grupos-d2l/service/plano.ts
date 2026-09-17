@@ -114,7 +114,7 @@ export interface PlanoDeInscricoes {
  * As tres travas da remocao, e o que cada uma evita:
  *
  * 1. **So sai quem esta em `removiveis`.** Um usuario que o portal nao conhece
- *    (tutor, aluno que a secretaria colocou a mao) nunca e tocado.
+ *    (tutor, aluno que a administracao colocou a mao) nunca e tocado.
  * 2. **Quem tem pendencia de resolucao nao esta em `removiveis`.** Sem a celula
  *    do dia, o desejado dele sai vazio — e tira-lo do grupo atual trocaria "grupo
  *    possivelmente certo" por "grupo nenhum".

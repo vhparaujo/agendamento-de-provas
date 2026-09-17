@@ -147,7 +147,7 @@ export class ConfiguracaoSpecialAccessDto implements ConfiguracaoDoSpecialAccess
   @ApiProperty({ type: [TempoDaModalidadeDto] })
   modalidades!: TempoDaModalidadeDto[];
 
-  @ApiProperty({ example: 'secretaria@ucb.br', nullable: true, type: String })
+  @ApiProperty({ example: 'admin@ucb.br', nullable: true, type: String })
   atualizadoPor!: string | null;
 
   @ApiProperty({
@@ -213,7 +213,7 @@ export class AndamentoDoSpecialAccessDto implements AndamentoDoSpecialAccess {
   @ApiProperty({ example: 60 })
   tempoExtraNiopMinutos!: number;
 
-  @ApiProperty({ example: 'secretaria@ucb.br' })
+  @ApiProperty({ example: 'admin@ucb.br' })
   iniciadoPor!: string;
 
   @ApiProperty({ example: 152 })

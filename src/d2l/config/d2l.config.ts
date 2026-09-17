@@ -123,7 +123,7 @@ export const D2L_TIPO_PERIODO_LETIVO_PADRAO = 103;
  * A regra do cliente pede a N1 do aluno, e a Valence nao tem rota para "a N1":
  * ela tem grade objects endereçaveis por id, e a N1 e uma CATEGORIA
  * (`GradeObjectType: 9`) cujo id muda de turma para turma. O unico elo estavel
- * entre a regra e o tenant e o NOME que a secretaria deu a categoria — por isso
+ * entre a regra e o tenant e o NOME que a administração deu a categoria — por isso
  * a descoberta e por nome, e por isso o nome e configuravel: renomear a
  * categoria no Brightspace nao pode exigir deploy.
  *

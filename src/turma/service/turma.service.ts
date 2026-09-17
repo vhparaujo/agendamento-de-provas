@@ -65,8 +65,8 @@ export class TurmaService {
       return {
         agendaveis: [],
         motivo:
-          'Nao foi possivel identificar a disciplina de onde voce entrou. ' +
-          'Abra o link de agendamento de dentro da disciplina no Brightspace.',
+          'Não foi possível identificar a disciplina de onde você entrou. ' +
+          'Abra o link de agendamento de dentro da disciplina no AVA.',
       };
     }
 
@@ -90,7 +90,7 @@ export class TurmaService {
 
       if (escolha.situacao !== 'ENCONTRADA') {
         // Nao e erro do aluno: e planilha desatualizada, grafia diferente ou
-        // turma repetida. Quem resolve e a secretaria, entao o motivo precisa
+        // turma repetida. Quem resolve e a administracao, entao o motivo precisa
         // aparecer em algum lugar consultavel.
         this.logger.warn(
           `Turma nao liberada (${escolha.situacao}) para codigo="${turma.codigo ?? ''}" ` +
@@ -109,7 +109,7 @@ export class TurmaService {
 
       agendaveis.push({
         orgUnitId: turma.orgUnitId!,
-        // O nome do CSV manda: e o que a secretaria reconhece no relatorio.
+        // O nome do CSV manda: e o que a administracao reconhece no relatorio.
         nomeDisciplina: escolha.turma.nomeDisciplina,
       });
     }

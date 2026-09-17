@@ -88,7 +88,7 @@ export class ImportacaoController {
       'reserva continua na sala antiga (outra duracao, ou outro campus) e nada mais reclama — ' +
       'por isso essas linhas saem em `alteracoesComAgendamento`. O upload nao e bloqueado: a ' +
       'planilha pode estar corrigindo um cadastro errado, e quem decide entre remanejar e ' +
-      'cancelar e a secretaria.\n\n' +
+      'cancelar e a administracao.\n\n' +
       '⚠️ A mesma lista traz quem **PERDEU a elegibilidade** com prova marcada — o STATUS CURSO ' +
       'saiu de "Ativo" (ex.: "Transf. Interna"). O vinculo **nao e apagado** e a prova **nao e ' +
       'cancelada**: `ativo` vira `false`, o aluno deixa de agendar e de trocar de horario, o ' +

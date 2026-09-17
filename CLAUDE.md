@@ -54,7 +54,7 @@ regra de negócio ou estrutura, atualize os dois.
   `Agendamento.rodada` como fotografia. **A identidade de um período é o par
   `periodoLetivoId + rodada`**, nunca o `periodoLetivoId` sozinho: as duas provas
   do semestre têm o mesmo id de período letivo no Brightspace. Texto livre, não
-  enum — quem nomeia a rodada é a secretaria. Default `"N2"`.
+  enum — quem nomeia a rodada é a administração. Default `"N2"`.
 - **Turma real**: turma/disciplina que efetivamente terá prova (CSV de turmas). Filtro
   final do que aparece para o aluno.
 - **Janela de prova**: o par (abertura, fechamento) que o questionário do
@@ -140,12 +140,12 @@ regra de negócio ou estrutura, atualize os dois.
      mais**. Cancelar devolve a vaga e o deixa SEM prova — num período que está
      lotando, a vaga sai em segundos e quem só queria mudar de dia chega ao balcão
      sem horário nenhum, quando a troca resolvia o caso dele sem risco nenhum.
-     Desmarcar é decisão da secretaria, em `DELETE /agendamentos/:id`, que grava o
+     Desmarcar é decisão da administração, em `DELETE /agendamentos/:id`, que grava o
      e-mail de quem cancelou. Tirar o botão da tela e deixar o endpoint de pé
      manteria a regra valendo em um lugar só — o teste
      `a rota de cancelamento do portal nao existe mais` trava isso.
    - **O aluno só troca com o período ABERTO.** Vale enquanto o prazo corre;
-     depois disso, só a secretaria remaneja. É a mesma trava do agendamento
+     depois disso, só a administração remaneja. É a mesma trava do agendamento
      inicial — a troca não pode ser uma porta para burlar o prazo.
    - **O aluno só enxerga e só mexe no período VIGENTE.** Provas de semestres
      anteriores não aparecem para ele nem podem ser alteradas. Sem isso, abrir o
@@ -160,7 +160,7 @@ regra de negócio ou estrutura, atualize os dois.
    - **TODA alteração grava QUEM a fez** em `HistoricoAgendamento`, na mesma
      transação da mudança — `TROCADO`/`ALUNO` com a matrícula, `REMANEJADO`/`ADMIN`
      com o e-mail. Existe para a conversa no balcão: o aluno diz que mudaram a
-     prova dele, e a secretaria mostra que foi ele mesmo. Ver
+     prova dele, e a administração mostra que foi ele mesmo. Ver
      `GET /agendamentos/:id/historico`.
 8. **Período de agendamento fecha só por data/hora** (`dataFechamento`), nunca por
    esgotamento de vagas. Janela de agendamento e datas das provas são linhas do
@@ -346,6 +346,13 @@ investiga precisa do motivo; o atacante não pode tê-lo.
 
 **Filtro global de exceções** (`ExcecoesFilter`): audita 401/403/429, e converte
 qualquer erro não tratado em `500` genérico + `erroId` — stack só no log (A10).
+Ele também troca as mensagens **automáticas em inglês** do Nest e do
+class-validator (`poloId must not be less than 1`, `Cannot GET /api/x`,
+`property x should not exist`) por frases para quem não é programador
+(`seguranca/filter/mensagens-amigaveis.ts`). Mensagem de negócio escrita à mão
+passa intacta, e a auditoria continua gravando o texto original. Mensagem nova
+escrita à mão segue a mesma regra: diga o que houve e o que fazer, sem verbo HTTP,
+rota, `ativo=false` ou nome de campo do DTO — quem lê o aviso é a administração.
 
 **Não se aplica a este projeto:** CSRF (autenticação é `Authorization: Bearer`,
 sem cookie; se algum dia o token for para cookie, CSRF volta a existir) e XSS
@@ -418,7 +425,7 @@ entra no banco), reportando em `polosNaoEncontrados[]`.
 `Polo.ativo` é a trava do ciclo "este campus não tem mais prova". Um polo inativo
 **não aceita sala nem faixa nova** (409 em `POST /salas` e `POST /faixas`) — e é
 só isso que ele faz. Sem faixa nova, ninguém agenda ali, e o compulsório reporta
-esses alunos como `SEM_FAIXA_NO_POLO`, que é a linha que a secretaria precisa ver.
+esses alunos como `SEM_FAIXA_NO_POLO`, que é a linha que a administração precisa ver.
 
 **A trava é do lado administrativo de propósito.** Nada no portal do aluno
 consulta `Polo.ativo`: desativar um campus no meio do semestre não pode esconder
@@ -546,7 +553,7 @@ a fonte de verdade está afirmando que são dois vínculos, e nada é reportado.
 
 **Avisa e não mescla**, como `alteracoesComAgendamento`. Fundir dois cursos
 distintos misturaria as provas dos dois numa pessoa só, e é irreversível. Quem
-decide é a secretaria, em `POST /alunos/:id/mesclar` (abaixo).
+decide é a administração, em `POST /alunos/:id/mesclar` (abaixo).
 
 ### `POST /alunos/:id/mesclar` — a única escrita sobre `AlunoImportado`
 
@@ -599,7 +606,7 @@ agendar tendo prova marcada não deixa nada inconsistente.
 
 Três escolhas conscientes ali: **avisa e não bloqueia** (a planilha é a fonte de
 verdade e pode estar corrigindo um cadastro errado — quem decide é a
-secretaria), conta **só o semestre vigente** (prova de semestre passado já
+administração), conta **só o semestre vigente** (prova de semestre passado já
 aconteceu; avisar sobre ela seria o ruído que ensina o time a ignorar o aviso), e
 **exige reserva confirmada** nos três casos — quem perde a elegibilidade sem
 prova marcada é o caso normal, e já está em `bloqueados`.
@@ -709,7 +716,7 @@ Dois alunos. E **só aparece com `D2L_HABILITADO=true`**: pelo launch a discipli
 **Por que nenhum dos dois CSVs resolve.** A informação que falta é do par
 **(aluno, turma)** — "esta pessoa cursa esta disciplina por qual vínculo" —, e
 isso não é atributo da turma nem do aluno isoladamente. As saídas possíveis, se
-um dia valer a pena: o aluno escolher na tela, a secretaria montar os dois
+um dia valer a pena: o aluno escolher na tela, a administração montar os dois
 agendamentos pelo remanejo, ou uma tabela de exceção só para quem tem 2+
 vínculos.
 
@@ -893,6 +900,41 @@ src/
 - **Comentário explica o *porquê*, não o *quê*.** O padrão do repositório é
   registrar a decisão e o risco que ela evita (ver `status-curso.enum.ts`,
   `mariadb-adapter.ts`). Mantenha isso.
+
+## Textos que o usuário lê: telas, mensagens, relatórios e documentação
+
+Regras em vigor desde **17/09/2026**, depois da revisão de todo o texto do
+sistema. Valem para **todo texto novo** — front, mensagens da API, Swagger,
+comentários de código e documentação.
+
+- ⛔ **Não use o termo "secretaria"** — nem para o aluno, nem para o admin, nem
+  em Swagger, comentário ou documento. Quem opera o sistema **não é a
+  secretaria**: fale em **administração** ou **admin**. (As migrations já
+  aplicadas ainda contêm o termo em comentários; elas não podem ser editadas —
+  ver o último item.)
+- **Aluno com problema vai ao formulário de suporte.** Nenhum texto manda o
+  aluno procurar um setor (secretaria, coordenação, NITE, polo). A orientação
+  padrão é: *"acesse o formulário de suporte disponível na sua turma no AVA"*.
+- **"AVA", não "Brightspace" nem "D2L"**, em todo texto visível, do admin e do
+  aluno. Nomes de código, rotas, Swagger e logs mantêm Brightspace/D2L.
+- **"Acesso especial", não "special access"**, no texto visível (plural:
+  "acessos especiais"). Rotas e identificadores `special-access` ficam.
+- **Português com acentuação correta** em texto visível e em mensagens da API.
+  Comentários e identificadores seguem ASCII, como o resto do código.
+- **Sem jargão de programador na mensagem**: nada de verbo HTTP, rota, nome de
+  campo do DTO, `ativo=false`, `orgUnitId` ou id técnico. Diga o que houve e o
+  que fazer. Quando o suporte técnico precisar de um detalhe, ele vai no fim,
+  como *"Detalhe técnico: …"*.
+- **Mensagens automáticas do Nest/class-validator** já saem traduzidas por
+  `seguranca/filter/mensagens-amigaveis.ts`. Campo novo de DTO com nome pouco
+  legível ganha rótulo em `ROTULOS`, lá.
+- **CSVs — cuidado para não quebrar**: nunca renomeie as colunas aceitas na
+  importação (`TURMA_CSV_COLUNAS`, `ALUNO_CSV_COLUNAS`) nem o CSV que o AVA
+  importa (`CABECALHOS_GRUPOS_D2L`, separado por `,` e sem BOM). Relatórios
+  para Excel usam o `montarCsv` padrão (`;` + BOM UTF-8), que aceita acento no
+  cabeçalho. Nomes de arquivo do `Content-Disposition` continuam ASCII.
+- **Migration aplicada não se edita**, nem em comentário: o Prisma guarda o
+  checksum, e qualquer mudança faz o `migrate` acusar migration modificada.
 
 ## Comandos
 
@@ -1124,7 +1166,7 @@ descobriria até o aluno tentar abrir o quiz.
 
 **O histórico é tabela, não log de arquivo.** `AuditoriaService` continua
 gravando o evento na saída do processo, mas quem precisa da resposta é a
-secretaria, na tela, com o aluno na frente — log que só o time de infra consegue
+administração, na tela, com o aluno na frente — log que só o time de infra consegue
 ler não resolve atendimento. Por isso `HistoricoAgendamento` guarda `autor` como
 **fotografia** (matrícula ou e-mail, não FK: precisa continuar legível se a conta
 do admin for desativada) e `de`/`para` como **texto pronto**
@@ -1319,7 +1361,7 @@ a regra 4: a lista encolhe antes de chegar a ele, que continua sem escolher
 disciplina por disciplina.
 
 ⚠️ **O gatilho é `PeriodoAgendamento.notaMinimaN1/notaMaximaFinal`, NUNCA
-`rodada === 'SUB'`.** `rodada` é texto livre — quem a nomeia é a secretaria —,
+`rodada === 'SUB'`.** `rodada` é texto livre — quem a nomeia é a administração —,
 então comparar a string faria a regra parar de valer em silêncio no dia em que
 alguém cadastrasse "Substitutiva" ou "sub". Colunas nulas (todo período
 existente) = sem filtro, e **nenhuma chamada de nota sai**: o caminho da N2
@@ -1372,7 +1414,7 @@ os limites, nem a nota que ele tirou — nas duas mensagens que ele lê:
 | "a lista traz apenas as disciplinas em que você tem direito" | `PortalView.vue` | ele tem alguma elegível e a lista sai curta |
 | `motivo` (`motivoDeNenhumaElegivel`) | `elegibilidade-de-nota.service.ts` | **nenhuma** disciplina passou |
 
-As duas terminam no **formulário de suporte** — e não em "procure a secretaria":
+As duas terminam no **formulário de suporte** — e nunca mandam o aluno procurar um setor da instituição:
 a disciplina que falta pode ser nota não lançada, categoria N1 mal configurada ou
 erro de cadastro, casos que precisam ser registrados e roteados, não resolvidos
 no balcão. A causa continua distinta entre as três frases do backend, porque é
@@ -1419,7 +1461,7 @@ quando o professor a lançou. Ver §4.5 da referência.
 **⚠️ Ao migrar: as janelas já cadastradas mudam de significado.** O `1,50`
 gravado era piso da nota final e passa a ser piso da N1; o `6,75` continua teto da
 final. A migration renomeia as colunas e **não converte os números** — reescrever
-o teto para 7,00 seria tomar no lugar da secretaria uma decisão que é dela.
+o teto para 7,00 seria tomar no lugar da administração uma decisão que é dela.
 Confira a janela da substitutiva na tela de Períodos antes de abri-la.
 
 ### `DELETE /periodos/:id` — vigente é derivado, e por isso se erra fácil
@@ -1447,12 +1489,12 @@ assinatura do Brightspace. **Recusa rodar com `NODE_ENV=production`.**
 ## A exportação em CSV é de ALUNOS, não de agendamentos
 
 `GET /agendamentos/exportacao` não é a tela virada arquivo. Ele responde **com
-quem a secretaria precisa falar**: a base são os **vínculos importados, todos
+quem a administração precisa falar**: a base são os **vínculos importados, todos
 eles**, e o agendamento entra como coluna. Quem não marcou sai com as colunas da
 prova vazias e `Status = Não Agendado`.
 
-Colunas, e só estas: `Matricula · Aluno · E-mail · Curso · Formato · Polo ·
-Rodada · Data da prova · Inicio · Fim · Sala · Status · Agendado em`.
+Colunas, e só estas: `Matrícula · Aluno · E-mail · Curso · Formato · Polo ·
+Rodada · Data da prova · Início · Fim · Sala · Status · Agendado em`.
 
 - **`Modalidade` e `Polo` saem do AGENDAMENTO, não do vínculo** (13/08/2026).
   `AlunoImportado` guarda só o estado atual e a importação o sobrescreve; lendo
@@ -1464,7 +1506,7 @@ Rodada · Data da prova · Inicio · Fim · Sala · Status · Agendado em`.
 
 - **`Status` tem dois valores, `Agendado` e `Não Agendado`** — não o enum do
   banco. Quem for cobrar filtra a coluna no Excel; `CANCELADO` obrigaria a
-  secretaria a saber que cancelado também significa "precisa agendar".
+  administração a saber que cancelado também significa "precisa agendar".
 - **Cancelado conta como `Não Agendado`** e, por isso, o filtro `status` da URL
   **não se aplica** aqui: a coluna é derivada.
 - **O recorte é UMA PROVA: `periodoLetivoId` + `rodada`** (os da URL ou os do
@@ -1488,7 +1530,7 @@ perguntas diferentes e recortam a mesma base de jeitos incompatíveis:
 | | `GET /agendamentos/exportacao` | `GET /relatorios/grupos-d2l/:faixaId/:orgUnitId` | `GET /relatorios/listas-de-presenca/pdf` |
 |---|---|---|---|
 | Quem lê | **Pessoa**, no Excel pt-BR | **Máquina**: o *Groups Import* do Brightspace | **Pessoa**, no papel: o fiscal da sala |
-| Responde | "com quem a secretaria precisa falar" | "quem entra no grupo desta prova" | "quem senta nesta sala" |
+| Responde | "com quem a administração precisa falar" | "quem entra no grupo desta prova" | "quem senta nesta sala" |
 | Base | Todos os vínculos, agendados ou não | Só quem tem prova **confirmada** | Só quem tem prova **confirmada** |
 | Formato | CSV, 12 colunas | CSV, 2 colunas (`Nome de usuário`, `Código do Grupo` **vazia**) | PDF A4, 5 colunas |
 | Uma linha é | um vínculo | um **usuário** (RA distinto) | uma **pessoa** (RA distinto) |
@@ -1497,17 +1539,17 @@ perguntas diferentes e recortam a mesma base de jeitos incompatíveis:
 
 **O primeiro conta diferente dos outros dois, e não está errado.** Ele lista
 *vínculos*, então o RA de dois cursos aparece duas vezes — é a lista de quem a
-secretaria precisa cobrar, e são duas provas a cobrar. Os outros dois listam
+administração precisa cobrar, e são duas provas a cobrar. Os outros dois listam
 *pessoas* e o trazem uma vez só.
 
 Trocar o separador ou o BOM quebra em silêncio nos dois sentidos: com `;` o D2L
 lê a linha inteira como um campo só; com BOM, os três bytes grudam no cabeçalho e
-`Nome de usuário` deixa de casar com a coluna esperada; e o CSV da secretaria sem
+`Nome de usuário` deixa de casar com a coluna esperada; e o CSV da administração sem
 BOM chega no Excel como "CÃ¢mpus".
 
 Por isso `montarCsv()` (`agendamento/service/csv-relatorio.ts`) recebe
 `{ separador, bom }`, **com default no formato do Excel** — quem não passa nada
-continua produzindo o arquivo da secretaria. O formato do D2L está declarado num
+continua produzindo o arquivo da administração. O formato do D2L está declarado num
 lugar só, `relatorio/service/csv-grupos-d2l.ts`.
 
 ## Grupos do Brightspace: um arquivo por HORÁRIO **e** TURMA
@@ -1617,7 +1659,7 @@ lugares.
 
 ## Grupos no Brightspace pela API (14/09/2026)
 
-Tela **Grupos D2L** (`GruposBrightspaceView.vue`), módulo `src/grupos-d2l/`.
+Tela **Grupos** (`GruposBrightspaceView.vue`), módulo `src/grupos-d2l/`.
 Substitui o import manual, turma a turma, dos CSVs de `/relatorios/grupos-d2l` —
 que continuam existindo para conferência e como plano B. Três passos, na ordem da
 operação real, **depois do fim do prazo de agendamento**:
@@ -1720,7 +1762,7 @@ horário novo e sai do antigo. As três travas da remoção, testadas em
 `plano.spec.ts`:
 
 1. só sai quem o portal conhece (reserva nesta turma) — tutor ou inclusão manual
-   da secretaria **nunca** é removido;
+   da administração **nunca** é removido;
 2. quem tem pendência de resolução (sem janela, sem célula) não sai de lugar
    nenhum — trocaria "grupo possivelmente certo" por "grupo nenhum";
 3. quem tem grupo desejado inexistente também não sai.
@@ -1843,7 +1885,7 @@ paginação sem banco (`lista-presenca.spec.ts`) e o recorte com banco
 matriculado sob aquele RA e marcou a prova presencial para tal dia e hora. É o
 papel que se leva ao trabalho para justificar a ausência.
 
-Os três documentos da seção anterior são baixados pela **secretaria**; este é o
+Os três documentos da seção anterior são baixados pela **administração**; este é o
 único que sai pela mão do aluno, no portal, e por isso as regras dele são outras.
 
 ### ⚠️ SÓ DEPOIS DE O PRAZO ENCERRAR (regra do cliente)
@@ -1851,7 +1893,7 @@ Os três documentos da seção anterior são baixados pela **secretaria**; este 
 Enquanto o período está aberto, o aluno ainda troca de horário (regra 7). Uma
 declaração emitida ali afirma um dia e uma hora que **o próprio portador pode
 mudar cinco minutos depois** — e quem recebeu o papel (empregador, escola)
-não tem como conferir. Depois do fechamento só a secretaria remaneja, e o que o
+não tem como conferir. Depois do fechamento só a administração remaneja, e o que o
 documento diz para de se mover sozinho.
 
 A porta é `PeriodoService.exigirEncerrado()`, **o espelho de `exigirAberto()`**.
@@ -1889,7 +1931,7 @@ botão que só produz 403 num banco recém-migrado.
 - **Sem nome no cadastro, 409.** `AlunoImportado.nome` é opcional, e a queda óbvia
   (usar a matrícula) produziria *"Declaramos que UC26425318 está matriculado(a)
   sob o RA UC26425318"* — um documento que não nomeia ninguém, entregue a um
-  empregador. Recusar é acionável: a secretaria corrige o CSV e reimporta.
+  empregador. Recusar é acionável: a administração corrige o CSV e reimporta.
 - **A data é lida em UTC.** `Faixa.data` é `@db.Date` (meia-noite UTC); ler as
   partes no fuso local recuaria um dia em Brasília, e a declaração diria 11 de
   junho para uma prova do dia 12 — impressa e assinada. Mesmo motivo de
@@ -2061,7 +2103,7 @@ mora em `test/setup-e2e.ts` porque o guard a lê quando a aplicação sobe.
 
 ## Agendamento compulsório (etapa 9)
 
-Fechado o prazo, **quem não agendou não fica sem prova**: a secretaria dispara um
+Fechado o prazo, **quem não agendou não fica sem prova**: a administração dispara um
 lote que aloca todo mundo automaticamente. `POST /agendamentos/compulsorio`,
 acompanhado por `GET /agendamentos/compulsorio/:id`.
 
@@ -2074,7 +2116,7 @@ as datas manteria o campus mobilizado o período inteiro, com fiscal em sala vaz
 **Quem entra** (decisão do cliente, 12/08/2026): vínculo `ativo` sem agendamento
 `CONFIRMADO` no período letivo. Fica de fora quem **cancelou e não remarcou** —
 mas aparece no relatório como `CANCELOU_E_NAO_REMARCOU`, porque ficar sem lugar
-nenhum é decisão que a secretaria precisa ver aluno por aluno.
+nenhum é decisão que a administração precisa ver aluno por aluno.
 
 **Depois do compulsório o aluno não troca mais nada**; só o admin remaneja. É a
 trava que já existia (o portal exige período aberto), não uma nova.
@@ -2149,7 +2191,7 @@ lote seguinte. Silêncio de mais de 5 min vira `FALHOU`, e a consulta devolve
 não entra na lista, e a transação reconfere isso sob lock (o aluno pode ter
 agendado pelo portal no meio do lote).
 
-### Os motivos do relatório são a fila de trabalho da secretaria
+### Os motivos do relatório são a fila de trabalho da administração
 
 Cada um pede uma ação diferente, e é por isso que o CSV sai ordenado por motivo:
 
@@ -2169,7 +2211,7 @@ O último é o único que convive com uma alocação: a pessoa tem lugar na sala
 conseguiria abrir a prova. Existe porque apareceu na base real — aluno `ativo` no
 nosso CSV e `IsActive: false` no Brightspace.
 
-O CSV é do formato da **secretaria** (`;` + BOM UTF-8), não do D2L. Ver "São DOIS
+O CSV é do formato da **administração** (`;` + BOM UTF-8), não do D2L. Ver "São DOIS
 CSVs, com formatos OPOSTOS".
 
 ## O admin agenda por UM aluno (etapa 9b)
@@ -2240,10 +2282,10 @@ As duas últimas linhas são as decisões que mais importam:
 - **`ignorarStatusCurso` existe porque não há "avisa e não bloqueia" possível
   antes de gravar** — ou a prova entra, ou não. Recusar é o padrão (igual ao
   portal); liberar é explícito, volta em `avisos` e vai para a auditoria. Sem a
-  saída, a secretaria ficaria travada no único caso em que precisa da válvula.
+  saída, a administração ficaria travada no único caso em que precisa da válvula.
 - **Faixa inativa e data passada só avisam.** O portal recusa as duas, e com
   razão: o aluno escolhendo sozinho um horário que já passou só pode ser engano.
-  Aqui quem escolhe é a secretaria, e os dois casos têm uso real — registrar quem
+  Aqui quem escolhe é a administração, e os dois casos têm uso real — registrar quem
   fez a prova sem estar na lista, ou usar uma faixa desativada de propósito para
   sumir do portal. Recusar seria decidir no lugar dela; calar esconderia um erro
   de digitação.
@@ -2257,7 +2299,7 @@ dentro do portal: trocar o campo `Password` do questionário da prova, em massa,
 no Brightspace.
 
 **A operação é uma grade dia × turno.** Manhã/tarde/noite, seis dias de prova,
-uma senha de 6 dígitos por célula — a mesma planilha que a secretaria já usava.
+uma senha de 6 dígitos por célula — a mesma planilha que a administração já usava.
 A senha de um turno vale para **todas as provas de todas as turmas**.
 
 **Sobrescrever a senha do turno anterior é o OBJETIVO, não efeito colateral.** É
@@ -2270,7 +2312,7 @@ confirmação.
 
 Duas coisas moram em `configuracao_senha_quiz` (linha única, `id=1`) e são
 editadas na tela: **o questionário-alvo** e **os horários de cada turno**. As
-duas mudam por semestre, e quem as conhece é a secretaria — deixar qualquer uma
+duas mudam por semestre, e quem as conhece é a administração — deixar qualquer uma
 no `.env` significava que trocar o horário de um turno exigia deploy.
 
 **Nenhuma das duas tem valor padrão.** Sem alvo escolhido, `iniciar()` recusa com
@@ -2321,7 +2363,7 @@ duas conversões leitura→escrita (`AttemptsAllowed` achatado e
 ### A senha em texto claro fica em UMA coluna
 
 `senha_de_prova.senha`, e em nenhum outro lugar. O D2L exige o valor literal e a
-secretaria imprime a folha para os fiscais — hash impossibilita as duas coisas.
+administração imprime a folha para os fiscais — hash impossibilita as duas coisas.
 A proteção é **em volta**:
 
 - **nunca** em `ExecucaoSenhaQuiz`/`ItemSenhaQuiz`, na auditoria, no `Logger` nem
@@ -2331,7 +2373,7 @@ A proteção é **em volta**:
 - a listagem da grade devolve `temSenha: boolean`. O valor sai **só** de
   `GET /senhas-de-prova/:id/revelar`, que é auditada em toda chamada e tem
   throttle de rota de credencial. A grade fica aberta num monitor compartilhado
-  da secretaria: ver a senha precisa ser um **ato com rastro**;
+  da administração: ver a senha precisa ser um **ato com rastro**;
 - `DELETE` apaga a célula, e a execução histórica **sobrevive** (`onDelete:
   SetNull` + data/turno desnormalizados). Apagar o segredo não pode apagar a
   prova de que o lote rodou.
@@ -2387,7 +2429,7 @@ aplicar o turno das 07:30.
   execução do cron **não** entra no mesmo estado do disparo manual (apagaria o
   relatório que o admin está lendo), e a grade **não** se recarrega sozinha
   quando há senha digitada e não salva (`carregarGrade` zera os rascunhos, e a
-  secretária veria o campo esvaziar sem ter tocado em nada).
+  o admin veria o campo esvaziar sem ter tocado em nada).
 
 ### O resultado que mais dói é o menos barulhento
 
@@ -2563,7 +2605,7 @@ dentro da tolerância de 30 min.
 ### As janelas são configuração de tela
 
 `JanelaDeProva` fica no banco pelo mesmo motivo que os horários dos turnos saíram
-do `.env` em 19/08/2026: quem conhece o calendário é a secretaria, e ela não faz
+do `.env` em 19/08/2026: quem conhece o calendário é a administração, e ela não faz
 deploy. `janelasParaDisparar` (`janela.ts`, **pura e testada**) é lida a cada
 tick, então salvar 15:31 às 15:25 vale às 15:31.
 
@@ -2571,7 +2613,7 @@ tick, então salvar 15:31 às 15:25 vale às 15:31.
 *nome* de questionário chutado casa com o questionário errado em silêncio; um
 *horário* errado não casa com nada — ou o admin o corrige na tela, ou o dry-run o
 mostra. Não semear seria pior: um ambiente novo subiria sem janela e o cron nunca
-dispararia. O seed **cria o que falta e não sobrescreve** o que a secretaria
+dispararia. O seed **cria o que falta e não sobrescreve** o que a administração
 ajustou.
 
 `ordem` **não é a ordem do relógio**: a primeira janela é a que dispara à noite
@@ -2687,7 +2729,7 @@ concluiria que a janela do EaD tinha sido aplicada errada. Foi exatamente o que
 aconteceu no primeiro teste real.
 
 A rota da tela é `GET /senhas-de-prova/execucoes/datas-por-modalidade`, que
-responde a pergunta que a secretaria faz: **cada formato está com a janela
+responde a pergunta que a administração faz: **cada formato está com a janela
 certa?** Uma linha por formato com calendário cadastrado; `execucao: null`
 significa "nunca rodou", que é o estado normal de quem ainda não teve prova — não
 um erro. Pelo mesmo motivo `modalidadeCodigo` entrou no andamento e no nome do
@@ -2753,14 +2795,14 @@ duas escritas falham independentemente. Detalhes da API na §5.8 de
 
 | Pergunta | Resposta | Por quê |
 |---|---|---|
-| Onde mora o nome do grupo? | ~~Fixo por janela, reusado nos seis dias~~ **REVERTIDA em 14/09/2026**: grade **dia × janela** (`GrupoDaJanela`), com o nome da janela como padrão | Na operação real os grupos de cada dia têm nomes próprios e livres, e a secretaria trocava o nome da janela à mão todo dia. Ver "A grade de grupos", abaixo |
+| Onde mora o nome do grupo? | ~~Fixo por janela, reusado nos seis dias~~ **REVERTIDA em 14/09/2026**: grade **dia × janela** (`GrupoDaJanela`), com o nome da janela como padrão | Na operação real os grupos de cada dia têm nomes próprios e livres, e a administração trocava o nome da janela à mão todo dia. Ver "A grade de grupos", abaixo |
 | Falha de grupo bloqueia a data? | **Não.** Vira linha de pendência | Sem a data a prova não abre para NINGUÉM; sem a troca de grupo ela abre para o grupo anterior. Bloquear troca o problema menor pelo maior |
 | Cria condição onde não há? | **Nunca.** Só troca | Criar uma restrição onde não havia muda o comportamento de uma prova que talvez seja aberta a todos de propósito — e o PUT substitui a lista inteira |
 
 #### A grade de grupos: um nome por DIA e por JANELA (14/09/2026)
 
 A primeira decisão da tabela acima não sobreviveu à operação: cada dia de prova
-tem grupos com nomes próprios, e a secretaria editava `JanelaDeProva.nomeGrupo`
+tem grupos com nomes próprios, e a administração editava `JanelaDeProva.nomeGrupo`
 todo dia — o trabalho manual que o disparo existia para eliminar, com o risco de
 esquecer um dia. Agora a aba tem uma **Grade de grupos**, na mesma forma da de
 senhas, com a chave `(data, janelaDeProvaId)` — não turno: Semi/Modular tem seis
@@ -2941,7 +2983,7 @@ que o special access substitua o anterior se o teste funcionar.
 Os dois simulam por padrão e aceitam **`orgUnitIds`, uma lista de turmas** —
 vazio significa todas. É assim que a carga contra o Brightspace é fatiada: o lote
 é uma chamada por aluno em cada questionário, e quem decide quanto o tenant recebe
-de cada vez é a secretaria. A tela monta a lista a partir de
+de cada vez é a administração. A tela monta a lista a partir de
 `GET /special-access/turmas`, que mostra alunos e acessos por turma e **não custa
 chamada nenhuma** — escolher é de graça, rodar é que custa.
 

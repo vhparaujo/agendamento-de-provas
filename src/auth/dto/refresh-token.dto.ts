@@ -8,6 +8,6 @@ export class RefreshTokenDto {
     example:
       'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1dWlkIiwidGlwbyI6InJlZnJlc2gifQ.sig',
   })
-  @IsJWT({ message: 'refreshToken invalido' })
+  @IsJWT({ message: 'Sua sessão não é válida. Entre novamente.' })
   refreshToken!: string;
 }

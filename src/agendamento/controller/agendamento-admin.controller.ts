@@ -199,11 +199,11 @@ export class AgendamentoAdminController {
     description:
       'Uma linha por **vinculo importado** (aluno + curso), nao por agendamento: ' +
       'quem ainda nao marcou prova sai no arquivo com as colunas da prova vazias ' +
-      'e `Status = Não Agendado`. E essa a lista que a secretaria usa para cobrar ' +
+      'e `Status = Não Agendado`. E essa a lista que a administração usa para cobrar ' +
       'quem falta.\n\n' +
-      'Colunas: Matricula, Aluno, E-mail, Curso, Situação do Curso (o STATUS ' +
+      'Colunas: Matrícula, Aluno, E-mail, Curso, Situação do Curso (o STATUS ' +
       'CURSO importado: `Ativo`, `Trancado`...), Formato, Polo, Rodada, ' +
-      'Data da prova, Inicio, Fim, Sala, Status (`Agendado` | `Não Agendado`), ' +
+      'Data da prova, Início, Fim, Sala, Status (`Agendado` | `Não Agendado`), ' +
       'Agendado em e Agendado por (`Aluno` | `Compulsório` | `Admin`; vazia ' +
       'para quem nao agendou).\n\n' +
       'O arquivo baixa como **`Lista Agendamento-<data>.csv`**.\n\n' +
