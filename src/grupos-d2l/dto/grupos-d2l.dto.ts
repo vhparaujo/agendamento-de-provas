@@ -110,7 +110,7 @@ export class SalvarNomesDoBlocoDto {
 }
 
 export class ResolverHorarioDto {
-  @ApiProperty({ example: 2, description: 'A modalidade da pendencia.' })
+  @ApiProperty({ example: 2, description: 'O formato da pendencia.' })
   @Type(() => Number)
   @IsInt()
   @Min(1)
@@ -235,7 +235,7 @@ export class HorarioDoBlocoDto implements HorarioDoBloco {
   @ApiProperty({
     type: [String],
     example: ['MODULAR', 'SEMI'],
-    description: 'Modalidades com janela ativa neste horario.',
+    description: 'Formatos com janela ativa neste horario.',
   })
   modalidades!: string[];
 }
@@ -256,7 +256,7 @@ export class LinhaDeGrupoDto implements LinhaDeGrupo {
   @ApiProperty({
     type: [String],
     example: ['MODULAR', 'SEMI'],
-    description: 'Em quais modalidades a celula da grade existe.',
+    description: 'Em quais formatos a celula da grade existe.',
   })
   modalidades!: string[];
 }
@@ -281,7 +281,7 @@ export class BlocoDoPainelDto implements BlocoDoPainel {
   @ApiProperty({
     type: [String],
     example: ['2026-09-16', '2026-09-17'],
-    description: 'Dias com faixa ativa das modalidades do bloco, no intervalo.',
+    description: 'Dias com faixa ativa dos formatos do bloco, no intervalo.',
   })
   dias!: string[];
 
@@ -361,7 +361,7 @@ export class PendenciaDeHorarioDto implements PendenciaDeHorario {
   @ApiProperty({
     type: [JanelaCandidataDto],
     description:
-      'As janelas ativas da modalidade, para o admin escolher a correspondente.',
+      'As janelas ativas do formato, para o admin escolher a correspondente.',
   })
   janelas!: JanelaCandidataDto[];
 

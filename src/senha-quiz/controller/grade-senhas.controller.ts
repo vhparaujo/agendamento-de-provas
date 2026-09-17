@@ -124,15 +124,15 @@ export class GradeSenhasController {
       'silenciosamente.\n\n' +
       'Esta rota tambem APRENDE: o `orgUnitId` descoberto e gravado em ' +
       '`turma_importada`, nunca sobrescrevendo o que ja existia.\n\n' +
-      '### A modalidade de cada turma\n\n' +
-      'Cada turma resolvida traz tambem a **modalidade derivada**, que e o que ' +
+      '### O formato de cada turma\n\n' +
+      'Cada turma resolvida traz tambem o **formato derivado**, que e o que ' +
       'decide qual janela de horario o lote de datas aplica nela. Ela NAO vem do ' +
       'cadastro: `turma_importada` nao tem essa coluna, e nao deve ter (uma turma ' +
       'tem alunos de varios cursos, decisao de 10/08/2026). Ela e derivada dos ' +
       '**agendamentos confirmados** da rodada vigente.\n\n' +
-      '**Revise as turmas sem modalidade antes do primeiro dia**, com o mesmo ' +
-      'cuidado de `naoResolvidas`. `MODALIDADE_AMBIGUA` (alunos de duas ' +
-      'modalidades na mesma turma) e `SEM_AGENDAMENTO` (ninguem agendou ali) ' +
+      '**Revise as turmas sem formato antes do primeiro dia**, com o mesmo ' +
+      'cuidado de `naoResolvidas`. `MODALIDADE_AMBIGUA` (alunos de dois ' +
+      'formatos na mesma turma) e `SEM_AGENDAMENTO` (ninguem agendou ali) ' +
       'ficam **de fora do lote de datas** — nada e chutado, porque o questionario ' +
       'tem uma janela so e a escolha errada trancaria a prova de quem sobrou.',
   })
@@ -159,24 +159,24 @@ export class GradeSenhasController {
 
   @Put('turmas/:turmaId/modalidade')
   @ApiOperation({
-    summary: 'Decide a modalidade de uma turma AMBIGUA',
+    summary: 'Decide o formato de uma turma AMBIGUA',
     description:
-      'A saida para a turma que tem alunos de duas modalidades e por isso fica ' +
+      'A saida para a turma que tem alunos de dois formatos e por isso fica ' +
       'de fora do lote de datas — com a prova presa no horario antigo para a ' +
       'turma inteira, e nao so para a minoria.\n\n' +
       '**O sistema continua sem escolher.** Quem escolhe e uma pessoa, e a ' +
       'decisao fica gravada com o e-mail dela e a hora ' +
       '(`DATA_QUIZ_MODALIDADE_ESCOLHIDA` na auditoria).\n\n' +
       '### As duas travas, reconferidas a cada gravacao\n\n' +
-      '1. **A turma precisa estar ambigua AGORA.** Turma cuja modalidade ja se ' +
-      'deriva sozinha responde 400 — sem isso, isto viraria "definir a ' +
-      'modalidade de qualquer turma", que e a coluna de cadastro recusada em ' +
+      '1. **A turma precisa estar ambigua AGORA.** Turma cujo formato ja se ' +
+      'deriva sozinha responde 400 — sem isso, isto viraria "definir o ' +
+      'formato de qualquer turma", que e a coluna de cadastro recusada em ' +
       '10/08/2026 com outro nome.\n' +
-      '2. **A modalidade precisa ser uma das `candidatas`**, isto e, ter aluno ' +
-      'com prova confirmada ali. Aplicar a janela de uma modalidade que ' +
+      '2. **O formato precisa estar em `candidatas`**, isto e, ter aluno ' +
+      'com prova confirmada ali. Aplicar a janela de um formato que ' +
       'ninguem cursa fecharia a prova para TODOS, e nao so para a minoria.\n\n' +
       'A escolha tambem **caduca sozinha na leitura**: se a turma voltar a ter ' +
-      'uma modalidade so, a derivacao vence; se a modalidade escolhida ficar ' +
+      'um formato so, a derivacao vence; se o formato escolhido ficar ' +
       'sem nenhuma reserva, a turma reaparece como ambigua na conferencia. ' +
       'Nao e preciso desfazer nada a mao.\n\n' +
       'Vale para a **rodada vigente** — a decisao da N2 nao decide a ' +
@@ -187,7 +187,7 @@ export class GradeSenhasController {
   @ApiBadRequestResponse({
     description:
       'A turma nao esta ambigua, nao tem agendamento nenhum, nao teve o ' +
-      'orgUnitId resolvido, ou a modalidade informada nao tem aluno com prova ' +
+      'orgUnitId resolvido, ou o formato informado nao tem aluno com prova ' +
       'nela',
   })
   @ApiNotFoundResponse({ description: 'Turma nao encontrada' })
@@ -214,7 +214,7 @@ export class GradeSenhasController {
   // — mesma armadilha ja documentada em `senha-quiz.module.ts`.
   @Delete('turmas/:turmaId/modalidade')
   @ApiOperation({
-    summary: 'Desfaz a decisao de modalidade de uma turma',
+    summary: 'Desfaz a decisao de formato de uma turma',
     description:
       'A turma volta a aparecer como ambigua na conferencia e sai do lote de ' +
       'datas de novo.\n\n' +
@@ -322,11 +322,11 @@ export class GradeSenhasController {
 
   @Get('janelas')
   @ApiOperation({
-    summary: 'As janelas do questionario, por modalidade',
+    summary: 'As janelas do questionario, por formato',
     description:
       'A que horas a prova ABRE e FECHA no dia, e a que horas o cron aplica ' +
       'cada uma dessas mudancas.\n\n' +
-      'E **por modalidade** porque a duracao da prova vem dela: EaD (3h) cabe ' +
+      'E **por formato** porque a duracao da prova vem dele: EaD (3h) cabe ' +
       'em tres sessoes por dia, Semi/Modular (1h30) em seis. Nao ha calendario ' +
       'unico possivel.\n\n' +
       'Devolve tambem as janelas **inativas** — a tela precisa mostrar o ' +
@@ -340,9 +340,9 @@ export class GradeSenhasController {
 
   @Put('janelas')
   @ApiOperation({
-    summary: 'Define o calendario de UMA modalidade',
+    summary: 'Define o calendario de UM formato',
     description:
-      'Substitui as janelas da modalidade informada; as demais nao sao ' +
+      'Substitui as janelas do formato informado; as demais nao sao ' +
       'tocadas. Sessao que **nao vier** no corpo e removida — e assim que a ' +
       'tela apaga uma janela. Para apenas desligar uma sessao sem perder o ' +
       'horario, mande-a com `ativo: false`.\n\n' +
@@ -359,7 +359,7 @@ export class GradeSenhasController {
   @ApiBadRequestResponse({
     description:
       'Hora fora de HH:MM, fechamento antes da abertura, ordem repetida, ' +
-      'dois disparos ativos no mesmo minuto, ou modalidade inexistente',
+      'dois disparos ativos no mesmo minuto, ou formato inexistente',
   })
   salvarJanelas(
     @Body() dto: SalvarJanelasDto,
@@ -431,7 +431,7 @@ export class GradeSenhasController {
 }
 
 /**
- * Uma turma resolvida + a decisao de modalidade, no formato da tela.
+ * Uma turma resolvida + a decisao de formato, no formato da tela.
  *
  * Funcao livre e compartilhada pelas tres rotas de proposito: a conferencia e as
  * duas rotas de escrita mostram A MESMA linha, e duas montagens acabariam

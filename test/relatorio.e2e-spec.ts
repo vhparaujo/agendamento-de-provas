@@ -414,7 +414,7 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
   });
 
   describe('estatisticas do Inicio', () => {
-    it('conta a adesao sobre os vinculos ativos, por modalidade e por origem', async () => {
+    it('conta a adesao sobre os vinculos ativos, por formato e por origem', async () => {
       const res = await comoAdmin(
         api().get(`/api/agendamentos/estatisticas?poloId=${poloId}`),
       ).expect(200);
@@ -430,7 +430,7 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
       });
     });
 
-    it('cruza pendentes com as vagas livres do polo + modalidade', async () => {
+    it('cruza pendentes com as vagas livres do polo + formato', async () => {
       const res = await comoAdmin(
         api().get(`/api/agendamentos/estatisticas?poloId=${poloId}`),
       ).expect(200);
@@ -553,7 +553,7 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
       // Sem o BOM, o Excel em Windows le "Câmpus" como "CÃ¢mpus".
       expect(res.text.charCodeAt(0)).toBe(0xfeff);
       expect(res.text.split('\r\n')[0]).toBe(
-        '﻿Matricula;Aluno;E-mail;Curso;Situação do Curso;Modalidade;Polo;' +
+        '﻿Matricula;Aluno;E-mail;Curso;Situação do Curso;Formato;Polo;' +
           'Rodada;Data da prova;Inicio;Fim;Sala;Status;Agendado em;Agendado por',
       );
     });
@@ -661,14 +661,14 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
     });
 
     /**
-     * A modalidade e o polo da linha saem do AGENDAMENTO, nao do vinculo.
+     * O formato e o polo da linha saem do AGENDAMENTO, nao do vinculo.
      *
      * `aluno_importado` guarda so o estado atual e a importacao o sobrescreve.
      * Lendo de la, uma prova feita como EaD passava a ser exibida como "Modular"
      * assim que o aluno mudasse de curso — na mesma linha da data e da sala
      * corretas, que continuam sendo as da prova de verdade.
      */
-    it('mostra a modalidade DA EPOCA da prova, nao a de hoje', async () => {
+    it('mostra o formato DA EPOCA da prova, nao a de hoje', async () => {
       const modular = await prisma.modalidade.findUniqueOrThrow({
         where: { codigo: 'MODULAR' },
       });
@@ -704,7 +704,7 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
       expect(depois).toContain('12/11/2026');
 
       // Quem NAO tem prova nao tem fotografia, e ai o estado atual e a resposta
-      // certa: vai agendar pela modalidade que tem hoje.
+      // certa: vai agendar pelo formato que tem hoje.
       await prisma.alunoImportado.updateMany({
         where: { matricula: SEM_PROVA },
         data: { modalidadeId: modular.id },

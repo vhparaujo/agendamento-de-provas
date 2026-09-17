@@ -64,8 +64,8 @@ export class ImportacaoController {
   ) {}
 
   /**
-   * Upload do CSV de alunos. A modalidade NAO e coluna do arquivo: vem do
-   * dropdown do upload, correspondendo a aba de origem (EaD / Semi / Hibrido).
+   * Upload do CSV de alunos. O formato NAO e coluna do arquivo: vem do
+   * dropdown do upload, correspondendo a aba de origem (EaD / Semi / Modular).
    * Reenviar o mesmo arquivo atualiza os registros, nunca duplica.
    */
   @Post('alunos')
@@ -83,7 +83,7 @@ export class ImportacaoController {
       'valores sem correspondencia sao reportados em `polosNaoEncontrados` em vez de derrubar a carga.\n\n' +
       '**Nada e apagado**: quem nao esta no arquivo nao e tocado. Para incluir uma pessoa, ' +
       'basta um CSV com a linha dela.\n\n' +
-      '⚠️ A modalidade vem do dropdown e sobrescreve a de TODAS as linhas do arquivo, e o polo ' +
+      '⚠️ O formato vem do dropdown e sobrescreve a de TODAS as linhas do arquivo, e o polo ' +
       'segue a coluna CAMPUS. Quando uma dessas duas muda em quem **ja tem prova marcada**, a ' +
       'reserva continua na sala antiga (outra duracao, ou outro campus) e nada mais reclama — ' +
       'por isso essas linhas saem em `alteracoesComAgendamento`. O upload nao e bloqueado: a ' +
@@ -107,7 +107,7 @@ export class ImportacaoController {
           type: 'string',
           enum: [...MODALIDADES_UPLOAD],
           description:
-            'Aba de origem da planilha: EaD -> EAD, Semi -> SEMI, Hibrido -> MODULAR.',
+            'Aba de origem da planilha: EaD -> EAD, Semi -> SEMI, Modular -> MODULAR.',
         },
       },
     },
@@ -115,7 +115,7 @@ export class ImportacaoController {
   @ApiCreatedResponse({ type: ResultadoImportacaoAlunosDto })
   @ApiBadRequestResponse({
     description:
-      'Arquivo ausente, sem extensao .csv, acima de 15 MB, colunas obrigatorias faltando, ou modalidade invalida',
+      'Arquivo ausente, sem extensao .csv, acima de 15 MB, colunas obrigatorias faltando, ou formato invalido',
   })
   importarAlunos(
     @UploadedFile(validarCsv) arquivo: Express.Multer.File,

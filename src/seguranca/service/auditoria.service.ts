@@ -70,8 +70,8 @@ export type EventoSeguranca =
   | 'SENHA_QUIZ_CRON_SEM_HORARIO'
   | 'SENHA_QUIZ_CRON_IGNORADO'
   // Datas dos questionarios (25/08/2026). O mesmo lote, outro recorte: uma
-  // JANELA (horario de abertura e fechamento) aplicada nas turmas de UMA
-  // modalidade. Separados dos de senha de proposito — quem investiga "por que a
+  // JANELA (horario de abertura e fechamento) aplicada nas turmas de UM
+  // formato. Separados dos de senha de proposito — quem investiga "por que a
   // prova abriu as 16h?" nao quer as trocas de senha no meio, e vice-versa.
   | 'DATA_QUIZ_JANELAS_ALTERADAS'
   // A grade dia x janela dos grupos (14/09/2026). Auditavel pelo mesmo motivo

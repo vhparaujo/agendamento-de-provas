@@ -38,7 +38,7 @@ import { IntervaloDeDias, intervaloDeDias } from './intervalo';
  * INSCREVE o aluno e o que o disparo PROCURA sejam um so — com duas fontes, um
  * erro de digitacao faria o disparo nao achar o grupo no dia da prova.
  *
- * Em Semi/Modular uma linha grava a celula nas DUAS modalidades: elas dividem a
+ * Em Semi/Modular uma linha grava a celula nos DOIS formatos: eles dividem a
  * categoria e o calendario, e o disparo de cada uma le a propria janela.
  *
  * A categoria da celula e preenchida com a do bloco. Sem ela, o disparo varreria
@@ -49,7 +49,7 @@ import { IntervaloDeDias, intervaloDeDias } from './intervalo';
 export interface HorarioDoBloco {
   horaInicio: string;
   horaFim: string;
-  /** Codigos das modalidades que tem janela ativa neste horario. */
+  /** Codigos dos formatos que tem janela ativa neste horario. */
   modalidades: string[];
 }
 
@@ -58,7 +58,7 @@ export interface LinhaDeGrupo {
   horaInicio: string;
   horaFim: string;
   nomeGrupo: string;
-  /** Em quais modalidades a celula existe. Semi/Modular normalmente as duas. */
+  /** Em quais formatos a celula existe. Semi/Modular normalmente as duas. */
   modalidades: string[];
 }
 
@@ -67,7 +67,7 @@ export interface BlocoDoPainel {
   nome: string;
   categoria: string;
   horarios: HorarioDoBloco[];
-  /** Dias com faixa ativa das modalidades do bloco, no intervalo. */
+  /** Dias com faixa ativa dos formatos do bloco, no intervalo. */
   dias: string[];
   linhas: LinhaDeGrupo[];
 }
@@ -85,7 +85,7 @@ export interface PendenciaDeHorario {
   modalidadeId: number;
   modalidadeCodigo: string;
   modalidadeNome: string;
-  /** O horario das FAIXAS, que nao existe entre as janelas da modalidade. */
+  /** O horario das FAIXAS, que nao existe entre as janelas do formato. */
   horaInicio: string;
   horaFim: string;
   faixas: number;
@@ -410,7 +410,7 @@ export class NomesDosGruposService {
 
     if (!janela || janela.modalidadeId !== entrada.modalidadeId) {
       throw new BadRequestException(
-        'A janela escolhida nao e da modalidade desta pendencia. Recarregue a tela.',
+        'A janela escolhida nao e do formato desta pendencia. Recarregue a tela.',
       );
     }
 
@@ -684,7 +684,7 @@ function horariosDe(janelas: JanelaComGrupo[]): HorarioDoBloco[] {
  * As celulas do bloco como LINHAS da tela: a mesma sessao em Semi e em Modular,
  * com o mesmo nome, e uma linha so.
  *
- * Se as duas modalidades tiverem nomes DIFERENTES na mesma sessao (editados na
+ * Se os dois formatos tiverem nomes DIFERENTES na mesma sessao (editados na
  * grade da outra aba), saem duas linhas — e salvar recusa a sessao repetida. E
  * de proposito: escolher um dos dois nomes em silencio apagaria o outro.
  */
@@ -726,10 +726,10 @@ function linhasDe(
 }
 
 /**
- * Horario de faixa sem janela ATIVA identica na modalidade.
+ * Horario de faixa sem janela ATIVA identica no formato.
  *
- * Por modalidade, e nao por faixa: a faixa e neutra, e uma mesma faixa pode ter
- * sala EaD e sala Semi — cada modalidade confere o horario contra as proprias
+ * Por formato, e nao por faixa: a faixa e neutra, e uma mesma faixa pode ter
+ * sala EaD e sala Semi — cada formato confere o horario contra as proprias
  * janelas. Comparacao EXATA: "15:00 e quase 15:30" colocaria aluno no grupo
  * errado sem aviso.
  */

@@ -90,7 +90,7 @@ export class AgendamentoService {
   ) {}
 
   /**
-   * O que o aluno pode escolher: faixas do POLO dele, que ofertam a MODALIDADE
+   * O que o aluno pode escolher: faixas do POLO dele, que ofertam o FORMATO
    * dele, ativas e ainda por acontecer.
    *
    * Faixas lotadas continuam na lista com `temVaga: false`. Some-las seria pior
@@ -120,7 +120,7 @@ export class AgendamentoService {
       include: {
         polo: { select: { id: true, nome: true } },
         salaFaixas: {
-          // So as salas da modalidade DELE: uma faixa pode ofertar EaD e Modular
+          // So as salas do formato DELE: uma faixa pode ofertar EaD e Modular
           // ao mesmo tempo, e as vagas de uma nao valem para a outra.
           where: { modalidadeId: vinculo.modalidadeId },
           select: {
@@ -176,7 +176,7 @@ export class AgendamentoService {
    * a confirmacao recusa.
    *
    * Os periodos letivos vao no PLURAL pelo mesmo motivo que no lock: a outra
-   * prova do mesmo RA pode estar num vinculo de outra modalidade, gravada sob o
+   * prova do mesmo RA pode estar num vinculo de outro formato, gravada sob o
    * outro org unit. Recortar por um so faria a tela oferecer um horario que a
    * confirmacao recusa — a metade errada do espelho.
    *
@@ -214,7 +214,7 @@ export class AgendamentoService {
   ): Promise<DisciplinasDoVinculo> {
     const vinculo = await this.exigirVinculo(aluno, alunoId);
 
-    // A lista e do VINCULO, e nao do RA: a modalidade dele escolhe o periodo
+    // A lista e do VINCULO, e nao do RA: o formato dele escolhe o periodo
     // letivo do Brightspace. Um aluno com um vinculo EaD e um Presencial ve
     // listas diferentes em cada um, como deve ser — sao duas grades.
     const { agendaveis, motivo } = await this.disciplinasDoAluno.cruzar(
@@ -275,7 +275,7 @@ export class AgendamentoService {
       );
     }
 
-    // A modalidade do vinculo decide QUAL periodo letivo do Brightspace vale
+    // O formato do vinculo decide QUAL periodo letivo do Brightspace vale
     // para este aluno: EaD/Semi/Modular andam por modulo, Presencial por
     // semestre, e os dois org units estao vivos ao mesmo tempo.
     const periodo = await this.periodo.exigirAberto(vinculo.modalidade.codigo);
@@ -354,7 +354,7 @@ export class AgendamentoService {
       // A troca e um agendamento novo aos olhos da regra: trocar nao pode ser a
       // porta para cair no horario da outra prova do mesmo RA.
       // A janela inteira, e nao `atual.periodoLetivoId`: a outra prova do mesmo
-      // RA pode estar num vinculo de outra modalidade, gravada sob o outro org
+      // RA pode estar num vinculo de outro formato, gravada sob o outro org
       // unit. Ver a nota em `exigirUmaProvaPorFaixa`.
       await exigirUmaProvaPorFaixa(tx, {
         matricula: vinculo.matricula,
@@ -432,7 +432,7 @@ export class AgendamentoService {
   async meusAgendamentos(
     aluno: AlunoJwtPayload,
   ): Promise<AgendamentoConfirmado[]> {
-    // A JANELA inteira, e nao o periodo de uma modalidade: quem tem um vinculo
+    // A JANELA inteira, e nao o periodo de um formato: quem tem um vinculo
     // EaD e um Presencial tem duas provas nesta mesma janela, gravadas sob org
     // units diferentes. Filtrar por um so esconderia dele metade das provas —
     // e ele iria embora sem saber de uma delas.
@@ -469,7 +469,7 @@ export class AgendamentoService {
    * 1. `SELECT ... FOR UPDATE` no VINCULO. Serializa o mesmo aluno consigo mesmo
    *    (duplo clique, duas abas), inclusive quando as duas requisicoes apontam
    *    para faixas diferentes — caso que o lock das salas nao pegaria.
-   * 2. `SELECT ... FOR UPDATE` nas ofertas da faixa+modalidade. E o portao: toda
+   * 2. `SELECT ... FOR UPDATE` nas ofertas da faixa+formato. E o portao: toda
    *    confirmacao para aquelas salas passa por aqui, uma de cada vez.
    * 3. So DEPOIS do portao a contagem e feita.
    *
@@ -494,14 +494,14 @@ export class AgendamentoService {
     faixaId: number;
     userIdD2L: string;
     /**
-     * O periodo letivo DESTE vinculo, resolvido pela modalidade dele. E o que
+     * O periodo letivo DESTE vinculo, resolvido pelo formato dele. E o que
      * vai gravado na reserva como fotografia.
      */
     periodoLetivoId: string;
     /**
      * Os periodos letivos da JANELA. So a trava por PESSOA usa — ela precisa
-     * enxergar a prova que o mesmo RA marcou por um vinculo de outra
-     * modalidade, gravada sob outro org unit.
+     * enxergar a prova que o mesmo RA marcou por um vinculo de outro
+     * formato, gravada sob outro org unit.
      */
     periodoLetivoIds: string[];
     /** Do periodo VIGENTE. Vai gravada na reserva como fotografia — ver o schema. */
@@ -537,7 +537,7 @@ export class AgendamentoService {
       // prova do semestre"); este e por PESSOA ("uma prova por horario"), e de
       // proposito NAO olha a rodada: quem fez a N2 as 08:30 nao faz a SUB as
       // 08:30 tambem. Um RA com dois cursos passa pelo primeiro e precisa parar
-      // no segundo — inclusive quando os dois cursos sao de MODALIDADES
+      // no segundo — inclusive quando os dois cursos sao de FORMATOS
       // diferentes, e por isso aqui vao os ids da janela e nao o do vinculo.
       await exigirUmaProvaPorFaixa(tx, {
         matricula: dados.matricula,
@@ -563,7 +563,7 @@ export class AgendamentoService {
           // dizendo em qual prova ela foi feita.
           rodada: dados.rodada,
           // Do vinculo, nao da oferta: sao iguais por construcao (a alocacao so
-          // aceita oferta da modalidade do aluno, e o portal recusa faixa de
+          // aceita oferta do formato do aluno, e o portal recusa faixa de
           // outro polo), mas o que a coluna documenta e o ALUNO na data da
           // reserva — a proxima importacao pode mudar os dois.
           modalidadeId: dados.modalidadeId,
@@ -733,7 +733,7 @@ export class AgendamentoService {
    * O portao de autorizacao de TODAS as rotas do portal.
    *
    * O token diz de quem sao os vinculos; o BANCO diz o que cada vinculo e. Nunca
-   * o contrario: modalidade e polo vindos do token ficariam congelados no
+   * o contrario: formato e polo vindos do token ficariam congelados no
    * momento do launch, e uma reimportacao do CSV entre o login e o agendamento
    * mandaria o aluno para a sala errada.
    */

@@ -9,7 +9,7 @@ import { instanteUtcDe } from '../../senha-quiz/service/relogio';
  *
  *   - **inicio** = hora de inicio da FAIXA agendada, no fuso do POLO da faixa;
  *   - **fim**    = hora de fim da faixa, + o tempo extra se for do NIOP;
- *   - **tempo**  = o tempo de prova da modalidade da reserva, + o extra do NIOP.
+ *   - **tempo**  = o tempo de prova do formato da reserva, + o extra do NIOP.
  *
  * O fuso e o do polo porque a faixa e cadastrada no relogio de quem faz a prova:
  * "09:00" em Cruzeiro do Sul e 09:00 no Acre, duas horas depois das 09:00 de
@@ -17,7 +17,7 @@ import { instanteUtcDe } from '../../senha-quiz/service/relogio';
  * deslocamento somado a mao.
  *
  * O fim e o da faixa, e nao inicio + tempo (decisao de 15/09/2026): a faixa ja
- * tem o tamanho da prova da modalidade, e o NIOP ganha a mesma hora a mais nas
+ * tem o tamanho da prova do formato, e o NIOP ganha a mesma hora a mais nas
  * duas pontas que importam — o relogio do questionario e o fechamento.
  */
 
@@ -28,7 +28,7 @@ export interface ReservaParaAcesso {
   horaFim: string;
   /** Fuso IANA do polo da faixa. */
   fuso: string;
-  /** `Modalidade.tempoDeProvaMinutos` da modalidade DA RESERVA (fotografia). */
+  /** `Modalidade.tempoDeProvaMinutos` do formato DA RESERVA (fotografia). */
   tempoDeProvaMinutos: number;
   niop: boolean;
 }

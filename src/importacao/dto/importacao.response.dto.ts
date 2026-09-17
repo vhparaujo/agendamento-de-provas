@@ -75,13 +75,13 @@ export class MudancaDto implements Mudanca {
 }
 
 /**
- * Um vinculo que JA TINHA PROVA MARCADA e mudou de modalidade, de polo ou de
+ * Um vinculo que JA TINHA PROVA MARCADA e mudou de formato, de polo ou de
  * elegibilidade (STATUS CURSO) nesta importacao.
  *
  * Nos dois primeiros a reserva continua apontando para a sala antiga — prova de
  * outra duracao, ou em outro campus — e o sintoma so aparece dias depois,
- * disfarcado: o remanejo passa a ser recusado com "esta sala nao e da
- * modalidade do aluno". No terceiro o aluno perde o direito de agendar e mantem
+ * disfarcado: o remanejo passa a ser recusado com "esta sala nao e do
+ * formato do aluno". No terceiro o aluno perde o direito de agendar e mantem
  * a cadeira: nao troca mais de horario, sai do compulsorio, e ainda assim
  * aparece na lista de presenca do dia.
  */
@@ -104,7 +104,7 @@ export class AlteracaoComAgendamentoDto implements AlteracaoComAgendamento {
   @ApiPropertyOptional({
     type: MudancaDto,
     description:
-      'Presente so quando a modalidade mudou. A prova marcada passa a ter outra ' +
+      'Presente so quando o formato mudou. A prova marcada passa a ter outra ' +
       'duracao que a da sala em que o aluno esta alocado.',
   })
   modalidade?: MudancaDto;
@@ -271,7 +271,7 @@ export class ResultadoImportacaoAlunosDto implements ResultadoImportacaoAlunos {
   @ApiProperty({
     type: [AlteracaoComAgendamentoDto],
     description:
-      'Vinculos COM PROVA MARCADA cuja modalidade, polo ou elegibilidade ' +
+      'Vinculos COM PROVA MARCADA cujo formato, polo ou elegibilidade ' +
       '(STATUS CURSO) mudaram nesta importacao. Nao bloqueia o upload — a ' +
       'planilha e a fonte de verdade e pode estar corrigindo um cadastro ' +
       'errado —, mas cada linha aqui pede decisao: remanejar a reserva, ' +

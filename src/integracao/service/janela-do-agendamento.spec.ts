@@ -29,7 +29,7 @@ describe('janelaDoAgendamento', () => {
    * que so aparece no mapa da janela — comparar so com o principal a deixaria
    * sem periodo nenhum.
    */
-  it('casa por um periodo letivo do mapa por modalidade', () => {
+  it('casa por um periodo letivo do mapa por formato', () => {
     const janelas = [janela(1, '2026-4-modulo', 'N2', ['2026-2-semestre'])];
 
     expect(

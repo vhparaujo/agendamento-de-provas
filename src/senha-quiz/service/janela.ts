@@ -12,18 +12,18 @@ import { minutosDaHora } from './turno';
  *
  * ⚠️ **DEVOLVE UMA LISTA, e essa e a diferenca que importa.** As 12:01 disparam
  * EaD (que passa para 15:00-18:00) e Semi/Modular (que passa para 14:00-15:30)
- * ao MESMO tempo, com janelas diferentes. Devolver um item so faria uma das duas
- * modalidades perder a sessao inteira, e o sintoma seria alunos batendo num
+ * ao MESMO tempo, com janelas diferentes. Devolver um item so faria um dos dois
+ * formatos perder a sessao inteira, e o sintoma seria alunos batendo num
  * questionario fechado — sem erro nenhum no log.
  *
  * As janelas escolhidas entram todas na MESMA execucao, que percorre as turmas
- * uma vez e escolhe a janela pela modalidade derivada de cada turma. E o que
+ * uma vez e escolhe a janela pelo formato derivado de cada turma. E o que
  * garante que nenhuma turma seja tocada duas vezes no mesmo disparo — dois PUTs
  * no mesmo questionario, e o ultimo venceria.
  *
  * ⚠️ Esta janela NAO seleciona turma, do mesmo jeito que o turno nao seleciona.
  * O conjunto continua sendo o das turmas do CSV no periodo letivo vigente; a
- * janela so diz QUAIS DATAS entram, e a modalidade da turma diz qual das janelas
+ * janela so diz QUAIS DATAS entram, e o formato da turma diz qual das janelas
  * e a dela.
  */
 
@@ -36,7 +36,7 @@ import { minutosDaHora } from './turno';
  *
  * E o que fecha o ciclo do dia: o ultimo disparo arma a primeira sessao da manha
  * seguinte, e todos os outros apontam para o proprio dia. Nos tres calendarios
- * semeados isso da exatamente uma janela por modalidade.
+ * semeados isso da exatamente uma janela por formato.
  *
  * ⚠️ **Deixou de ser escolha do admin em 25/08/2026.** Antes era um checkbox na
  * tela, e nao havia resposta certa que ele pudesse dar: marcar "hoje" numa
@@ -77,21 +77,21 @@ export interface JanelaCandidata {
 }
 
 /**
- * As janelas a disparar neste minuto — no maximo UMA por modalidade.
+ * As janelas a disparar neste minuto — no maximo UMA por formato.
  *
  * A JANELA DE TOLERANCIA e a mesma de `turnoParaDisparar`, semiaberta
  * (`[inicio, inicio + tolerancia)`), e existe pelo mesmo motivo: um servidor que
  * estava fora as 15:31 e sobe as 15:42 ainda aplica a sessao das 16:00. Sem ela,
  * um deploy na hora errada custaria uma sessao inteira de alunos travados.
  *
- * Empate dentro da MESMA modalidade (tolerancia grande o bastante para duas
+ * Empate dentro do MESMO formato (tolerancia grande o bastante para duas
  * janelas se sobreporem): vence a que COMECOU MAIS TARDE — e a sessao corrente,
  * e aplicar a anterior por cima reabriria a prova que acabou de fechar. Com os
  * horarios semeados isso nao acontece: o menor intervalo entre dois disparos da
- * mesma modalidade e de 120 min (10:01 -> 12:01), contra os 30 min de tolerancia
+ * mesmo formato e de 120 min (10:01 -> 12:01), contra os 30 min de tolerancia
  * padrao. A regra existe para o dia em que alguem apertar os horarios na tela.
  *
- * Modalidades diferentes NUNCA competem entre si: cada uma tem o seu calendario,
+ * Formatos diferentes NUNCA competem entre si: cada um tem o seu calendario,
  * e duas janelas no mesmo minuto e o caso NORMAL (12:01), nao um conflito.
  *
  * Nao ha travessia de meia-noite, a mesma limitacao declarada em `turno.ts` —
@@ -111,7 +111,7 @@ export function janelasParaDisparar<T extends JanelaCandidata>(
     ? Math.max(0, toleranciaMin)
     : 0;
 
-  /** modalidadeId -> a candidata vencedora daquela modalidade. */
+  /** modalidadeId -> a candidata vencedora daquele formato. */
   const escolhidas = new Map<number, { janela: T; inicio: number }>();
 
   for (const janela of janelas) {
@@ -135,7 +135,7 @@ export function janelasParaDisparar<T extends JanelaCandidata>(
     }
   }
 
-  // Ordem estavel por modalidade: o relatorio e o log de duas execucoes com os
+  // Ordem estavel por formato: o relatorio e o log de duas execucoes com os
   // mesmos dados precisam sair iguais, como em `alocacao.ts`.
   return [...escolhidas.values()]
     .sort((a, b) => a.janela.modalidadeId - b.janela.modalidadeId)

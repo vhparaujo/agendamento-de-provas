@@ -15,7 +15,7 @@ import { PrismaService } from './../src/database/prisma.service';
 const CSV_REAIS = {
   EAD: '/Users/vhparaujo/Desktop/EaD - Dados(EaD).csv',
   SEMI: '/Users/vhparaujo/Desktop/EaD - Dados(Semi).csv',
-  MODULAR: '/Users/vhparaujo/Desktop/EaD - Dados(Híbrido).csv',
+  MODULAR: '/Users/vhparaujo/Desktop/EaD - Dados(Modular).csv',
 };
 
 const temCsvReais = Object.values(CSV_REAIS).every((p) => existsSync(p));
@@ -86,7 +86,7 @@ describe('Importacao de CSVs (e2e)', () => {
         .expect(401);
     });
 
-    it('recusa modalidade invalida', async () => {
+    it('recusa formato invalido', async () => {
       await request(app.getHttpServer())
         .post('/api/importacao/alunos')
         .set('Authorization', `Bearer ${token}`)
@@ -203,12 +203,12 @@ describe('Importacao de CSVs (e2e)', () => {
   /**
    * O aviso de troca com prova marcada.
    *
-   * Modalidade e polo sao os dois campos que a importacao troca POR BAIXO de uma
+   * Formato e polo sao os dois campos que a importacao troca POR BAIXO de uma
    * reserva confirmada sem que nada mais reclame — a reserva continua na sala
    * antiga, com outra duracao ou em outro campus. Aqui se prova que a
    * importacao passou a dizer isso em voz alta, e que nao grita a toa.
    */
-  describe('aviso: troca de modalidade/polo em quem ja tem prova marcada', () => {
+  describe('aviso: troca de formato/polo em quem ja tem prova marcada', () => {
     const RA = 'E2EAVISO01';
     const RA_SEM_PROVA = 'E2EAVISO02';
     const CURSO = 'CURSO E2E AVISO';
@@ -221,7 +221,7 @@ describe('Importacao de CSVs (e2e)', () => {
     let alunoId: number;
     let salaFaixaId: number;
     let ead: { id: number; nome: string };
-    // Nomes de exibicao vindos do seed ("EaD", "Modular / Hibrido") — o aviso
+    // Nomes de exibicao vindos do seed ("EaD", "Modular") — o aviso
     // fala em nomes, nao em ids, entao o teste tambem.
     let nomeEad: string;
     let nomeModular: string;
@@ -362,7 +362,7 @@ describe('Importacao de CSVs (e2e)', () => {
       expect(res.body.alteracoesComAgendamento).toEqual([]);
     });
 
-    it('avisa quando a MODALIDADE muda em quem tem prova marcada', async () => {
+    it('avisa quando o FORMATO muda em quem tem prova marcada', async () => {
       const res = await subir(POLO_A, 'MODULAR').expect(201);
 
       // O aluno sem prova mudou igual, e NAO entra no aviso: nao ha reserva
@@ -377,7 +377,7 @@ describe('Importacao de CSVs (e2e)', () => {
         agendamentosConfirmados: 1,
         modalidade: { de: nomeEad, para: nomeModular },
       });
-      // so a modalidade mudou
+      // so o formato mudou
       expect(aviso.polo).toBeUndefined();
 
       // Avisa, mas NAO bloqueia: a gravacao acontece.
@@ -439,7 +439,7 @@ describe('Importacao de CSVs (e2e)', () => {
 
     /**
      * O caso mais silencioso dos tres: "Transf. Interna" e um status CONHECIDO,
-     * entao ele nao entra em `statusDesconhecidos`, e como modalidade e polo
+     * entao ele nao entra em `statusDesconhecidos`, e como formato e polo
      * nao mudaram nada mais no upload muda de cor. Antes deste aviso, a unica
      * pista era `bloqueados` subir um.
      */
@@ -447,7 +447,7 @@ describe('Importacao de CSVs (e2e)', () => {
       const res = await subir(POLO_A, 'EAD', 'Transf. Interna').expect(201);
 
       // O aluno SEM prova perdeu a elegibilidade igual e nao entra: nao ha
-      // reserva para ficar orfa. Mesmo criterio de modalidade e polo.
+      // reserva para ficar orfa. Mesmo criterio de formato e polo.
       expect(res.body.alteracoesComAgendamento).toHaveLength(1);
 
       const aviso = res.body.alteracoesComAgendamento[0];
@@ -754,7 +754,7 @@ describe('Importacao de CSVs (e2e)', () => {
       expect(resumo.MODULAR.totalLinhas).toBe(1621);
     }, 300_000);
 
-    it('rejeita exatamente as 11 linhas do Hibrido sem CAMPUS', () => {
+    it('rejeita exatamente as 11 linhas do Modular sem CAMPUS', () => {
       expect(resumo.MODULAR.rejeitadas).toHaveLength(11);
       expect(resumo.MODULAR.rejeitadas[0].motivo).toMatch(/CAMPUS vazio/);
       expect(resumo.EAD.rejeitadas).toHaveLength(0);

@@ -19,20 +19,20 @@ interface Periodo {
   createdAt: Date;
   /**
    * O mapa `modalidade -> periodo letivo`. Ausente no fixture = o que a
-   * migration produz para as janelas antigas: todas as modalidades no
+   * migration produz para as janelas antigas: todos os formatos no
    * principal.
    */
   letivosPorModalidade?: { modalidadeId: number; periodoLetivoId: string }[];
 }
 
 /**
- * As modalidades cadastradas, como o seed as cria. O mapa e validado contra
+ * Os formatos cadastrados, como o seed as cria. O mapa e validado contra
  * ELAS — faltar uma e 400 —, entao o duble precisa das quatro.
  */
 const MODALIDADES = [
   { id: 1, codigo: 'EAD', nome: 'EaD' },
   { id: 2, codigo: 'SEMI', nome: 'Semipresencial' },
-  { id: 3, codigo: 'MODULAR', nome: 'Modular / Hibrido' },
+  { id: 3, codigo: 'MODULAR', nome: 'Modular' },
   { id: 4, codigo: 'PRESENCIAL', nome: 'Presencial' },
 ];
 
@@ -832,11 +832,11 @@ describe('PeriodoService — os criterios de nota', () => {
  *
  * O que estes testes protegem e o modo de falhar: um `periodoLetivoId` que nao
  * bate NAO da erro nenhum — a busca de ofertas responde 200 com lista vazia, e
- * a modalidade inteira recebe "nenhuma disciplina sua aparece no periodo letivo
+ * o formato inteiro recebe "nenhuma disciplina sua aparece no periodo letivo
  * vigente". Toda conferencia que nao acontecer no cadastro vira suporte no dia
  * da abertura.
  */
-describe('PeriodoService — o mapa por modalidade', () => {
+describe('PeriodoService — o mapa por formato', () => {
   const JANELA_DUAS_GRADES: Periodo = {
     id: 90,
     periodoLetivoId: 'MODULO-2026-4',
@@ -851,7 +851,7 @@ describe('PeriodoService — o mapa por modalidade', () => {
     ],
   };
 
-  it('resolve o periodo letivo pela modalidade do vinculo', async () => {
+  it('resolve o periodo letivo pelo formato do vinculo', async () => {
     const { service } = montar([JANELA_DUAS_GRADES]);
 
     await expect(
@@ -864,7 +864,7 @@ describe('PeriodoService — o mapa por modalidade', () => {
   });
 
   /** O codigo vem do banco e do token; comparar sem normalizar quebraria calado. */
-  it('a modalidade casa sem diferenciar maiuscula de minuscula', async () => {
+  it('o formato casa sem diferenciar maiuscula de minuscula', async () => {
     const { service } = montar([JANELA_DUAS_GRADES]);
 
     await expect(
@@ -878,7 +878,7 @@ describe('PeriodoService — o mapa por modalidade', () => {
     const janela = await service.janelaVigente();
 
     expect(janela?.principal).toBe('MODULO-2026-4');
-    // Tres modalidades apontam para o modulo: ele entra UMA vez.
+    // Tres formatos apontam para o modulo: ele entra UMA vez.
     expect(janela?.periodoLetivoIds.sort()).toEqual([
       'MODULO-2026-4',
       'SEMESTRE-2026-2',
@@ -887,11 +887,11 @@ describe('PeriodoService — o mapa por modalidade', () => {
 
   /**
    * O principal entra em `periodoLetivoIds` mesmo quando ja esta no mapa, e
-   * mesmo quando nenhuma modalidade aponta para ele: ele e o destino do
+   * mesmo quando nenhum formato aponta para ele: ele e o destino do
    * fallback, entao pode haver reserva gravada com ele. Deixa-lo de fora faria
    * essa prova sumir de toda consulta pela janela.
    */
-  it('o principal entra na lista mesmo sem modalidade apontando para ele', async () => {
+  it('o principal entra na lista mesmo sem formato apontando para ele', async () => {
     const { service } = montar([
       {
         ...JANELA_DUAS_GRADES,
@@ -911,11 +911,11 @@ describe('PeriodoService — o mapa por modalidade', () => {
   });
 
   /**
-   * Modalidade sem linha no mapa cai no principal — e o que segura o sistema de
-   * pe quando uma modalidade nova e semeada depois da janela. Nao e erro: e a
+   * Formato sem linha no mapa cai no principal — e o que segura o sistema de
+   * pe quando um formato novo e semeada depois da janela. Nao e erro: e a
    * alternativa a derrubar o agendamento das outras quatro.
    */
-  it('modalidade fora do mapa cai no principal', async () => {
+  it('formato fora do mapa cai no principal', async () => {
     const { service } = montar([
       {
         ...JANELA_DUAS_GRADES,
@@ -930,7 +930,7 @@ describe('PeriodoService — o mapa por modalidade', () => {
     ).resolves.toMatchObject({ periodoLetivoId: 'MODULO-2026-4' });
   });
 
-  it('sem mapa informado, todas as modalidades ficam no principal', async () => {
+  it('sem mapa informado, todos os formatos ficam no principal', async () => {
     const { service, periodos } = montar([]);
 
     await service.criar({
@@ -947,11 +947,11 @@ describe('PeriodoService — o mapa por modalidade', () => {
   });
 
   /**
-   * Cobrir o mapa parcialmente e pior que nao cobrir: a modalidade esquecida
+   * Cobrir o mapa parcialmente e pior que nao cobrir: o formato esquecido
    * cairia no principal em silencio, que e exatamente o erro que o mapa existe
    * para impedir. A frase precisa dizer QUAIS faltam.
    */
-  it('recusa o mapa incompleto, nomeando as modalidades que faltam', async () => {
+  it('recusa o mapa incompleto, nomeando os formatos que faltam', async () => {
     const { service } = montar([]);
 
     await expect(
@@ -965,7 +965,7 @@ describe('PeriodoService — o mapa por modalidade', () => {
     ).rejects.toThrow(/SEMI.*MODULAR.*PRESENCIAL|PRESENCIAL/s);
   });
 
-  it('recusa codigo de modalidade que nao existe', async () => {
+  it('recusa codigo de formato que nao existe', async () => {
     const { service } = montar([]);
 
     await expect(
@@ -973,10 +973,10 @@ describe('PeriodoService — o mapa por modalidade', () => {
         periodoLetivoId: '555',
         dataFechamento: '2026-12-31T23:59:00-03:00',
         letivosPorModalidade: [
-          { modalidadeCodigo: 'HIBRIDO', periodoLetivoId: '555' },
+          { modalidadeCodigo: 'INEXISTENTE', periodoLetivoId: '555' },
         ],
       }),
-    ).rejects.toThrow(/HIBRIDO/);
+    ).rejects.toThrow(/INEXISTENTE/);
   });
 
   it('grava o mapa que o admin cadastrou', async () => {
@@ -1119,8 +1119,8 @@ describe('PeriodoService — o mapa por modalidade', () => {
     );
   });
 
-  /** A tela precisa ver TODAS as modalidades, inclusive as que herdam. */
-  it('a listagem mostra a modalidade que herdou o principal', async () => {
+  /** A tela precisa ver TODOS os formatos, inclusive as que herdam. */
+  it('a listagem mostra o formato que herdou o principal', async () => {
     const { service } = montar([
       {
         ...JANELA_DUAS_GRADES,

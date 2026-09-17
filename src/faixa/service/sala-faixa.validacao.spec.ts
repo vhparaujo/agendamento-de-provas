@@ -21,9 +21,9 @@ const SALA = {
 };
 
 const EAD = { id: 1, nome: 'EaD', duracaoMinutos: 180 };
-const MODULAR = { id: 3, nome: 'Modular / Híbrido', duracaoMinutos: 90 };
+const MODULAR = { id: 3, nome: 'Modular', duracaoMinutos: 90 };
 
-// Faixa de 3h no polo 6 — comporta qualquer modalidade
+// Faixa de 3h no polo 6 — comporta qualquer formato
 const FAIXA = { poloId: 6, horaInicio: '08:30', horaFim: '11:30' };
 
 describe('validarOferta', () => {

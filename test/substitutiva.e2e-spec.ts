@@ -27,7 +27,7 @@ import {
  * correto, mas nao e o que este arquivo quer exercitar. Os dois clientes da
  * Valence sao substituidos por dubles: o e2e nao tem tenant para conversar.
  *
- * Requer banco de pe, migrations e seed (modalidades).
+ * Requer banco de pe, migrations e seed (formatos).
  */
 process.env.D2L_HABILITADO = 'true';
 process.env.D2L_BASE_URL = 'https://e2e.invalido';

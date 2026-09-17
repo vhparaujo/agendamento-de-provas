@@ -42,23 +42,23 @@ const AJUDA_NOTA =
   'default "N1"): turma que a nomear de outro jeito nao libera ninguem.';
 
 const AJUDA_MAPA =
-  'O PERIODO LETIVO DE CADA MODALIDADE. A UCB corre duas grades ao mesmo ' +
+  'O PERIODO LETIVO DE CADA FORMATO. A UCB corre duas grades ao mesmo ' +
   'tempo: EaD, Semipresencial e Modular andam por MODULO (quatro por ano — ' +
   '2026/1 a 2026/4) e Presencial anda por SEMESTRE (dois — 2026/1 e 2026/2). ' +
   'Em novembro de 2026 o aluno EaD esta sob 2026/4 e o presencial sob 2026/2, ' +
   'que sao org units DIFERENTES e vivos ao mesmo tempo no Brightspace.\n\n' +
-  'OMITIR = todas as modalidades ficam no `periodoLetivoId` principal, que e o ' +
+  'OMITIR = todos os formatos ficam no `periodoLetivoId` principal, que e o ' +
   'comportamento de quem tem uma grade so.\n\n' +
-  'INFORMAR = tem de cobrir TODAS as modalidades cadastradas; faltar uma ' +
+  'INFORMAR = tem de cobrir TODOS os formatos cadastrados; faltar um ' +
   'responde 400 nomeando quais. Cobrir parcialmente seria pior que nao cobrir: ' +
   'a esquecida cairia no principal em silencio, e um `periodoLetivoId` que nao ' +
-  'bate NAO da erro — a busca responde 200 com lista vazia e a modalidade ' +
+  'bate NAO da erro — a busca responde 200 com lista vazia e o formato ' +
   'inteira recebe "nenhuma disciplina sua aparece no periodo letivo vigente".';
 
 export class LetivoDaModalidadeDto {
   @ApiProperty({
     example: 'PRESENCIAL',
-    description: 'Codigo da modalidade: EAD, SEMI, MODULAR ou PRESENCIAL.',
+    description: 'Codigo do formato: EAD, SEMI, MODULAR ou PRESENCIAL.',
   })
   @IsString()
   @IsNotEmpty({ message: 'modalidadeCodigo e obrigatorio' })
@@ -67,7 +67,7 @@ export class LetivoDaModalidadeDto {
 
   @ApiProperty({
     example: '8790',
-    description: 'Id do periodo letivo no Brightspace para esta modalidade.',
+    description: 'Id do periodo letivo no Brightspace para este formato.',
   })
   @IsString()
   @IsNotEmpty({ message: 'periodoLetivoId e obrigatorio' })
@@ -88,8 +88,8 @@ export class LetivoDaModalidadeResponseDto
   @ApiProperty({
     example: false,
     description:
-      'true quando esta modalidade NAO tem entrada propria e caiu no periodo ' +
-      'letivo principal da janela. Acontece com modalidade cadastrada depois da ' +
+      'true quando este formato NAO tem entrada propria e caiu no periodo ' +
+      'letivo principal da janela. Acontece com formato cadastrado depois da ' +
       'janela. Nao e erro, mas e o que a tela precisa destacar: se ela nao segue ' +
       'a mesma grade, os alunos dela ficam sem disciplina agendavel.',
   })
@@ -197,14 +197,14 @@ export class AtualizarPeriodoDto {
   @ApiPropertyOptional({
     type: [LetivoDaModalidadeDto],
     description:
-      'Corrige o mapa por modalidade — **so enquanto a janela nao tiver ' +
+      'Corrige o mapa por formato — **so enquanto a janela nao tiver ' +
       'agendamento nenhum** (cancelados contam), pela mesma razao da `rodada`: ' +
       'o `periodoLetivoId` gravado na reserva e fotografia, e trocar o da janela ' +
       'deixaria as provas orfas. Reenviar o mapa IGUAL ao que ja esta gravado ' +
       'nao dispara a trava, entao editar so as datas de uma janela cheia ' +
       'continua funcionando.\n\n' +
       'O mapa vai INTEIRO: nao ha edicao de uma linha so, porque ele e validado ' +
-      'como conjunto (toda modalidade coberta).',
+      'como conjunto (todo formato coberto).',
   })
   @IsOptional()
   @IsArray()
@@ -316,8 +316,8 @@ export class PeriodoAdminDto implements PeriodoAdmin {
   @ApiProperty({
     example: '103',
     description:
-      'O periodo letivo PRINCIPAL da janela — o rotulo dela, e o fallback de uma ' +
-      'modalidade sem entrada no mapa. Qual vale para cada aluno esta em ' +
+      'O periodo letivo PRINCIPAL da janela — o rotulo dela, e o fallback de um ' +
+      'formato sem entrada no mapa. Qual vale para cada aluno esta em ' +
       '`letivosPorModalidade`.',
   })
   periodoLetivoId!: string;
@@ -326,7 +326,7 @@ export class PeriodoAdminDto implements PeriodoAdmin {
     type: [LetivoDaModalidadeResponseDto],
     description:
       'O mapa `modalidade -> periodo letivo` desta janela, com uma linha por ' +
-      'modalidade cadastrada (inclusive as que herdam o principal). ' +
+      'formato cadastrado (inclusive as que herdam o principal). ' +
       'Ver POST /periodos.',
   })
   letivosPorModalidade!: LetivoDaModalidade[];

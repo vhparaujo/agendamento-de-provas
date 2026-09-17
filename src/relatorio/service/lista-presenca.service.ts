@@ -118,7 +118,7 @@ export class ListaPresencaService {
    * Sao DUAS consultas e nao uma por sala: com dezenas de horarios e varias
    * salas cada, o N+1 apareceria ja no primeiro semestre. As ofertas vem
    * primeiro porque sao elas que carregam a identidade da pagina (polo, sala,
-   * modalidade da oferta); os agendamentos entram depois, agrupados por oferta.
+   * formato da oferta); os agendamentos entram depois, agrupados por oferta.
    */
   private async montarListas(
     ondeSalaFaixa: Prisma.SalaFaixaWhereInput,
@@ -135,7 +135,7 @@ export class ListaPresencaService {
       select: {
         matricula: true,
         salaFaixaId: true,
-        // A modalidade do AGENDAMENTO, nao a do vinculo de hoje: e a fotografia
+        // O formato do AGENDAMENTO, nao a do vinculo de hoje: e a fotografia
         // do que o aluno era quando reservou, e e ela que combina com a duracao
         // da prova que ele vai fazer nesta sala.
         modalidade: { select: { nome: true } },
@@ -261,7 +261,7 @@ export interface SalaComLista {
   polo: string;
   salaId: number;
   sala: string;
-  /** Da oferta: a modalidade em que a sala esta travada nesta faixa. */
+  /** Da oferta: o formato em que a sala esta travada nesta faixa. */
   modalidade: string;
   data: Date;
   horaInicio: string;

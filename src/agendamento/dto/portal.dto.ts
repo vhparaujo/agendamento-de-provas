@@ -108,7 +108,7 @@ export class FaixaDisponivelDto implements FaixaDisponivel {
 
   @ApiProperty({
     example: 50,
-    description: 'Total ofertado neste horario para a modalidade do aluno.',
+    description: 'Total ofertado neste horario para o formato do aluno.',
   })
   vagas!: number;
 

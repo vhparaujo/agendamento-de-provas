@@ -66,7 +66,7 @@ describe('escolherOferta', () => {
     ).toBeNull();
   });
 
-  it('devolve null quando a faixa nao oferta nada para a modalidade', () => {
+  it('devolve null quando a faixa nao oferta nada para o formato', () => {
     expect(escolherOferta([])).toBeNull();
   });
 
@@ -239,7 +239,7 @@ describe('ocuparVagaSimulada', () => {
     expect(ocupar(faixas, EAD, ocupacao)).toBe(false);
   });
 
-  it('nao poe o aluno numa sala de OUTRA modalidade', () => {
+  it('nao poe o aluno numa sala de OUTRO formato', () => {
     // A prova tem outra duracao. Uma sala Presencial vazia nao serve para EaD.
     const ocupacao = new Map([[30, { vagas: 50, ocupadas: 0, ordem: 1 }]]);
     const faixas = [{ id: 1, ofertas: [{ id: 30, modalidadeId: PRESENCIAL }] }];

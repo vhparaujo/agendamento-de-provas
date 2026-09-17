@@ -63,7 +63,7 @@ describe('acessoDaReserva', () => {
     expect(acessoDaReserva(reserva({ niop: true }), 30).minutos).toBe(210);
   });
 
-  it('o tempo e o da modalidade da reserva, nao o tamanho da faixa', () => {
+  it('o tempo e o do formato da reserva, nao o tamanho da faixa', () => {
     const acesso = acessoDaReserva(
       reserva({
         horaInicio: '14:00',

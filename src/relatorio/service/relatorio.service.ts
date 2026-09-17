@@ -120,7 +120,7 @@ const chave = (janela: Janela, orgUnitId: string): ChaveDoGrupo =>
  *    tempo; onde a pessoa senta — que cadeira, que campus — nao muda o acesso.
  *    Ver "A JANELA, NAO A FAIXA", abaixo.
  * 3. **Uma matricula aparece UMA vez por arquivo.** Um RA com dois vinculos na
- *    mesma modalidade pode ter dois agendamentos na mesma janela, e os dois
+ *    mesmo formato pode ter dois agendamentos na mesma janela, e os dois
  *    cobrindo a mesma disciplina. O grupo e por USUARIO, e a linha repetida
  *    faria o import do D2L reclamar ou duplicar.
  * 4. **So `CONFIRMADO`, e so o periodo letivo do recorte.** Quem cancelou nao

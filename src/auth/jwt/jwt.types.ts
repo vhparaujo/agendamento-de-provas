@@ -23,7 +23,7 @@ export interface AdminRefreshPayload {
 
 /**
  * Um vinculo = aluno + curso. Um mesmo RA pode ter mais de um (ex: Pedagogia/EaD
- * e Psicologia/Hibrido) e agenda uma prova para cada.
+ * e Psicologia/Modular) e agenda uma prova para cada.
  */
 export interface VinculoToken {
   alunoId: number; // AlunoImportado.id

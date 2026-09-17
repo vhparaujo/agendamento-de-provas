@@ -80,7 +80,7 @@ interface Pessoa {
   contaInativa: boolean;
   /**
    * A arvore do Brightspace de onde estas disciplinas sairam — o periodo letivo
-   * da modalidade que resolveu esta pessoa. Volta junto da lista, e nao e
+   * do formato que resolveu esta pessoa. Volta junto da lista, e nao e
    * recalculado depois, para que a reserva grave exatamente o org unit que
    * produziu as disciplinas dela.
    */
@@ -95,7 +95,7 @@ interface Candidato extends Pessoa {
   poloId: number;
   modalidadeId: number;
   /**
-   * O periodo letivo DESTE vinculo, resolvido pela modalidade dele. Vai gravado
+   * O periodo letivo DESTE vinculo, resolvido pelo formato dele. Vai gravado
    * na reserva como fotografia.
    *
    * Fica no candidato, e nao no lote, porque o lote atravessa as duas grades: o
@@ -112,7 +112,7 @@ interface Candidato extends Pessoa {
  *
  * `ids` no plural porque a janela cobre as duas grades ao mesmo tempo (modulos e
  * semestres). Quem CONTA (elegiveis, faixas ja ocupadas, trava por pessoa) usa
- * `ids`; quem GRAVA usa o periodo letivo do vinculo, resolvido pela modalidade.
+ * `ids`; quem GRAVA usa o periodo letivo do vinculo, resolvido pelo formato.
  * `principal` e so o rotulo da execucao.
  */
 interface JanelaDoLote {
@@ -151,7 +151,7 @@ type MotivoDaPessoa = Pick<Excecao, 'motivo' | 'detalhe'>;
  * Misturar as duas — alocar em paralelo, conforme cada chamada de rede volta —
  * faria a ordem de chegada depender da latencia da Valence. Duas execucoes com
  * os mesmos dados dariam salas diferentes, e a SIMULACAO deixaria de prever a
- * execucao. Como a fase 2 e sequencial e ordenada por (polo, modalidade,
+ * execucao. Como a fase 2 e sequencial e ordenada por (polo, formato,
  * matricula), o mesmo lote produz sempre o mesmo resultado.
  *
  * QUEM ENTRA (regra do cliente, 12/08/2026): vinculo `ativo` que nao tem
@@ -323,7 +323,7 @@ export class CompulsorioService {
         'Aluno',
         'E-mail',
         'Curso',
-        'Modalidade',
+        'Formato',
         'Polo',
         'Motivo',
         'O que aconteceu',
@@ -433,7 +433,7 @@ export class CompulsorioService {
         curso: true,
         poloId: true,
         modalidadeId: true,
-        // O codigo da modalidade e o que resolve o periodo letivo do vinculo —
+        // O codigo do formato e o que resolve o periodo letivo do vinculo —
         // sem ele o lote nao sabe em qual das duas grades procurar as
         // disciplinas deste aluno.
         modalidade: { select: { codigo: true } },
@@ -615,7 +615,7 @@ export class CompulsorioService {
     execucaoId: number,
   ): Promise<void> {
     /**
-     * O mesmo RA com dois cursos DA MESMA MODALIDADE so custa uma ida a
+     * O mesmo RA com dois cursos DO MESMO FORMATO so custa uma ida a
      * Valence: identidade e disciplinas vem por PESSOA, nao por vinculo. Sao 2
      * alunos em 7,5 mil na base real — o cache existe menos pela economia e mais
      * para os dois vinculos receberem exatamente a mesma lista.
@@ -626,7 +626,7 @@ export class CompulsorioService {
      * arvore do semestre, e sao listas DIFERENTES. Com a chave antiga, o segundo
      * vinculo receberia a lista do primeiro — a prova dele cobriria as
      * disciplinas da outra grade, em silencio, porque a lista viria cheia e
-     * plausivel. Quem tem dois cursos na mesma modalidade continua custando uma
+     * plausivel. Quem tem dois cursos no mesmo formato continua custando uma
      * chamada so, que e o caso real.
      */
     const porPessoa = new Map<string, Promise<Pessoa | MotivoDaPessoa>>();
@@ -650,7 +650,7 @@ export class CompulsorioService {
           const pessoa = await porPessoa.get(chave)!;
 
           // O cache guarda o resultado da PESSOA NAQUELA GRADE; o vinculo
-          // (curso, polo, modalidade) e sempre o da linha atual.
+          // (curso, polo, formato) e sempre o da linha atual.
           return 'motivo' in pessoa
             ? { ...pessoa, alunoId: aluno.id, matricula: aluno.matricula }
             : {
@@ -693,7 +693,7 @@ export class CompulsorioService {
     modalidadeCodigo: string,
   ): Promise<Pessoa | MotivoDaPessoa> {
     try {
-      // A modalidade escolhe a grade; sem mapa cadastrado para ela, o principal
+      // O formato escolhe a grade; sem mapa cadastrado para ele, o principal
       // e o fallback (com `warn` no PeriodoService).
       const vigente =
         await this.periodo.periodoLetivoDaModalidade(modalidadeCodigo);
@@ -754,7 +754,7 @@ export class CompulsorioService {
           detalhe:
             cruzamento.motivo ??
             `Nenhuma disciplina dele no periodo letivo ${periodoLetivoId} ` +
-              `(modalidade ${modalidadeCodigo}) cruzou com o CSV de turmas com prova.`,
+              `(formato ${modalidadeCodigo}) cruzou com o CSV de turmas com prova.`,
         };
       }
 
@@ -778,7 +778,7 @@ export class CompulsorioService {
    *
    * Percorre as faixas do polo do aluno da data mais proxima para a mais
    * distante e para na primeira que aceitar. `escolherOfertaComLock` lanca
-   * `ConflictException` tanto quando a faixa nao atende a modalidade quanto
+   * `ConflictException` tanto quando a faixa nao atende o formato quanto
    * quando todas as salas lotaram — nos dois casos a resposta e a mesma: tenta
    * a proxima data.
    */
@@ -850,7 +850,7 @@ export class CompulsorioService {
           matricula: candidato.matricula,
           motivo: MotivoExcecao.SEM_VAGA,
           detalhe:
-            'Todas as salas da modalidade dele lotaram em todas as datas do polo. ' +
+            'Todas as salas do formato dele lotaram em todas as datas do polo. ' +
             'E preciso abrir mais uma sala ou mais uma data.',
         });
         continue;
@@ -879,7 +879,7 @@ export class CompulsorioService {
     faixas: { id: number }[],
     janela: JanelaDoLote,
   ): Promise<boolean | 'JA_AGENDOU'> {
-    // O do VINCULO, resolvido pela modalidade na fase 1 e carregado no
+    // O do VINCULO, resolvido pelo formato na fase 1 e carregado no
     // candidato: e a mesma arvore de onde as disciplinas dele sairam.
     const { periodoLetivoId } = candidato;
     const { rodada } = janela;
@@ -969,7 +969,7 @@ export class CompulsorioService {
 
         return ja ? 'JA_AGENDOU' : true;
       } catch (erro) {
-        // Faixa cheia ou que nao atende a modalidade: tenta a proxima data.
+        // Faixa cheia ou que nao atende o formato: tenta a proxima data.
         if (erro instanceof ConflictException) continue;
         throw erro;
       }

@@ -60,8 +60,8 @@ export class AlunoImportadoDto implements AlunoImportadoResumo {
   @ApiProperty({
     example: false,
     description:
-      'A MATRICULA e do NIOP: o special access da o tempo de prova da ' +
-      'modalidade mais o extra configurado. Vale para todos os vinculos do RA.',
+      'A MATRICULA e do NIOP: o special access da o tempo de prova do ' +
+      'formato mais o extra configurado. Vale para todos os vinculos do RA.',
   })
   niop!: boolean;
 }
@@ -167,7 +167,7 @@ export class OutroVinculoDto {
 
   @ApiProperty({
     example: 'Modular',
-    description: 'Pode ser diferente da modalidade deste vinculo.',
+    description: 'Pode ser diferente do formato deste vinculo.',
   })
   modalidade!: string;
 }

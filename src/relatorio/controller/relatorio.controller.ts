@@ -230,7 +230,7 @@ export class RelatorioController {
       'O recorte e a sala porque a folha e fisica: ela vai para a mao do fiscal ' +
       'daquela sala, e nao pode listar quem esta na sala ao lado.\n\n' +
       '`totalAlunos` conta **agendamentos confirmados**, nao pessoas distintas: ' +
-      'um RA com dois vinculos na mesma modalidade ocupa duas vagas e assina ' +
+      'um RA com dois vinculos no mesmo formato ocupa duas vagas e assina ' +
       'duas vezes. E exatamente o numero de linhas que a folha tera, e bate com ' +
       '`ocupadas` em `GET /agendamentos/resumo`.\n\n' +
       '**Sala sem ninguem agendado nao aparece**: nao havera aplicacao ali, e ' +
@@ -256,7 +256,7 @@ export class RelatorioController {
       'Uma **pagina por sala**, na ordem em que as folhas sao entregues: dia, ' +
       'horario, polo e sala — a pilha ja sai separavel por campus.\n\n' +
       'Cada pagina traz o cabecalho com polo, data, horario e sala, e a tabela ' +
-      'com **Nº · RA · Nome · Modalidade · Assinatura**. A coluna de assinatura ' +
+      'com **Nº · RA · Nome · Formato · Assinatura**. A coluna de assinatura ' +
       'e uma celula vazia com borda: a propria linha da tabela e a linha em que ' +
       'se assina.\n\n' +
       'Sala com muita gente continua na pagina seguinte, com o cabecalho ' +

@@ -9,7 +9,7 @@ export class ModalidadeDto implements Modalidade {
     example: 'EAD',
     enum: ['EAD', 'SEMI', 'MODULAR', 'PRESENCIAL'],
     description:
-      'Chave estavel usada no dropdown do upload de alunos. Hibrido e MODULAR.',
+      'Chave estavel usada no dropdown do upload de alunos. Modular e MODULAR.',
   })
   codigo!: string;
 
@@ -20,15 +20,15 @@ export class ModalidadeDto implements Modalidade {
     example: 180,
     description:
       'Duracao da prova. A faixa precisa ser pelo menos deste tamanho para ' +
-      'receber uma sala desta modalidade.',
+      'receber uma sala deste formato.',
   })
   duracaoMinutos!: number;
 
   @ApiProperty({
     example: 180,
     description:
-      'O tempo do questionario gravado no special access de quem e desta ' +
-      'modalidade. Nao muda a faixa. O aluno do NIOP recebe este valor mais o ' +
+      'O tempo do questionario gravado no special access de quem e deste ' +
+      'formato. Nao muda a faixa. O aluno do NIOP recebe este valor mais o ' +
       'tempo extra configurado.',
   })
   tempoDeProvaMinutos!: number;

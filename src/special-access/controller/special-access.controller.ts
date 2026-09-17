@@ -55,7 +55,7 @@ export class SpecialAccessController {
 
   @Get('configuracao')
   @ApiOperation({
-    summary: 'Tempo de prova por modalidade, extra do NIOP e modo',
+    summary: 'Tempo de prova por formato, extra do NIOP e modo',
     description:
       'Sem configuracao salva, o extra do NIOP e 60 minutos e o special access ' +
       'nao substitui as janelas.',
@@ -70,7 +70,7 @@ export class SpecialAccessController {
     summary: 'Salva a configuracao do special access',
     description:
       '`tempoDeProvaMinutos` e o `TimeLimitValue` que o lote grava para cada ' +
-      'modalidade; o aluno do NIOP recebe esse valor mais `tempoExtraNiopMinutos`, ' +
+      'formato; o aluno do NIOP recebe esse valor mais `tempoExtraNiopMinutos`, ' +
       'e a janela dele fecha a mesma quantidade de minutos depois do fim da faixa.\n\n' +
       '`substituiJanelas: true` faz o cron parar de aplicar datas e grupos (a ' +
       'senha continua) e o lote manual de datas recusar.\n\n' +
@@ -79,7 +79,7 @@ export class SpecialAccessController {
   @ApiOkResponse({ type: ConfiguracaoSpecialAccessDto })
   @ApiBadRequestResponse({
     description:
-      'Modalidade inexistente ou repetida, ou tempo + extra acima de 9999 minutos',
+      'Formato inexistente ou repetida, ou tempo + extra acima de 9999 minutos',
   })
   salvarConfiguracao(
     @Body() dto: SalvarConfiguracaoSpecialAccessDto,
@@ -113,7 +113,7 @@ export class SpecialAccessController {
       '(o mesmo de "Senhas e datas") e, em cada um, compara os special access ' +
       'que existem com os que deveriam existir:\n\n' +
       '- reserva confirmada -> **inicio** e **fim** da faixa no fuso do polo, ' +
-      '**tempo** da modalidade (+ extra e fim estendido para o NIOP);\n' +
+      '**tempo** do formato (+ extra e fim estendido para o NIOP);\n' +
       '- acesso com outro horario ou tempo -> atualizado (remanejo);\n' +
       '- reserva cancelada com acesso -> removido;\n' +
       '- acesso de quem nao tem reserva -> **nunca tocado**.\n\n' +

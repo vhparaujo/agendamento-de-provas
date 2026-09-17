@@ -66,9 +66,9 @@ export class SalaFaixaService {
   /**
    * Ajusta vagas e ordem de uma oferta ja publicada.
    *
-   * A modalidade NAO muda: dentro de uma faixa a sala fica travada numa
-   * modalidade, e trocar depois de haver agendamento colocaria alunos de uma
-   * modalidade numa prova de outra duracao. Para mudar, remova e adicione de novo.
+   * O formato NAO muda: dentro de uma faixa a sala fica travada num
+   * formato, e trocar depois de haver agendamento colocaria alunos de um
+   * formato numa prova de outra duracao. Para mudar, remova e adicione de novo.
    */
   async atualizar(
     id: number,
@@ -118,7 +118,7 @@ export class SalaFaixaService {
       if (conflito) {
         throw new ConflictException(
           `A ordem ${dados.ordem} ja e da sala "${conflito.sala.nome}" na ` +
-            `modalidade ${oferta.modalidade.nome} desta faixa.`,
+            `formato ${oferta.modalidade.nome} desta faixa.`,
         );
       }
     }

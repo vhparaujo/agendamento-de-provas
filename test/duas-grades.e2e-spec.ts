@@ -21,7 +21,7 @@ import { D2lEnrollmentsService } from './../src/d2l/service/d2l-enrollments.serv
  *
  * 1. o mapa cadastrado pelo ADMIN (`POST /periodos`) chega ate a arvore que a
  *    Valence consulta para CADA aluno — atravessando DTO, ValidationPipe e a
- *    resolucao por modalidade;
+ *    resolucao por formato;
  * 2. os dois alunos agendam na MESMA janela e cada reserva grava o org unit da
  *    grade dele;
  * 3. **a trava por PESSOA continua valendo ATRAVES das duas grades.** E o ponto
@@ -36,7 +36,7 @@ import { D2lEnrollmentsService } from './../src/d2l/service/d2l-enrollments.serv
  * devolve ofertas DIFERENTES para cada periodo letivo, que e exatamente o que o
  * Brightspace faz.
  *
- * Requer banco de pe, migrations e seed (modalidades).
+ * Requer banco de pe, migrations e seed (formatos).
  */
 process.env.D2L_HABILITADO = 'true';
 process.env.D2L_BASE_URL = 'https://e2e.invalido';
@@ -100,7 +100,7 @@ describe('Duas grades na mesma janela (e2e)', () => {
   let poloId: number;
   let ead: { id: number };
   let presencial: { id: number };
-  /** UMA faixa, com oferta para as DUAS modalidades — e o palco da trava. */
+  /** UMA faixa, com oferta para os DOIS formatos — e o palco da trava. */
   let faixaId: number;
   let outraFaixaId: number;
 
@@ -167,7 +167,7 @@ describe('Duas grades na mesma janela (e2e)', () => {
       });
     }
 
-    // DUAS salas: dentro de uma faixa a sala fica travada numa modalidade
+    // DUAS salas: dentro de uma faixa a sala fica travada num formato
     // (`sala_faixa_salaId_faixaId_key`), entao a mesma faixa so atende as duas
     // grades com uma sala para cada.
     const salaEad = await prisma.sala.create({
@@ -178,7 +178,7 @@ describe('Duas grades na mesma janela (e2e)', () => {
       data: { poloId, nome: 'S-2G-PRE', capacidade: 10 },
     });
 
-    // A MESMA faixa oferece as duas modalidades — e o que permite ao mesmo RA
+    // A MESMA faixa oferece os dois formatos — e o que permite ao mesmo RA
     // tentar marcar as duas provas no mesmo horario.
     faixaId = (
       await prisma.faixa.create({
@@ -387,11 +387,11 @@ describe('Duas grades na mesma janela (e2e)', () => {
       PRESENCIAL: LETIVO_SEMESTRAL,
     });
 
-    // Nenhuma modalidade caiu no fallback: o mapa veio inteiro do cadastro.
+    // Nenhum formato caiu no fallback: o mapa veio inteiro do cadastro.
     expect(linhas.every((l) => !l.herdadoDoPrincipal)).toBe(true);
   });
 
-  it('recusa o mapa que deixa uma modalidade de fora, nomeando qual', async () => {
+  it('recusa o mapa que deixa um formato de fora, nomeando qual', async () => {
     const { token } = comoAdmin();
 
     const res = await api()
@@ -409,9 +409,9 @@ describe('Duas grades na mesma janela (e2e)', () => {
       })
       .expect(400);
 
-    // A frase precisa dizer QUAIS faltam: a modalidade esquecida cairia no
+    // A frase precisa dizer QUAIS faltam: o formato esquecido cairia no
     // principal em silencio, e um periodo letivo errado nao da erro nenhum —
-    // so lista vazia de disciplina para a modalidade inteira.
+    // so lista vazia de disciplina para o formato inteiro.
     expect(res.body.message).toMatch(/SEMI/);
     expect(res.body.message).toMatch(/PRESENCIAL/);
   });

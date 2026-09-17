@@ -500,7 +500,7 @@ export class GradeSenhasService {
   }
 
   /**
-   * As janelas do questionario, agrupadas por modalidade.
+   * As janelas do questionario, agrupadas por formato.
    *
    * Devolve TODAS, inclusive as inativas: a tela precisa mostrar o horario
    * guardado de uma sessao desligada, senao reativa-la significaria digitar tudo
@@ -546,12 +546,12 @@ export class GradeSenhasService {
   }
 
   /**
-   * Substitui as janelas de UMA modalidade pelas recebidas.
+   * Substitui as janelas de UM formato pelas recebidas.
    *
-   * ⚠️ **O recorte e a MODALIDADE, nunca a tabela inteira.** A tela edita um
+   * ⚠️ **O recorte e o FORMATO, nunca a tabela inteira.** A tela edita um
    * calendario por vez, e um PUT que apagasse o que nao veio no corpo deixaria
    * EaD sem janela nenhuma no momento em que alguem salvasse Semi. Como a
-   * `ordem` e a chave dentro da modalidade, o que nao veio naquela modalidade
+   * `ordem` e a chave dentro do formato, o que nao veio naquele formato
    * SAI — e o unico jeito de remover uma sessao pela tela.
    *
    * Tudo numa transacao: um calendario meio salvo faria o cron disparar uma
@@ -568,9 +568,7 @@ export class GradeSenhasService {
     });
 
     if (!modalidade) {
-      throw new BadRequestException(
-        `Modalidade ${modalidadeId} nao encontrada.`,
-      );
+      throw new BadRequestException(`Formato ${modalidadeId} nao encontrado.`);
     }
 
     const validadas = janelas.map((janela, indice) =>
@@ -643,7 +641,7 @@ export class GradeSenhasService {
     this.auditoria.registrar('DATA_QUIZ_JANELAS_ALTERADAS', {
       ator: adminEmail,
       detalhe:
-        `modalidade ${modalidade.codigo}: ${validadas.length} janela(s) — ` +
+        `formato ${modalidade.codigo}: ${validadas.length} janela(s) — ` +
         validadas
           .map(
             (j) =>
@@ -747,11 +745,11 @@ export class GradeSenhasService {
     for (const { ordem } of janelas) {
       if (vistas.has(ordem)) {
         // O banco recusaria pelo unique, mas com uma mensagem de driver. A
-        // ordem e a chave da sessao dentro da modalidade — duas iguais fariam
+        // ordem e a chave da sessao dentro do formato — duas iguais fariam
         // uma sobrescrever a outra no upsert, em silencio.
         throw new BadRequestException(
           `Ha duas janelas com a ordem ${ordem}. A ordem identifica a sessao ` +
-            'dentro da modalidade e nao pode repetir.',
+            'dentro do formato e nao pode repetir.',
         );
       }
       vistas.add(ordem);
@@ -759,7 +757,7 @@ export class GradeSenhasService {
   }
 
   /**
-   * Dois disparos ATIVOS no mesmo minuto, na mesma modalidade.
+   * Dois disparos ATIVOS no mesmo minuto, no mesmo formato.
    *
    * `janelasParaDisparar` desempata escolhendo o que comecou mais tarde, entao
    * isto nao quebra nada — mas significa que uma das duas sessoes NUNCA seria

@@ -20,7 +20,7 @@
  * apontando para o grupo da sessao anterior, e a execucao sairia verde. Por isso
  * ela vira pendencia em cada questionario — o mesmo peso de GRUPO_NAO_ENCONTRADO.
  *
- * A quarta linha preserva o opt-in de 26/08/2026: modalidade que nunca cadastrou
+ * A quarta linha preserva o opt-in de 26/08/2026: formato que nunca cadastrou
  * grupo (o Presencial, hoje) continua sem efeito colateral nenhum.
  */
 

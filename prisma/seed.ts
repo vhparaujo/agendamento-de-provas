@@ -15,7 +15,7 @@ async function main(): Promise<void> {
 
   try {
     await seedModalidades(prisma);
-    // Depois das modalidades: as janelas as referenciam por `codigo`.
+    // Depois dos formatos: as janelas as referenciam por `codigo`.
     await seedJanelas(prisma);
     await seedPolos(prisma);
     await seedAdmin(prisma);

@@ -139,11 +139,11 @@ export interface OpcoesDeSenha {
   forcar: boolean;
 }
 
-/** O lote de datas: UMA janela, nas turmas de UMA modalidade. */
+/** O lote de datas: UMA janela, nas turmas de UM formato. */
 export interface OpcoesDeData {
   tipo: typeof TipoExecucaoQuiz.DATA;
   /**
-   * A janela a aplicar. Ela ja carrega a modalidade (que recorta as turmas), as
+   * A janela a aplicar. Ela ja carrega o formato (que recorta as turmas), as
    * horas e o turno de onde sai a senha.
    */
   janelaId: number;
@@ -217,7 +217,7 @@ export interface ExecucaoIniciada {
   /** Quantas turmas o lote vai realmente tocar. */
   totalTurmas: number;
   naoResolvidas: number;
-  /** So em `DATA`: turmas resolvidas que ficaram de fora por falta de modalidade. */
+  /** So em `DATA`: turmas resolvidas que ficaram de fora por falta de formato. */
   semModalidade: number;
   modalidadeAmbigua: number;
 }
@@ -366,7 +366,7 @@ export class SenhaQuizService {
 
     const resolvidas = await this.resolucao.resolver(periodoLetivoIds);
 
-    // No lote de datas o conjunto encolhe: so as turmas DA MODALIDADE da janela.
+    // No lote de datas o conjunto encolhe: so as turmas DO FORMATO da janela.
     // As demais nao sao erro — cada uma tem a sua janela, no horario dela.
     const recorte = janela
       ? await this.recortarPelaModalidade(
@@ -558,7 +558,7 @@ export class SenhaQuizService {
   }
 
   /**
-   * A ultima execucao de DATAS de CADA modalidade.
+   * A ultima execucao de DATAS de CADA formato.
    *
    * `ultima()` responde "qual foi a mais recente?", e essa nao e a pergunta que
    * a secretaria faz. Um unico minuto de disparo produz VARIAS execucoes — as
@@ -567,16 +567,16 @@ export class SenhaQuizService {
    * a mais recente exibe a terceira delas e esconde as outras duas, e quem le
    * conclui que a janela errada foi aplicada.
    *
-   * A pergunta util e por modalidade: **cada uma esta com a janela certa?**
+   * A pergunta util e por formato: **cada um esta com a janela certa?**
    *
-   * Uma consulta por modalidade, e nao um `take: N` com deduplicacao em memoria:
-   * sao 4 modalidades, o indice `[tipo, origem, id]` cobre cada uma, e o
-   * resultado e EXATO — um teto arbitrario faria a modalidade que nao rodou hoje
+   * Uma consulta por formato, e nao um `take: N` com deduplicacao em memoria:
+   * sao 4 formatos, o indice `[tipo, origem, id]` cobre cada um, e o
+   * resultado e EXATO — um teto arbitrario faria o formato que nao rodou hoje
    * sumir da lista em vez de aparecer como "nunca rodou", que e justamente o
    * estado que precisa ser visto.
    */
   async ultimasDatasPorModalidade(origem?: OrigemExecucao) {
-    // So as modalidades que tem calendario: as outras nao disparam nunca, e uma
+    // So os formatos que tem calendario: os outros nao disparam nunca, e uma
     // linha "nunca rodou" para elas seria ruido permanente.
     const comJanela = await this.prisma.modalidade.findMany({
       where: { janelas: { some: {} } },
@@ -600,7 +600,7 @@ export class SenhaQuizService {
           modalidadeId: modalidade.id,
           modalidadeCodigo: modalidade.codigo,
           modalidadeNome: modalidade.nome,
-          // `null` = nunca rodou. E o estado normal de uma modalidade sem aluno
+          // `null` = nunca rodou. E o estado normal de um formato sem aluno
           // importado (o Presencial, hoje), e a tela precisa distingui-lo de
           // "rodou e falhou".
           execucao: recente ? await this.consultar(recente.id) : null,
@@ -613,8 +613,8 @@ export class SenhaQuizService {
   async consultar(id: number) {
     const execucao = await this.prisma.execucaoSenhaQuiz.findUnique({
       where: { id },
-      // A modalidade da janela. Sem ela a tela mostra "Janela 14:00-15:30" e nao
-      // diz de QUEM — e as 12:01 tres modalidades disparam, duas delas com a
+      // O formato da janela. Sem ele a tela mostra "Janela 14:00-15:30" e nao
+      // diz de QUEM — e as 12:01 tres formatos disparam, dois deles com a
       // mesma janela. Quem le nao tem como saber qual execucao esta vendo.
       include: {
         janelaDeProva: {
@@ -718,7 +718,7 @@ export class SenhaQuizService {
       'Questionario',
       'QuizId',
       'Tinha senha antes',
-      ...(comDatas ? ['Modalidade', 'Abre em', 'Fecha em'] : []),
+      ...(comDatas ? ['Formato', 'Abre em', 'Fecha em'] : []),
       ...(comGrupos
         ? ['Resultado do grupo', 'Grupo antes', 'Grupo depois']
         : []),
@@ -776,7 +776,7 @@ export class SenhaQuizService {
         .map((h) => h.replace(':', 'h'))
         .join('-');
 
-      // A modalidade entra no nome pelo mesmo motivo que entra na tela: as 12:01
+      // O formato entra no nome pelo mesmo motivo que entra na tela: as 12:01
       // saem tres arquivos, dois deles com a MESMA janela. Sem ela, dois
       // downloads no mesmo dia sao indistinguiveis na pasta de quem baixou.
       const modalidade = execucao.modalidadeCodigo
@@ -829,8 +829,8 @@ export class SenhaQuizService {
    *
    * Nao e cortesia: ele gravaria `StartDate`/`EndDate` num questionario que o
    * preparo deixou sem data, e procuraria uma condicao de grupo que nao existe
-   * mais — cada turma viraria pendencia, e a prova ganharia a janela de UMA
-   * modalidade.
+   * mais — cada turma viraria pendencia, e a prova ganharia a janela de UM
+   * formato.
    */
   private async recusarSeSpecialAccessSubstitui(): Promise<void> {
     const config = await this.prisma.configuracaoSpecialAccess.findUnique({
@@ -906,7 +906,7 @@ export class SenhaQuizService {
   }
 
   /**
-   * A janela do lote, com a modalidade e o turno que ela usa.
+   * A janela do lote, com o formato e o turno que ela usa.
    *
    * Lida antes do lock de propósito: um `janelaId` que nao existe precisa virar
    * 404 no clique do admin, e nao uma execucao FALHOU que ele so descobre no
@@ -947,10 +947,10 @@ export class SenhaQuizService {
   }
 
   /**
-   * Recorta as turmas resolvidas para as de UMA modalidade.
+   * Recorta as turmas resolvidas para as de UM formato.
    *
    * ============================================================================
-   * DE ONDE SAI A MODALIDADE DE UMA TURMA
+   * DE ONDE SAI O FORMATO DE UMA TURMA
    * ============================================================================
    * De lugar nenhum no cadastro: `TurmaImportada` nao tem a coluna, e isso e
    * deliberado (ver `modalidade-da-turma.service.ts`). Ela e DERIVADA dos
@@ -958,14 +958,14 @@ export class SenhaQuizService {
    *
    * Tres destinos, e a diferenca entre eles importa:
    *
-   *   - modalidade == a da janela  -> entra no lote;
-   *   - modalidade de OUTRA        -> sai em silencio, e NAO e erro: aquela
+   *   - formato == a da janela  -> entra no lote;
+   *   - formato de OUTRA        -> sai em silencio, e NAO e erro: aquela
    *                                   turma tem a janela dela, no horario dela.
    *                                   Relatar isso encheria o CSV de linhas que
    *                                   ninguem deve tratar, que e justamente o
    *                                   ruido que ensina o time a ignorar o
    *                                   relatorio;
-   *   - sem modalidade / ambigua   -> vira LINHA DE RELATORIO. Sao turmas que
+   *   - sem formato / ambigua   -> vira LINHA DE RELATORIO. Sao turmas que
    *                                   ficariam com a data velha, ou seja, alunos
    *                                   que nao abrem a prova.
    */
@@ -997,7 +997,7 @@ export class SenhaQuizService {
           turmas.push(turma);
           codigoDaModalidade ??= decisao.codigo;
         }
-        // Outra modalidade: silencio proposital, ver o cabecalho.
+        // Outro formato: silencio proposital, ver o cabecalho.
         continue;
       }
 
@@ -1092,7 +1092,7 @@ export class SenhaQuizService {
     tipo: TipoExecucaoQuiz;
     turmas: TurmaResolvida[];
     naoResolvidas: TurmaNaoResolvida[];
-    /** Turmas descartadas por falta de modalidade — so no lote de DATAS. */
+    /** Turmas descartadas por falta de formato — so no lote de DATAS. */
     foraDaModalidade: ItemParaGravar[];
     senha: string;
     alvo: { nomeQuiz: string; matchQuiz: TipoMatchQuiz };
@@ -1159,7 +1159,7 @@ export class SenhaQuizService {
           senhaAnteriorLida: false,
           detalhe: t.motivo,
         })),
-        // Resolveram o orgUnitId mas nao tem modalidade derivavel. Sao as linhas
+        // Resolveram o orgUnitId mas nao tem formato derivavel. Sao as linhas
         // que mais importam no lote de datas: cada uma e uma turma inteira que
         // fica com a data velha.
         ...foraDaModalidade,
@@ -1268,9 +1268,7 @@ export class SenhaQuizService {
           `${simulacao ? 'simulado(s)' : 'atualizado(s)'}, ` +
           `${contagem.naoEncontradas} sem questionario, ${contagem.falhas} falha(s), ` +
           `${naoResolvidas.length} turma(s) nao resolvida(s)` +
-          (janela
-            ? `, ${foraDaModalidade.length} sem modalidade derivavel`
-            : '') +
+          (janela ? `, ${foraDaModalidade.length} sem formato derivavel` : '') +
           // O grupo entra no log so quando havia grupo a trocar: numa janela
           // sem `nomeGrupo` os dois numeros seriam zero em toda execucao, e
           // zero permanente e o ruido que ensina o time a ignorar a linha.

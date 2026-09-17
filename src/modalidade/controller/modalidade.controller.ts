@@ -13,9 +13,9 @@ export class ModalidadeController {
 
   @Get()
   @ApiOperation({
-    summary: 'Lista as modalidades',
+    summary: 'Lista os formatos',
     description:
-      'Popula o dropdown ao montar uma faixa. As modalidades vem do seed e nao ' +
+      'Popula o dropdown ao montar uma faixa. Os formatos vem do seed e nao ' +
       'sao editaveis pela API: mudar a duracao de prova de um semestre em curso ' +
       'invalidaria faixas ja publicadas aos alunos.',
   })

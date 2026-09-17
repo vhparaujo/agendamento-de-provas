@@ -9,7 +9,7 @@ import { PrismaService } from './../src/database/prisma.service';
 
 /**
  * Fluxo completo do admin montando a estrutura: polo -> salas -> faixa com
- * oferta de vagas. Requer banco de pe, migrations e seed (polos + modalidades).
+ * oferta de vagas. Requer banco de pe, migrations e seed (polos + formatos).
  */
 describe('Estrutura: polo, sala, faixa e oferta (e2e)', () => {
   let app: INestApplication<App>;
@@ -383,7 +383,7 @@ describe('Estrutura: polo, sala, faixa e oferta (e2e)', () => {
 
     let faixaId: number;
 
-    it('cria a faixa e numera a ordem por modalidade', async () => {
+    it('cria a faixa e numera a ordem por formato', async () => {
       const res = await auth(api().post('/api/faixas'))
         .send({
           poloId,
@@ -420,7 +420,7 @@ describe('Estrutura: polo, sala, faixa e oferta (e2e)', () => {
         .expect(409);
     });
 
-    it('a mesma sala pode ter OUTRA modalidade em outra faixa', async () => {
+    it('a mesma sala pode ter OUTRO formato em outra faixa', async () => {
       const res = await auth(api().post('/api/faixas'))
         .send({
           poloId,
@@ -480,7 +480,7 @@ describe('Estrutura: polo, sala, faixa e oferta (e2e)', () => {
    * O unique de SalaFaixa e [salaId, faixaId] — por FAIXA, nao por HORARIO.
    * Sem estas travas, duas faixas que se cruzam no relogio podiam ficar com a
    * mesma sala, cada oferta valida por si, e o choque so aparecia no dia da
-   * prova: duas turmas de modalidades diferentes na mesma porta.
+   * prova: duas turmas de formatos diferentes na mesma porta.
    */
   describe('a mesma sala nao recebe duas provas ao mesmo tempo', () => {
     const DIA = '2026-09-11';
@@ -658,13 +658,13 @@ describe('Estrutura: polo, sala, faixa e oferta (e2e)', () => {
       });
     });
 
-    it('recusa ordem ja usada na mesma modalidade', async () => {
+    it('recusa ordem ja usada no mesmo formato', async () => {
       await auth(api().patch(`/api/sala-faixas/${ofertaId}`))
         .send({ ordem: 2 })
         .expect(409);
     });
 
-    it('nao aceita trocar a modalidade por aqui', async () => {
+    it('nao aceita trocar o formato por aqui', async () => {
       await auth(api().patch(`/api/sala-faixas/${ofertaId}`))
         .send({ modalidadeId: 3 })
         .expect(400);

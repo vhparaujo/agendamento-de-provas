@@ -12,7 +12,7 @@ export interface TempoDaModalidade {
   id: number;
   codigo: string;
   nome: string;
-  /** O tamanho da faixa que aceita a modalidade — so leitura aqui. */
+  /** O tamanho da faixa que aceita o formato — so leitura aqui. */
   duracaoMinutos: number;
   /** O tempo do questionario no special access. */
   tempoDeProvaMinutos: number;
@@ -33,7 +33,7 @@ export interface ConfiguracaoParaSalvar {
 }
 
 /**
- * O que o admin escolhe do special access: o tempo de prova de cada modalidade,
+ * O que o admin escolhe do special access: o tempo de prova de cada formato,
  * a hora a mais do NIOP e se o special access SUBSTITUI a troca de datas.
  *
  * No banco, e nao no `.env`, pelo motivo de `ConfiguracaoSenhaQuiz`: muda por
@@ -87,14 +87,12 @@ export class ConfiguracaoSpecialAccessService {
       const atual = existentes.get(modalidade.id);
 
       if (!atual) {
-        throw new BadRequestException(
-          `A modalidade ${modalidade.id} nao existe.`,
-        );
+        throw new BadRequestException(`O formato ${modalidade.id} nao existe.`);
       }
 
       if (vistas.has(modalidade.id)) {
         throw new BadRequestException(
-          `A modalidade ${atual.nome} veio duas vezes.`,
+          `O formato ${atual.nome} veio duas vezes.`,
         );
       }
       vistas.add(modalidade.id);

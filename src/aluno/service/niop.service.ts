@@ -15,7 +15,7 @@ export interface SituacaoNiop {
 
 /**
  * A marca do NIOP (Nucleo de Inclusao — pessoas com deficiencia): quem a tem
- * recebe, no special access, o tempo de prova da modalidade mais o extra
+ * recebe, no special access, o tempo de prova do formato mais o extra
  * configurado.
  *
  * E a unica escrita sobre ALUNO que nao vem do CSV, e por isso mora em tabela

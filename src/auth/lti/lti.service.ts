@@ -223,7 +223,7 @@ export class LtiService {
 
     if (vinculos.length === 0) {
       // Aluno fora do CSV: nao e "senha errada", e ausencia de cadastro. Sem a
-      // linha do CSV nao ha como saber modalidade nem polo, entao nao da para
+      // linha do CSV nao ha como saber formato nem polo, entao nao da para
       // agendar mesmo com o launch valido.
       this.auditoria.registrar('LTI_LAUNCH_RECUSADO', {
         ator: matricula,

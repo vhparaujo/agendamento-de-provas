@@ -36,7 +36,7 @@ export interface ResultadoMesclagem {
  *
  * POR QUE E UMA ACAO HUMANA, e nao algo que a importacao faz sozinha:
  * dois vinculos no mesmo RA existem de verdade (2 em 7519 na base real, um em
- * cada curso, com modalidades diferentes). Mesclar por semelhanca de nome
+ * cada curso, com formatos diferentes). Mesclar por semelhanca de nome
  * fundiria dois cursos numa pessoa so e misturaria as provas dos dois — erro
  * que so apareceria no dia da prova, e irreversivel porque o vinculo absorvido
  * deixa de existir. Por isso a deteccao nunca chuta e esta rota exige os DOIS
@@ -188,7 +188,7 @@ export class MesclagemVinculosService {
    * fez as duas.
    *
    * ⚠️ **Mas os periodos letivos da JANELA VIGENTE contam como UM.** A mesclagem
-   * entre modalidades e permitida (`conferirHeranca` avisa e nao bloqueia), e
+   * entre formatos e permitida (`conferirHeranca` avisa e nao bloqueia), e
    * desde que as duas grades convivem os dois vinculos de uma mesma pessoa podem
    * ter provas da MESMA janela gravadas sob org units diferentes — o EaD sob o
    * modulo, o Presencial sob o semestre. Comparar o id cru faria a trava deixar
@@ -248,12 +248,12 @@ export class MesclagemVinculosService {
 /**
  * O que a mesclagem deixa torto e ninguem mais reclama.
  *
- * O vinculo que sobrevive carrega SUA modalidade e SEU polo, e as provas
+ * O vinculo que sobrevive carrega SEU formato e SEU polo, e as provas
  * herdadas continuam nas salas onde foram alocadas. Se os dois vinculos
  * divergiam nesses campos, o resultado e exatamente a inconsistencia que
  * `alteracoesComAgendamento` descreve na importacao: a reserva fica numa sala de
  * outra duracao ou de outro campus, e o sintoma aparece dias depois, disfarcado
- * de "esta sala nao e da modalidade do aluno" na hora do remanejo.
+ * de "esta sala nao e do formato do aluno" na hora do remanejo.
  *
  * Avisa e nao bloqueia, pelo mesmo motivo de la: o divergente pode ser
  * justamente o cadastro errado que a planilha nova veio corrigir. Quem decide

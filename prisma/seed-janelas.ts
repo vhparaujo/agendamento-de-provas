@@ -11,12 +11,12 @@ import { ehDoDiaSeguinte } from '../src/senha-quiz/service/janela';
  * O resultado: no dia da prova o questionario fica aberto SO durante a sessao
  * corrente, e a senha da grade continua sendo o segundo fator.
  *
- * POR QUE POR MODALIDADE: a duracao da prova vem dela (`Modalidade.duracaoMinutos`
+ * POR QUE POR FORMATO: a duracao da prova vem dele (`Modalidade.duracaoMinutos`
  * — EaD 3h, Semi/Modular 1h30), entao EaD cabe em 3 sessoes por dia e
  * Semi/Modular em 6. Nao ha um calendario unico possivel.
  *
- * ⚠️ `ordem` NAO e a ordem do relogio. E a sequencia da janela dentro da
- * modalidade, e a primeira e sempre a que dispara a noite com `diaSeguinte` —
+ * ⚠️ `ordem` NAO e a ordem do relogio. E a sequencia da janela dentro do
+ * formato, e a primeira e sempre a que dispara a noite com `diaSeguinte` —
  * ela arma a prova da manha seguinte. Ordenar pelo relogio poria a janela da
  * madrugada no fim e faria a tela contar a historia ao contrario.
  *
@@ -39,8 +39,8 @@ import { ehDoDiaSeguinte } from '../src/senha-quiz/service/janela';
  * depois da abertura da primeira sessao, entao so pode apontar para amanha —
  * nao ha o que declarar.
  *
- * Vale para as tres modalidades ja cadastradas, e e o que permite montar o
- * calendario de uma modalidade nova sem perguntar a ninguem: basta a lista de
+ * Vale para os tres formatos ja cadastrados, e e o que permite montar o
+ * calendario de um formato novo sem perguntar a ninguem: basta a lista de
  * janelas em ordem de relogio.
  *
  * POR QUE ESTE SEED EXISTE, se `ConfiguracaoSenhaQuiz` recusou default: sao
@@ -50,7 +50,7 @@ import { ehDoDiaSeguinte } from '../src/senha-quiz/service/janela';
  * pior — um ambiente novo subiria sem janela nenhuma e o cron nunca dispararia.
  */
 
-/** Uma janela, sem o id da modalidade (resolvido pelo codigo, no seed). */
+/** Uma janela, sem o id do formato (resolvido pelo codigo, no seed). */
 interface JanelaSemente {
   ordem: number;
   horaDisparo: string;
@@ -94,8 +94,8 @@ const JANELAS_EAD: JanelaSemente[] = [
 /**
  * Semi e Modular — 6 sessoes de 1h30 (`duracaoMinutos: 90`).
  *
- * Sao duas modalidades DISTINTAS no banco que hoje compartilham o calendario
- * (`SEMI` = Semipresencial, `MODULAR` = Modular/Hibrido, a aba "Híbrido" do CSV).
+ * Sao dois formatos DISTINTOS no banco que hoje compartilham o calendario
+ * (`SEMI` = Semipresencial, `MODULAR` = Modular, a aba "Modular" do CSV).
  * Recebem as mesmas seis linhas em vez de uma tabela compartilhada: e o que
  * permite separa-las na tela no dia em que os horarios divergirem, sem migration.
  */
@@ -163,11 +163,11 @@ const JANELAS_SEMI_MODULAR: JanelaSemente[] = [
  *     17:30-19:30  <- 17:01 (fim de 15:00-17:00)
  *     20:00-22:00  <- 19:31 (fim de 17:30-19:30)
  *
- * ⚠️ **Ela so passa a ter efeito quando houver aluno presencial importado.** A
- * modalidade da turma e DERIVADA dos agendamentos confirmados, e ate hoje nao
+ * ⚠️ **Ela so passa a ter efeito quando houver aluno presencial importado.** O
+ * formato da turma e DERIVADO dos agendamentos confirmados, e ate hoje nao
  * houve CSV de alunos na aba Presencial — sem aluno, nenhuma turma resolve para
  * PRESENCIAL e o lote roda em zero turma. O cron dispara e conclui limpo; e
- * `GET /senhas-de-prova/turmas` que mostra a contagem real por modalidade.
+ * `GET /senhas-de-prova/turmas` que mostra a contagem real por formato.
  *
  * O calendario existir antes do primeiro aluno e o certo, e nao adiantamento: a
  * alternativa seria descobrir no dia da primeira prova presencial que nao havia
@@ -201,7 +201,7 @@ const JANELAS_PRESENCIAL: JanelaSemente[] = [
     horaInicio: '17:30',
     horaFim: '19:30',
     // ⚠️ O UNICO turno deste arquivo que e JULGAMENTO, e nao decorrencia.
-    // 17:30 cai bem no vao que as outras modalidades deixam entre tarde e noite
+    // 17:30 cai bem no vao que os outros formatos deixam entre tarde e noite
     // (Semi vai ate 17:30 de tarde e retoma as 18:00 de noite; EaD vai ate 18:00
     // de tarde e retoma as 19:00). Escolhido TARDE porque 17:30 ainda e tarde no
     // relogio, e porque mantem o formato 2/2/1 — o mesmo agrupamento por periodo
@@ -245,12 +245,10 @@ export async function seedJanelas(prisma: PrismaClient): Promise<void> {
       select: { id: true },
     });
 
-    // Nao cria modalidade: `seedModalidades` roda antes e e a dona daquela
+    // Nao cria formato: `seedModalidades` roda antes e e a dona daquela
     // tabela. Se ela nao existe aqui, a ordem do orquestrador mudou.
     if (!modalidade) {
-      console.warn(
-        `[seed] janelas: modalidade ${codigo} nao encontrada; pulando`,
-      );
+      console.warn(`[seed] janelas: formato ${codigo} nao encontrado; pulando`);
       continue;
     }
 

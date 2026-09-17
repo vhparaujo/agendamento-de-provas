@@ -292,7 +292,7 @@ describe('SenhaQuizService', () => {
     const auditoria = { registrar: jest.fn() } as unknown as AuditoriaService;
 
     // Por padrao o lote de SENHAS nem consulta isto — ele nao recorta por
-    // modalidade. Fica mockado para o construtor, e os testes de DATA o
+    // formato. Fica mockado para o construtor, e os testes de DATA o
     // sobrescrevem.
     const modalidades = {
       resolver: jest.fn().mockResolvedValue({
@@ -674,9 +674,9 @@ describe('SenhaQuizService', () => {
    * ==========================================================================
    * O LOTE DE DATAS
    * ==========================================================================
-   * Mesma maquinaria, outro recorte: uma JANELA aplicada nas turmas de UMA
-   * modalidade — derivada dos agendamentos, porque `TurmaImportada` nao guarda
-   * modalidade e nao deve guardar.
+   * Mesma maquinaria, outro recorte: uma JANELA aplicada nas turmas de UM
+   * formato — derivado dos agendamentos, porque `TurmaImportada` nao guarda
+   * formato e nao deve guardar.
    */
   describe('lote de DATAS', () => {
     const EAD = {
@@ -697,7 +697,7 @@ describe('SenhaQuizService', () => {
       situacao: 'SEM_MODALIDADE',
       motivo: 'AMBIGUA',
       candidatas: [],
-      detalhe: 'duas modalidades nesta turma',
+      detalhe: 'dois formatos nesta turma',
     };
 
     const OPCOES = {
@@ -764,10 +764,10 @@ describe('SenhaQuizService', () => {
     });
 
     /**
-     * Turma de OUTRA modalidade nao e erro: ela tem a janela dela, no horario
+     * Turma de OUTRO formato nao e erro: ela tem a janela dela, no horario
      * dela. Relatar isso encheria o CSV de linhas que ninguem deve tratar.
      */
-    it('so toca as turmas DA MODALIDADE da janela, em silencio quanto as outras', async () => {
+    it('so toca as turmas DO FORMATO da janela, em silencio quanto as outras', async () => {
       const { servico } = montar({
         ...tresTurmas,
         modalidadePorTurma: { '156126': EAD, '156127': SEMI, '156128': SEMI },
@@ -786,7 +786,7 @@ describe('SenhaQuizService', () => {
      * Estas SIM viram linha de relatorio: sao turmas que ficam com a data velha,
      * ou seja, alunos que nao abrem a prova.
      */
-    it('turma sem modalidade derivavel vira linha de relatorio', async () => {
+    it('turma sem formato derivavel vira linha de relatorio', async () => {
       const { servico } = montar({
         ...tresTurmas,
         modalidadePorTurma: { '156126': EAD, '156127': AMBIGUA },
@@ -807,7 +807,7 @@ describe('SenhaQuizService', () => {
       ]);
     });
 
-    it('a fotografia da janela e da modalidade vai para o item', async () => {
+    it('a fotografia da janela e do formato vai para o item', async () => {
       const { servico } = montar({
         ...tresTurmas,
         modalidadePorTurma: { '156126': EAD },

@@ -97,7 +97,7 @@ export class AgendamentoAdminController {
       '`CRIADO` com o e-mail de quem clicou, e `alocadoManual: true` marca que ' +
       'aquilo nao saiu do portal do aluno.\n\n' +
       'Como no remanejo, **nao depende do periodo estar aberto**, e recusa ' +
-      'outro **polo** ou outra **modalidade**. Recusa tambem quem ja tem prova ' +
+      'outro **polo** ou outro **formato**. Recusa tambem quem ja tem prova ' +
       'no semestre (para mudar de horario existe o remanejo) e a situacao de ' +
       'curso que bloqueia — esta ultima liberavel com `ignorarStatusCurso`.\n\n' +
       '**As disciplinas cobertas** saem do Brightspace quando `D2L_HABILITADO`; ' +
@@ -109,7 +109,7 @@ export class AgendamentoAdminController {
   @ApiCreatedResponse({ type: AgendamentoPeloAdminDto })
   @ApiBadRequestResponse({
     description:
-      'Nenhum ou ambos os destinos informados, polo ou modalidade diferentes ' +
+      'Nenhum ou ambos os destinos informados, polo ou formato diferentes ' +
       'do aluno, ou nenhum periodo de agendamento cadastrado',
   })
   @ApiNotFoundResponse({ description: 'Vinculo, faixa ou oferta inexistente' })
@@ -179,10 +179,10 @@ export class AgendamentoAdminController {
     summary: 'Como esta indo o agendamento da rodada vigente',
     description:
       'Os numeros da tela de Inicio: quantos vinculos **ativos** ja tem prova ' +
-      'na rodada vigente, a mesma adesao por modalidade, e quem criou cada ' +
+      'na rodada vigente, a mesma adesao por formato, e quem criou cada ' +
       'reserva (aluno, compulsorio ou admin — a mesma regra da coluna ' +
       '"Agendado por" da exportacao).\n\n' +
-      'Modalidade e polo sao os de hoje do vinculo, para o numerador e o ' +
+      'Formato e polo sao os de hoje do vinculo, para o numerador e o ' +
       'denominador cortarem pelo mesmo campo.',
   })
   @ApiQuery({ name: 'poloId', required: false, type: Number, example: 6 })
@@ -202,7 +202,7 @@ export class AgendamentoAdminController {
       'e `Status = Não Agendado`. E essa a lista que a secretaria usa para cobrar ' +
       'quem falta.\n\n' +
       'Colunas: Matricula, Aluno, E-mail, Curso, Situação do Curso (o STATUS ' +
-      'CURSO importado: `Ativo`, `Trancado`...), Modalidade, Polo, Rodada, ' +
+      'CURSO importado: `Ativo`, `Trancado`...), Formato, Polo, Rodada, ' +
       'Data da prova, Inicio, Fim, Sala, Status (`Agendado` | `Não Agendado`), ' +
       'Agendado em e Agendado por (`Aluno` | `Compulsório` | `Admin`; vazia ' +
       'para quem nao agendou).\n\n' +
@@ -284,14 +284,14 @@ export class AgendamentoAdminController {
       'Diferente do aluno, o admin **nao depende do periodo estar aberto**: ' +
       'consertar depois do fechamento e justamente o caso de uso.\n\n' +
       'Recusa mudar de **polo** (o aluno viajaria para o campus errado) e de ' +
-      '**modalidade** (a prova tem outra duracao). A vaga da sala de destino e ' +
+      '**formato** (a prova tem outra duracao). A vaga da sala de destino e ' +
       'conferida sob lock, como no agendamento normal.',
   })
   @ApiParam({ name: 'id', type: Number, example: 501 })
   @ApiOkResponse({ type: AgendamentoAdminDto })
   @ApiBadRequestResponse({
     description:
-      'Nenhum ou ambos os destinos informados, polo diferente, ou modalidade diferente',
+      'Nenhum ou ambos os destinos informados, polo diferente, ou formato diferente',
   })
   @ApiNotFoundResponse({
     description: 'Agendamento, faixa ou oferta inexistente',

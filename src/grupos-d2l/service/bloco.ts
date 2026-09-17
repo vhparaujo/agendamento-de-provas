@@ -46,7 +46,7 @@ export const DEFINICAO_DO_BLOCO: Record<BlocoDeGrupos, DefinicaoDoBloco> = {
   },
 };
 
-/** Todas as modalidades que tem grupo de prova. */
+/** Todos os formatos que tem grupo de prova. */
 export const MODALIDADES_COM_GRUPO: readonly string[] =
   BLOCOS_DE_GRUPOS.flatMap((bloco) => DEFINICAO_DO_BLOCO[bloco].modalidades);
 
@@ -66,7 +66,7 @@ export function blocoDaModalidade(
 
 export type BlocoDaTurma =
   | { situacao: 'BLOCO'; bloco: BlocoDeGrupos }
-  /** Sem agendamento, ou modalidade sem bloco: nao ha grupo a criar. */
+  /** Sem agendamento, ou formato sem bloco: nao ha grupo a criar. */
   | { situacao: 'FORA' }
   | { situacao: 'AMBIGUA'; detalhe: string };
 
@@ -74,13 +74,13 @@ export type BlocoDaTurma =
  * Em qual categoria a turma recebe os grupos.
  *
  * Reusa a derivacao do lote de datas (`ModalidadeDaTurmaService`) em vez de uma
- * propria: a troca de condicao do quiz procura o grupo na categoria da
- * modalidade que ELA decidiu, e duas regras acabariam criando os grupos numa
+ * propria: a troca de condicao do quiz procura o grupo na categoria do
+ * formato que ELA decidiu, e duas regras acabariam criando os grupos numa
  * categoria e procurando em outra.
  *
  * ⚠️ **Semi + Modular na mesma turma NAO e ambiguidade aqui**, embora seja para
  * o lote de datas. As duas vao para a mesma categoria e tem os mesmos horarios,
- * entao nao ha o que decidir. So modalidades de BLOCOS diferentes na mesma
+ * entao nao ha o que decidir. So formatos de BLOCOS diferentes na mesma
  * turma (EaD com Semi/Modular, qualquer um com Presencial) pedem o desempate da
  * tela "Senhas e datas".
  */
@@ -104,7 +104,7 @@ export function blocoDaTurma(decisao: ModalidadeDaTurma): BlocoDaTurma {
   return {
     situacao: 'AMBIGUA',
     detalhe:
-      `${decisao.detalhe} Sem saber a modalidade, nao ha como escolher a ` +
+      `${decisao.detalhe} Sem saber o formato, nao ha como escolher a ` +
       'categoria. Desempate a turma na aba "Senhas e datas".',
   };
 }

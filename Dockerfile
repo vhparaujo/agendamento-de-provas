@@ -28,7 +28,7 @@ RUN npm run build
 # DOIS pacotes ficaram em `dependencies` de proposito, e a poda e o motivo:
 #   - `prisma`, porque o CMD abaixo roda `prisma migrate deploy` no start;
 #   - `tsx`, porque o seed e `tsx prisma/seed.ts` (prisma.config.ts) — e o seed
-#     e quem cria as modalidades, os 27 polos e o primeiro admin. Sem ele a
+#     e quem cria os formatos, os 27 polos e o primeiro admin. Sem ele a
 #     instalacao sobe sem ninguem para fazer login.
 # Como devDependencies, os dois sumiriam aqui e a falha so apareceria no deploy.
 RUN npm prune --omit=dev
@@ -64,7 +64,7 @@ COPY --from=builder /app/scripts ./scripts
 # arvore inteira e menor que perseguir a cadeia.
 #
 # Sem isto, `npx prisma db seed` morre com MODULE_NOT_FOUND dentro do container
-# — e o seed e quem cria as modalidades, os 27 polos e o primeiro
+# — e o seed e quem cria os formatos, os 27 polos e o primeiro
 # administrador. A instalacao subiria sem ninguem para fazer login.
 COPY --from=builder /app/src ./src
 COPY --from=builder /app/tsconfig.json ./

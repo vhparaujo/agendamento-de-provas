@@ -134,7 +134,7 @@ export class DisciplinasDoAlunoService {
     // de nota e do periodo vigente, e ler o periodo de novo mais adiante abriria
     // a janela para ele mudar no meio do cruzamento.
     //
-    // A modalidade e do VINCULO, e e ela que escolhe a arvore do Brightspace:
+    // O formato e do VINCULO, e e ele que escolhe a arvore do Brightspace:
     // o aluno EaD busca disciplina no modulo 2026/4 e o presencial no semestre
     // 2026/2, na mesma janela e no mesmo dia.
     const vigente =
@@ -432,13 +432,13 @@ export class DisciplinasDoAlunoService {
   }
 
   /**
-   * As ofertas do aluno no periodo letivo CADASTRADO pelo admin PARA A
-   * MODALIDADE DELE.
+   * As ofertas do aluno no periodo letivo CADASTRADO pelo admin PARA O
+   * FORMATO DELE.
    *
    * Compartilhado pelas duas portas (launch e compulsorio) de proposito: se
    * fossem duas implementacoes, uma delas acabaria sem o filtro do periodo
-   * letivo — e traria os semestres passados junto. Vale igual para a
-   * modalidade: uma implementacao que a esquecesse mandaria os presenciais
+   * letivo — e traria os semestres passados junto. Vale igual para o
+   * formato: uma implementacao que o esquecesse mandaria os presenciais
    * procurarem disciplina na grade dos modulos, e eles nao achariam nenhuma.
    */
   private async turmasPorUserId(
@@ -474,11 +474,11 @@ export class DisciplinasDoAlunoService {
       // materias), mas os criterios de nota decidem quais delas ele agenda — e
       // ela sai da mesma leitura, para as duas nao poderem divergir.
       filtroDeNota: vigente.filtroDeNota,
-      // A frase NOMEIA o periodo letivo e a modalidade que o escolheu.
+      // A frase NOMEIA o periodo letivo e o formato que o escolheu.
       //
       // E a unica defesa contra o erro mais caro deste cadastro: um
       // `periodoLetivoId` que nao bate NAO da erro — a busca responde 200 com
-      // lista vazia, a intersecao da vazia, e a modalidade inteira recebe uma
+      // lista vazia, a intersecao da vazia, e o formato inteiro recebe uma
       // frase generica sem nada ligando o sintoma a causa. Com o id na
       // mensagem, o primeiro aluno que abrir um chamado ja entrega o
       // diagnostico: "2026/4" numa tela de presencial e o mapa cadastrado
@@ -486,7 +486,7 @@ export class DisciplinasDoAlunoService {
       motivo:
         ofertas.length === 0
           ? `Nenhuma disciplina sua aparece no periodo letivo vigente ` +
-            `(${vigente.periodoLetivoId}, modalidade ${modalidadeCodigo}). ` +
+            `(${vigente.periodoLetivoId}, formato ${modalidadeCodigo}). ` +
             'Procure a secretaria academica.'
           : undefined,
     };

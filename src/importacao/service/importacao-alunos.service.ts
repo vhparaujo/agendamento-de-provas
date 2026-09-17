@@ -51,9 +51,9 @@ export interface Mudanca {
  * Sao tres mudancas, e o que as junta aqui e serem todas silenciosas — a
  * importacao grava, e nada mais no sistema reclama:
  *
- *   modalidade . a prova passa a ter outra duracao, e o aluno segue alocado na
+ *   formato . a prova passa a ter outra duracao, e o aluno segue alocado na
  *                sala antiga. O sintoma chega dias depois e disfarcado: o
- *                remanejo e recusado com "esta sala nao e da modalidade do aluno".
+ *                remanejo e recusado com "esta sala nao e do formato do aluno".
  *   polo ....... o aluno "muda de campus" e a reserva fica no campus anterior.
  *   status ..... o aluno PERDEU a elegibilidade (STATUS CURSO saiu de "Ativo")
  *                e continua ocupando a cadeira. Ele nao agenda nem troca mais,
@@ -70,7 +70,7 @@ export interface AlteracaoComAgendamento {
   matricula: string;
   nome: string;
   curso: string;
-  /** Ausente quando a modalidade nao mudou. */
+  /** Ausente quando o formato nao mudou. */
   modalidade?: Mudanca;
   /** Ausente quando o polo nao mudou. */
   polo?: Mudanca;
@@ -152,7 +152,7 @@ export interface ResultadoImportacaoAlunos {
   statusDesconhecidos: { status: string; ocorrencias: number }[];
   /** Valores de CAMPUS que nao casaram com nenhum polo do seed. */
   polosNaoEncontrados: { campus: string; ocorrencias: number }[];
-  /** Trocas de modalidade/polo em quem ja tem prova marcada. Ver a interface. */
+  /** Trocas de formato/polo em quem ja tem prova marcada. Ver a interface. */
   alteracoesComAgendamento: AlteracaoComAgendamento[];
   /** Vinculos que nasceram duplicados por mudanca de grafia do curso. */
   cursosRenomeados: CursoRenomeado[];
@@ -190,7 +190,7 @@ export class ImportacaoAlunosService {
 
     if (!modalidade) {
       throw new BadRequestException(
-        `Modalidade ${codigoModalidade} nao existe. Rode o seed de modalidades.`,
+        `Formato ${codigoModalidade} nao existe. Rode o seed de formatos.`,
       );
     }
 
@@ -217,7 +217,7 @@ export class ImportacaoAlunosService {
      */
     // So o semestre importa para o aviso: uma prova ja marcada e uma prova ja
     // marcada, seja ela da regular ou da substitutiva.
-    // A importacao e de UMA modalidade por vez (o admin escolhe a aba no
+    // A importacao e de UM formato por vez (o admin escolhe a aba no
     // upload), entao da para resolver o periodo letivo exato desta planilha em
     // vez de olhar a janela inteira: o aviso fica mais preciso — a prova de um
     // aluno EaD nao interessa a uma importacao de presenciais.
@@ -339,7 +339,7 @@ export class ImportacaoAlunosService {
     // desta rota que pode exigir acao humana DEPOIS que a tela ja foi fechada.
     if (alteracoesComAgendamento.length > 0) {
       // As perdas de elegibilidade saem contadas a parte porque a acao e outra:
-      // modalidade/polo pedem remanejo, e aqui a pergunta e se a pessoa fica
+      // formato/polo pedem remanejo, e aqui a pergunta e se a pessoa fica
       // com a cadeira. Sem o numero, o log so diria "alguma coisa mudou".
       const perderamElegibilidade = alteracoesComAgendamento.filter(
         (a) => a.statusCurso,
@@ -576,9 +576,9 @@ export class ImportacaoAlunosService {
    * Os TRES campos que a importacao troca **por baixo de uma reserva ja
    * confirmada** sem que nada quebre na hora:
    *
-   * - modalidade: a prova tem outra duracao, mas o aluno segue alocado na sala
+   * - formato: a prova tem outra duracao, mas o aluno segue alocado na sala
    *   antiga. O sintoma aparece dias depois, disfarcado — o remanejo passa a ser
-   *   recusado com "esta sala nao e da modalidade do aluno".
+   *   recusado com "esta sala nao e do formato do aluno".
    * - polo: o aluno "muda de campus" e a reserva fica no campus anterior. O
    *   relatorio de agendamentos mostra o polo DA PROVA, entao la parece coerente.
    * - STATUS CURSO: o vinculo perde a elegibilidade e a cadeira continua dele.

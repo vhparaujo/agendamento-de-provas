@@ -8,7 +8,7 @@ import { SpecialAccessService } from '../service/special-access.service';
 
 /**
  * Special access por agendamento (15/09/2026): a configuracao (tempo por
- * modalidade, extra do NIOP, modo) e o lote que grava o acesso de cada aluno.
+ * formato, extra do NIOP, modo) e o lote que grava o acesso de cada aluno.
  *
  * Depende do `SenhaQuizModule` pelo questionario-alvo, que e o MESMO dos lotes
  * de senha e de preparo. A marca do NIOP mora no modulo de alunos, onde a tela

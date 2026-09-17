@@ -178,8 +178,8 @@ export class FaixaService {
   }
 
   /**
-   * Alterar o HORARIO de uma faixa que ja tem oferta exige revalidar todas as
-   * modalidades: encurtar a janela poderia deixar uma prova de 3h numa faixa de
+   * Alterar o HORARIO de uma faixa que ja tem oferta exige revalidar todos os
+   * formatos: encurtar a janela poderia deixar uma prova de 3h numa faixa de
    * 1h30 que ja tem gente agendada.
    */
   async atualizar(
@@ -208,7 +208,7 @@ export class FaixaService {
 
     if (naoCabe) {
       throw new BadRequestException(
-        `A faixa passaria a ter ${janela} min, mas ja oferta a modalidade ` +
+        `A faixa passaria a ter ${janela} min, mas ja oferta o formato ` +
           `${naoCabe.modalidade.nome} (${naoCabe.modalidade.duracaoMinutos} min). ` +
           'Remova essa oferta antes de encurtar o horario.',
       );
@@ -266,7 +266,7 @@ export class FaixaService {
     if (faixa.salaFaixas.some((sf) => sf.salaId === entrada.salaId)) {
       throw new ConflictException(
         'Esta sala ja esta nesta faixa. Uma sala entra uma unica vez por faixa, ' +
-          'porque dentro de uma faixa ela fica travada numa modalidade.',
+          'porque dentro de uma faixa ela fica travada num formato.',
       );
     }
 
@@ -388,7 +388,7 @@ export class FaixaService {
 
   /**
    * Valida cada sala pedida e resolve a `ordem` — a sequencia de preenchimento
-   * dentro de faixa+modalidade. Quando o admin nao informa, numeramos na ordem
+   * dentro de faixa+formato. Quando o admin nao informa, numeramos na ordem
    * em que ele mandou, que e a leitura natural de "primeiro enche esta".
    */
   private async prepararOfertas(
@@ -409,7 +409,7 @@ export class FaixaService {
     if (idsRepetidos.length > 0) {
       throw new BadRequestException(
         `Sala repetida na mesma faixa: ${[...new Set(idsRepetidos)].join(', ')}. ` +
-          'Dentro de uma faixa, a sala fica travada numa unica modalidade.',
+          'Dentro de uma faixa, a sala fica travada num unico formato.',
       );
     }
 
@@ -422,7 +422,7 @@ export class FaixaService {
       }),
     ]);
 
-    // Proxima ordem livre por modalidade, considerando o que a faixa ja tem.
+    // Proxima ordem livre por formato, considerando o que a faixa ja tem.
     const proximaOrdem = new Map<number, number>();
     for (const existente of jaExistentes) {
       proximaOrdem.set(
@@ -446,7 +446,7 @@ export class FaixaService {
 
       const modalidade = exigirEncontrado(
         modalidades.find((m) => m.id === entrada.modalidadeId) ?? null,
-        `Modalidade ${entrada.modalidadeId} nao encontrada`,
+        `Formato ${entrada.modalidadeId} nao encontrado`,
       );
 
       const vagas = entrada.vagas ?? sala.capacidade;
@@ -462,7 +462,7 @@ export class FaixaService {
       const chave = `${modalidade.id}:${ordem}`;
       if (ordensUsadas.has(chave)) {
         throw new ConflictException(
-          `A ordem ${ordem} ja esta usada na modalidade ${modalidade.nome} desta faixa. ` +
+          `A ordem ${ordem} ja esta usada no formato ${modalidade.nome} desta faixa. ` +
             'A ordem define a sequencia de preenchimento e precisa ser unica.',
         );
       }

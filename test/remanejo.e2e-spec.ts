@@ -125,7 +125,7 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
       { salaId: salaB.id, modalidadeId: ead.id, vagas: 5, ordem: 1 },
     ]));
 
-    // Faixa que oferta OUTRA modalidade — o remanejo tem de recusar
+    // Faixa que oferta OUTRO formato — o remanejo tem de recusar
     const salaS = await criarSala('REM-S', 5);
     ({
       ofertas: [ofertaSemi],
@@ -464,14 +464,14 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
       expect(res.body.message).toMatch(/polo/i);
     });
 
-    it('RECUSA remanejar para sala de outra modalidade', async () => {
+    it('RECUSA remanejar para sala de outro formato', async () => {
       const res = await comoAdmin(
         api().patch(`/api/agendamentos/${agendamentoId}/remanejar`),
       )
         .send({ salaFaixaId: ofertaSemi })
         .expect(400);
 
-      expect(res.body.message).toMatch(/modalidade/i);
+      expect(res.body.message).toMatch(/formato/i);
     });
 
     it('RECUSA sala lotada', async () => {
@@ -1059,7 +1059,7 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
       expect(res.body.agendamento.sala).toBe('ADM-ESCOLHIDA');
     });
 
-    it('RECUSA polo e modalidade diferentes do aluno', async () => {
+    it('RECUSA polo e formato diferentes do aluno', async () => {
       const aluno = await alunoQueCancelou('POST-INCOMP');
 
       const doPolo = await comoAdmin(api().post('/api/agendamentos'))
@@ -1070,7 +1070,7 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
       const daModalidade = await comoAdmin(api().post('/api/agendamentos'))
         .send({ alunoId: aluno.alunoId, salaFaixaId: ofertaSemi })
         .expect(400);
-      expect(daModalidade.body.message).toMatch(/modalidade/i);
+      expect(daModalidade.body.message).toMatch(/formato/i);
     });
 
     it('RECUSA sala lotada', async () => {

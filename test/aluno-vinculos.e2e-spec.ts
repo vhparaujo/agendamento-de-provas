@@ -10,7 +10,7 @@ import { permiteAgendar } from './../src/enums/status-curso.enum';
 
 /**
  * Caso real do CSV: RA UC24424289 (Monica) esta ativa em DOIS cursos, com
- * modalidades diferentes — Pedagogia/EaD (180min) e Psicologia/Hibrido (90min).
+ * formatos diferentes — Pedagogia/EaD (180min) e Psicologia/Modular (90min).
  * Ela precisa conseguir agendar as duas provas.
  */
 describe('Aluno com dois cursos (e2e)', () => {
@@ -93,7 +93,7 @@ describe('Aluno com dois cursos (e2e)', () => {
     );
 
     expect(porCurso.PEDAGOGIA).toBe(180); // EaD, 3h
-    expect(porCurso.PSICOLOGIA).toBe(90); // Hibrido/Modular, 1h30
+    expect(porCurso.PSICOLOGIA).toBe(90); // Modular, 1h30
   });
 
   it('normaliza a matricula na busca (espacos e caixa)', async () => {

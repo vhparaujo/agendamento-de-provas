@@ -26,8 +26,8 @@ export class IniciarSenhaQuizDto {
     default: TipoExecucaoQuiz.SENHA,
     description:
       '`SENHA` aplica uma celula da grade em TODAS as turmas do CSV (exige ' +
-      '`turno`). `DATA` aplica UMA janela de horario nas turmas de UMA ' +
-      'modalidade (exige `janelaId`), e grava junto a senha da celula daquele ' +
+      '`turno`). `DATA` aplica UMA janela de horario nas turmas de UM ' +
+      'formato (exige `janelaId`), e grava junto a senha da celula daquele ' +
       'turno — o PUT do questionario substitui o objeto inteiro e nao pode ' +
       'preservar a senha lida. `PREPARO` deixa o questionario pronto para o ' +
       'special access (sem data, restrito, sem condicao de grupo), com a senha ' +
@@ -60,7 +60,7 @@ export class IniciarSenhaQuizDto {
   @ApiPropertyOptional({
     example: 10,
     description:
-      'Obrigatorio em `DATA`: a janela a aplicar. Ela carrega a modalidade ' +
+      'Obrigatorio em `DATA`: a janela a aplicar. Ela carrega o formato ' +
       '(que recorta as turmas), as horas de abertura e fechamento, e o turno ' +
       'de onde sai a senha.',
   })
@@ -144,15 +144,15 @@ export class ExecucaoSenhaIniciadaDto {
     example: 4,
     description:
       'So em `DATA`: turmas resolvidas que ficaram de fora porque nenhum ' +
-      'agendamento confirmado aponta para elas — nao ha de onde derivar a ' +
-      'modalidade, e portanto nao ha janela a aplicar.',
+      'agendamento confirmado aponta para elas — nao ha de onde derivar o ' +
+      'formato, e portanto nao ha janela a aplicar.',
   })
   semModalidade!: number;
 
   @ApiProperty({
     example: 1,
     description:
-      'So em `DATA`: turmas com alunos de DUAS modalidades. O questionario tem ' +
+      'So em `DATA`: turmas com alunos de DOIS formatos. O questionario tem ' +
       'uma janela so, entao nenhuma foi escolhida — a turma fica com a data ' +
       'antiga e precisa de decisao humana.',
   })
@@ -208,8 +208,8 @@ export class AndamentoDaSenhaQuizDto {
     example: 'EAD',
     nullable: true,
     description:
-      'So em `DATA`: a modalidade da janela aplicada. **Sem ela a tela nao tem ' +
-      'como dizer de quem e a execucao** — as 12:01 tres modalidades disparam, ' +
+      'So em `DATA`: o formato da janela aplicada. **Sem ele a tela nao tem ' +
+      'como dizer de quem e a execucao** — as 12:01 tres formatos disparam, ' +
       'e duas delas com a mesma janela.',
   })
   modalidadeCodigo!: string | null;
@@ -236,14 +236,14 @@ export class AndamentoDaSenhaQuizDto {
     example: 4,
     description:
       'So em `DATA`: turmas sem agendamento confirmado, das quais nao ha como ' +
-      'derivar a modalidade. Ficam com a data antiga.',
+      'derivar o formato. Ficam com a data antiga.',
   })
   semModalidade!: number;
 
   @ApiProperty({
     example: 1,
     description:
-      'So em `DATA`: turmas com alunos de duas modalidades. **Tao importante ' +
+      'So em `DATA`: turmas com alunos de dois formatos. **Tao importante ' +
       'quanto `naoEncontradas`** e pelo mesmo motivo: nao contam como falha e ' +
       'sao turmas inteiras que nao abririam a prova no horario certo.',
   })
@@ -371,8 +371,8 @@ export class UltimaDataPorModalidadeDto {
     type: AndamentoDaSenhaQuizDto,
     nullable: true,
     description:
-      'A ultima execucao de datas desta modalidade, ou `null` se ela nunca ' +
-      'rodou. **Nulo nao e erro**: e o estado normal de uma modalidade que tem ' +
+      'A ultima execucao de datas deste formato, ou `null` se ela nunca ' +
+      'rodou. **Nulo nao e erro**: e o estado normal de um formato que tem ' +
       'calendario cadastrado mas ainda nao teve prova — o Presencial, enquanto ' +
       'nao houver aluno presencial importado.',
   })

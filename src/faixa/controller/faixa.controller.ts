@@ -33,8 +33,8 @@ import {
 import { FaixaService } from '../service/faixa.service';
 
 /**
- * Faixa e um HORARIO NEUTRO (polo + data + hora), sem modalidade. A oferta real
- * — modalidade, vagas e ordem de preenchimento — vive nas SalaFaixa que ela
+ * Faixa e um HORARIO NEUTRO (polo + data + hora), sem formato. A oferta real
+ * — formato, vagas e ordem de preenchimento — vive nas SalaFaixa que ela
  * carrega. E o admin quem monta isso ao criar a faixa.
  */
 @ApiTags(TAGS.FAIXAS)
@@ -47,7 +47,7 @@ export class FaixaController {
   @ApiOperation({
     summary: 'Lista as faixas com a ocupacao de cada sala',
     description:
-      'Cada faixa vem com suas ofertas (sala + modalidade + vagas + ordem) e ' +
+      'Cada faixa vem com suas ofertas (sala + formato + vagas + ordem) e ' +
       'quantas vagas ja foram tomadas.',
   })
   @ApiQuery({ name: 'poloId', required: false, type: Number, example: 6 })
@@ -56,7 +56,7 @@ export class FaixaController {
     required: false,
     type: Number,
     example: 1,
-    description: 'Traz so faixas que ofertam esta modalidade.',
+    description: 'Traz so faixas que ofertam este formato.',
   })
   @ApiQuery({
     name: 'de',
@@ -111,7 +111,7 @@ export class FaixaController {
       '- a mesma sala entra uma unica vez por faixa;\n' +
       '- a sala nao pode ter outra prova no mesmo dia em horario que se ' +
       'sobreponha, mesmo que em outra faixa;\n' +
-      '- `ordem` e unica dentro de faixa + modalidade.',
+      '- `ordem` e unica dentro de faixa + formato.',
   })
   @ApiCreatedResponse({ type: FaixaDetalheDto })
   @ApiBadRequestResponse({
@@ -119,11 +119,11 @@ export class FaixaController {
       'Sala de outro polo, sala inativa, prova que nao cabe na janela, vagas acima da capacidade ou horario invertido',
   })
   @ApiNotFoundResponse({
-    description: 'Polo, sala ou modalidade nao encontrada',
+    description: 'Polo, sala ou formato nao encontrado',
   })
   @ApiConflictResponse({
     description:
-      'Faixa identica ja existe no polo, ordem repetida na modalidade, ou ' +
+      'Faixa identica ja existe no polo, ordem repetida no formato, ou ' +
       'sala ja ocupada por outra faixa que se sobrepoe no relogio',
   })
   criar(@Body() dto: CriarFaixaDto) {
@@ -162,7 +162,7 @@ export class FaixaController {
     summary: 'Adiciona uma sala a uma faixa existente',
     description:
       'Mesmas regras da criacao. Sem `ordem`, entra no fim da fila de ' +
-      'preenchimento daquela modalidade.',
+      'preenchimento daquele formato.',
   })
   @ApiParam({ name: 'id', type: Number, example: 14 })
   @ApiCreatedResponse({ type: FaixaDetalheDto })
@@ -170,7 +170,7 @@ export class FaixaController {
     description: 'Sala de outro polo, inativa, ou prova que nao cabe',
   })
   @ApiNotFoundResponse({
-    description: 'Faixa, sala ou modalidade nao encontrada',
+    description: 'Faixa, sala ou formato nao encontrado',
   })
   @ApiConflictResponse({
     description:

@@ -67,7 +67,7 @@ export class AlunoAdminController {
     summary: 'Pesquisa os alunos importados pelos CSVs',
     description:
       'Cada item e um **vinculo** (aluno + curso), nao um aluno: um mesmo RA em ' +
-      'dois cursos aparece duas vezes, com modalidades possivelmente diferentes ' +
+      'dois cursos aparece duas vezes, com formatos possivelmente diferentes ' +
       'e um agendamento para cada.\n\n' +
       '`busca` casa com **matricula, nome, e-mail ou curso** ao mesmo tempo — e o ' +
       'campo unico do balcao, onde nem sempre se sabe qual dado a pessoa tem em maos.\n\n' +
@@ -147,7 +147,7 @@ export class AlunoAdminController {
   @ApiOperation({
     summary: 'Marca a matricula como NIOP',
     description:
-      'Quem e do NIOP recebe, no special access, o tempo de prova da modalidade ' +
+      'Quem e do NIOP recebe, no special access, o tempo de prova do formato ' +
       'mais o tempo extra configurado, e a janela fecha esse tanto depois do fim ' +
       'da faixa. Vale para TODOS os vinculos da matricula, e sobrevive a ' +
       'reimportacao do CSV.\n\n' +
@@ -217,7 +217,7 @@ export class AlunoAdminController {
       'Recusa vinculos de matriculas diferentes (seria mover a prova de uma ' +
       'pessoa para outra) e recusa quando os dois tem prova confirmada no mesmo ' +
       'periodo letivo (a pessoa ficaria com duas reservas no semestre). ' +
-      'Divergencia de modalidade ou polo nao bloqueia: volta em `avisos`.',
+      'Divergencia de formato ou polo nao bloqueia: volta em `avisos`.',
   })
   @ApiParam({
     name: 'id',

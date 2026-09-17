@@ -382,7 +382,7 @@ Scope: quizzing:quizzes:write
 
 - **Datas em UTC** (sufixo Z). Converta o horário local da faixa para UTC antes de
   enviar. Ex.: faixa 08:30–11:30 (Brasília, UTC-3) → 11:30–14:30 UTC.
-- `TimeLimitValue` em **minutos** (0–9999). Use a duração da modalidade (EaD 180,
+- `TimeLimitValue` em **minutos** (0–9999). Use a duração do formato (EaD 180,
   Semi/Modular 90, Presencial 120) OU a janela da faixa — alinhe a regra com a UCB.
 - `SubmissionTimeLimit` e `AttemptsAllowed` podem ser `null` para "não sobrescrever".
 - É **idempotente por usuário**: o PUT cria se não existe, atualiza se já existe.

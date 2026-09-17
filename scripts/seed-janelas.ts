@@ -5,14 +5,14 @@ import { PrismaClient } from '../src/generated/prisma/client';
 
 /**
  * ============================================================================
- * SO AS JANELAS DO QUESTIONARIO — sem tocar em polo, admin ou modalidade
+ * SO AS JANELAS DO QUESTIONARIO — sem tocar em polo, admin ou formato
  * ============================================================================
  *
  *   npm run seed:janelas
  *
  * `npm run seed` faz isto e mais tres coisas, e todas sao idempotentes — rodar
  * o orquestrador inteiro nao quebra nada. Este comando existe para o caso em que
- * a unica coisa que mudou foi o CALENDARIO: uma modalidade nova ganhou horarios
+ * a unica coisa que mudou foi o CALENDARIO: um formato novo ganhou horarios
  * (foi o caso do Presencial, em 25/08/2026) e o servidor ja esta com polos e
  * admins configurados. Mexer so no que mudou e o que torna a operacao obvia de
  * revisar antes de rodar.
@@ -26,8 +26,8 @@ import { PrismaClient } from '../src/generated/prisma/client';
  * Para MUDAR um horario ja cadastrado, use a tela (Senhas e datas > Janelas do
  * questionario). Este script nao e o caminho, de proposito.
  *
- * Depende de `seedModalidades` ja ter rodado: as janelas referenciam a
- * modalidade por `codigo`. Numa base que passou por `npm run seed` alguma vez,
+ * Depende de `seedModalidades` ja ter rodado: as janelas referenciam o
+ * formato por `codigo`. Numa base que passou por `npm run seed` alguma vez,
  * ja rodou.
  */
 async function main(): Promise<void> {

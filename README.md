@@ -44,10 +44,10 @@ A entrada do aluno é por **LTI 1.3**.
 1. O aluno entra pelo Brightspace; o **launch LTI 1.3** traz o RA (matrícula) e o
    UserId do Valence. Ele nunca digita senha.
 2. O RA é cruzado com a base de alunos importada do CSV, o que devolve os
-   **vínculos** dele (um por curso) — cada vínculo carrega modalidade e polo.
+   **vínculos** dele (um por curso) — cada vínculo carrega formato e polo.
 3. Se houver mais de um vínculo, o portal pergunta de qual curso é a prova
    (`precisaEscolherCurso` na resposta do launch).
-4. O aluno vê as **faixas** (horários) do polo dele, na modalidade dele, com vaga,
+4. O aluno vê as **faixas** (horários) do polo dele, no formato dele, com vaga,
    com o período de agendamento aberto.
 5. Escolhe uma faixa. O sistema aloca uma sala automaticamente, **em ordem
    sequencial** (enche a sala de menor `ordem` antes de abrir a próxima).
@@ -59,7 +59,7 @@ A entrada do aluno é por **LTI 1.3**.
 **Fluxo do admin**
 
 Login por e-mail/senha → JWT. Cadastra salas, monta faixas (data + horário +
-quais salas atendem qual modalidade + vagas + ordem), importa os CSVs de alunos e
+quais salas atendem qual formato + vagas + ordem), importa os CSVs de alunos e
 turmas, abre/fecha o período de agendamento, acompanha a ocupação de cada sala e
 **exporta em CSV a lista de todos os alunos, com quem já agendou e quem não**.
 
@@ -70,18 +70,18 @@ turmas, abre/fecha o período de agendamento, acompanha a ocupação de cada sal
 | Conceito | O que é |
 |---|---|
 | **Polo** | Unidade física onde as provas ocorrem. São 27, populados por seed. |
-| **Sala** | Espaço físico dentro de um polo, com capacidade. **É neutra** — não tem modalidade fixa. |
-| **Modalidade** | Formato do curso. Define a **duração da prova** (EaD 3h · Semipresencial 1h30 · Modular/Híbrido 1h30 · Presencial 2h) **e qual período letivo do Brightspace vale para o aluno** — ver *duas grades no mesmo ano*. |
-| **Vínculo** | Aluno + curso. **É a unidade real do sistema.** Um mesmo RA pode ter dois vínculos (dois cursos, modalidades diferentes) e agenda uma prova para cada. |
-| **Faixa** | Horário de prova que o admin abre para um polo (data + hora início + hora fim). **Também é neutra** — não tem modalidade fixa. |
-| **SalaFaixa** | **O núcleo do modelo.** Associação `Sala + Faixa + Modalidade + vagas + ordem`. É aqui que modalidade e vagas existem de fato. |
+| **Sala** | Espaço físico dentro de um polo, com capacidade. **É neutra** — não tem formato fixo. |
+| **Formato** | Tipo de oferta do curso. Define a **duração da prova** (EaD 3h · Semipresencial 1h30 · Modular 1h30 · Presencial 2h) **e qual período letivo do Brightspace vale para o aluno** — ver *duas grades no mesmo ano*. |
+| **Vínculo** | Aluno + curso. **É a unidade real do sistema.** Um mesmo RA pode ter dois vínculos (dois cursos, formatos diferentes) e agenda uma prova para cada. |
+| **Faixa** | Horário de prova que o admin abre para um polo (data + hora início + hora fim). **Também é neutra** — não tem formato fixo. |
+| **SalaFaixa** | **O núcleo do modelo.** Associação `Sala + Faixa + Modalidade + vagas + ordem`. É aqui que formato e vagas existem de fato. |
 | **Turma real** | Turma/disciplina que efetivamente terá prova (CSV de turmas). Filtro final do que aparece para o aluno. |
 
 ### Por que sala e faixa são neutras
 
 A mesma sala física pode ser Presencial numa faixa e EaD em outra — o que a
-trava numa modalidade é a linha de `SalaFaixa`, não a sala em si. Dentro de uma
-mesma faixa, porém, a sala fica travada numa única modalidade (garantido pelo
+trava num formato é a linha de `SalaFaixa`, não a sala em si. Dentro de uma
+mesma faixa, porém, a sala fica travada num único formato (garantido pelo
 índice único `[salaId, faixaId]`). O admin monta essa grade ao criar a faixa.
 
 ---
@@ -97,7 +97,7 @@ mesma faixa, porém, a sala fica travada numa única modalidade (garantido pelo
    está em [`src/enums/status-curso.enum.ts`](src/enums/status-curso.enum.ts),
    ponto único de alteração; a checagem é por vínculo, não por RA. O status
    **não** impede o login — ver [CSV de alunos](#csv-de-alunos).
-3. **O que o aluno vê** = faixas do polo dele, na modalidade dele, com vaga, com
+3. **O que o aluno vê** = faixas do polo dele, no formato dele, com vaga, com
    o período de agendamento aberto.
 4. **Disciplinas agendáveis** = disciplinas do aluno na Valence ∩ turmas reais
    (CSV) ∩ período letivo vigente. **Não são todas as disciplinas do aluno.**
@@ -129,7 +129,7 @@ mesma faixa, porém, a sala fica travada numa única modalidade (garantido pelo
    pela regra 6 em paralelo.
 9. **Reagendamento tem dono.** O aluno só troca/cancela com o período **aberto**
    e só no período **vigente**. O admin remaneja a qualquer tempo (é a válvula de
-   escape), marcando `alocadoManual = true`, mas nem ele muda polo, modalidade ou
+   escape), marcando `alocadoManual = true`, mas nem ele muda polo, formato ou
    joga o aluno no horário da outra prova dele.
    **Toda alteração grava quem a fez** — aluno ou administrador — na mesma
    transação da mudança.
@@ -379,7 +379,7 @@ cria: quando o nome do curso muda, a linha antiga deixa de estar no arquivo e a
 importação nunca apaga. O `:id` da URL é o vínculo que **fica** e `absorverId`
 (no corpo) é o que será **apagado**, na mesma direção do relatório de importação.
 Recusa matrículas diferentes (400) e recusa quando os dois têm prova confirmada
-no mesmo período letivo (409); divergência de modalidade ou polo não bloqueia e
+no mesmo período letivo (409); divergência de formato ou polo não bloqueia e
 volta em `avisos`.
 
 **`DELETE /turmas/:id`** desfaz carga errada — linha duplicada, turma que entrou
@@ -397,7 +397,7 @@ e ninguém mais consegue agendá-la.
   caminho é cancelá-las (`DELETE /agendamentos/:id`) antes.
 
 **Cada item de `/alunos` é um vínculo (aluno + curso), não um aluno.** O mesmo RA
-em dois cursos aparece como duas linhas, com modalidades possivelmente diferentes
+em dois cursos aparece como duas linhas, com formatos possivelmente diferentes
 e um agendamento para cada.
 
 `busca` é um campo só e casa com vários ao mesmo tempo — matrícula, nome, e-mail
@@ -426,7 +426,7 @@ por dentro da faixa.
 | `GET` `POST` `PATCH` `DELETE` | `/salas` · `/salas/:id` | `poloId` imutável; só apaga o que nunca foi ofertado |
 | `GET` `POST` `PATCH` `DELETE` | `/faixas` · `/faixas/:id` | Cria a faixa e a oferta numa transação |
 | `POST` | `/faixas/:id/salas` | Adiciona sala a uma faixa existente |
-| `GET` `PATCH` `DELETE` | `/sala-faixas/:id` | Ajusta vagas e ordem; modalidade é imutável |
+| `GET` `PATCH` `DELETE` | `/sala-faixas/:id` | Ajusta vagas e ordem; formato é imutável |
 
 **Uma sala não recebe duas provas ao mesmo tempo.** O `@@unique([salaId, faixaId])`
 é por *faixa*, não por *horário*: ele impede a sala de entrar duas vezes na mesma
@@ -458,11 +458,11 @@ datas das provas**, que são as faixas. São duas linhas do tempo independentes.
 Fecha **só por data/hora**. Vaga esgotando é problema de capacidade (o admin abre
 mais salas), nunca motivo para encerrar o agendamento de quem ainda não escolheu.
 
-#### Duas grades no mesmo ano: o período letivo por modalidade
+#### Duas grades no mesmo ano: o período letivo por formato
 
 A UCB divide o ano de **duas formas ao mesmo tempo**:
 
-| Modalidade | Divisão | Períodos por ano |
+| Formato | Divisão | Períodos por ano |
 |---|---|---|
 | EaD, Semipresencial, Modular | **módulo** | 4 — `2026/1` a `2026/4` |
 | Presencial | **semestre** | 2 — `2026/1` e `2026/2` |
@@ -491,15 +491,15 @@ POST /periodos
 }
 ```
 
-- **O prazo continua único.** Datas, `rodada` e critérios de nota valem para todas as
-  modalidades — é UMA janela. O que varia é só qual árvore do Brightspace
+- **O prazo continua único.** Datas, `rodada` e critérios de nota valem para todos os
+  formatos — é UMA janela. O que varia é só qual árvore do Brightspace
   consultar.
-- **O mapa tem de cobrir TODAS as modalidades** (400 nomeando as que faltam).
+- **O mapa tem de cobrir TODOS os formatos** (400 nomeando as que faltam).
   Cobrir pela metade é pior que não cobrir: a esquecida cairia no principal em
   silêncio. **Omitir o campo inteiro** põe todas no principal — o caso de quem
   tem uma grade só.
-- **A reserva grava o período letivo da grade do aluno**, resolvido pela
-  modalidade do vínculo. Um RA com um vínculo EaD e um Presencial tem duas provas
+- **A reserva grava o período letivo da grade do aluno**, resolvido pelo
+  formato do vínculo. Um RA com um vínculo EaD e um Presencial tem duas provas
   nessa mesma janela, sob org units diferentes — e **continua valendo uma prova
   por pessoa em cada horário**, atravessando as duas grades.
 - **O mapa só é editável com a janela vazia**, como a `rodada` e pelo mesmo
@@ -507,7 +507,7 @@ POST /periodos
   dispara a trava, então editar datas de uma janela cheia continua funcionando.
 - **O filtro `periodoLetivoId` das rotas de admin aceita uma lista** separada por
   vírgula. As telas mandam a janela inteira; um id sozinho recorta aquela grade.
-- **A migration fez o backfill** (toda janela × toda modalidade, apontando para o
+- **A migration fez o backfill** (toda janela × todo formato, apontando para o
   id que ela já tinha). Nada a fazer à mão.
 
 #### `rodada`: duas provas no mesmo semestre
@@ -531,7 +531,7 @@ prova nele — a regular e a **substitutiva**. O campo `rodada` (`"N2"` por padr
   responde 409 depois disso; cancelados contam). A rodada gravada na reserva é
   fotografia — trocar a da janela não renomearia nenhuma delas, e as provas
   sumiriam do portal do aluno como se ninguém tivesse agendado. O
-  `periodoLetivoId` **principal** nunca muda; o mapa por modalidade segue a mesma
+  `periodoLetivoId` **principal** nunca muda; o mapa por formato segue a mesma
   regra da rodada (só com a janela vazia).
 - **Os períodos que já existiam ganharam `rodada = "N2"` na migration**, junto com
   os agendamentos deles. Nada a fazer à mão.
@@ -625,7 +625,7 @@ telas mandam a janela inteira. Sem ele, o recorte é a janela vigente completa.
 |---|---|---|
 | `GET` | `/agendamentos` | Listagem paginada (50/pág, máx. 200), com busca por matrícula, nome ou curso |
 | `GET` | `/agendamentos/resumo` | Ocupação por sala: quais abrir, quantos fiscais, quais ficaram vazias |
-| `GET` | `/agendamentos/estatisticas` | A tela de Início: adesão da rodada vigente (vínculos ativos com prova), por modalidade e por quem agendou (aluno, compulsório, admin), agendamentos por dia e vagas restantes x pendentes por polo + modalidade |
+| `GET` | `/agendamentos/estatisticas` | A tela de Início: adesão da rodada vigente (vínculos ativos com prova), por formato e por quem agendou (aluno, compulsório, admin), agendamentos por dia e vagas restantes x pendentes por polo + formato |
 | `GET` | `/agendamentos/exportacao` | **CSV de TODOS os alunos** — agendados ou não |
 | `GET` | `/agendamentos/:id` | Detalhe |
 | `GET` | `/agendamentos/:id/historico` | **Quem alterou**: o próprio aluno ou qual administrador |
@@ -665,7 +665,7 @@ exige um agendamento que já exista, e não cria nenhum).
 `alocadoManual: true` — que aqui significa "isto não saiu do portal do aluno",
 mesmo quando a alocação escolheu a sala.
 
-**Recusa o mesmo que o remanejo** (outro polo, outra modalidade, sala lotada, e a
+**Recusa o mesmo que o remanejo** (outro polo, outro formato, sala lotada, e a
 mesma pessoa duas vezes no mesmo horário), mais o que só faz sentido ao criar:
 aluno que já tem prova no semestre (para mudar de horário existe o remanejo) e
 situação de curso que bloqueia — esta última liberável com
@@ -801,7 +801,7 @@ UC25426847,
   Por isso `poloId` estreita a *listagem* e nunca o *conteúdo* do arquivo:
   filtrado, ele continua saindo com os alunos de todos os campi.
 - **Cada matrícula aparece uma vez por arquivo.** Um RA com dois vínculos na
-  mesma modalidade pode ter dois agendamentos na mesma janela cobrindo a mesma
+  mesmo formato pode ter dois agendamentos na mesma janela cobrindo a mesma
   disciplina; o grupo é por *usuário*.
 - **Só agendamentos `CONFIRMADO`**, no período letivo do recorte (ou o vigente).
 - Nome do arquivo:
@@ -894,11 +894,11 @@ grupos até substituí-la.
 |---|---|
 | Abertura | início da faixa, no **fuso do polo** (Cruzeiro do Sul = Acre, 2h depois de Brasília) |
 | Fechamento | fim da faixa; **NIOP: + o tempo extra** |
-| Tempo de prova | o da modalidade da reserva (editável na tela); **NIOP: + o tempo extra** (60 min por padrão) |
+| Tempo de prova | o do formato da reserva (editável na tela); **NIOP: + o tempo extra** (60 min por padrão) |
 
 | Método | Rota | O que faz |
 |---|---|---|
-| `GET`/`PUT` | `/special-access/configuracao` | Tempo de prova por modalidade, extra do NIOP e "substituir as janelas" |
+| `GET`/`PUT` | `/special-access/configuracao` | Tempo de prova por formato, extra do NIOP e "substituir as janelas" |
 | `POST` | `/senhas-de-prova/execucoes` (`tipo: PREPARO`) | **Prepara** os questionários: sem data, restritos a special access, sem condição de grupo (com backup), com a senha da célula `data` + `turno` |
 | `POST` | `/special-access/execucoes` | **Grava** o acesso de cada aluno agendado; atualiza remanejados e remove cancelados. Responde com um `id`; **simula por padrão** |
 | `GET` | `/special-access/execucoes/ultima` · `/:id` · `/:id/relatorio` | Andamento, contagem por resultado e CSV (horários no relógio de Brasília) |
@@ -944,7 +944,7 @@ pediu aquela folha já escolheu o horário.
 | `GET` | `/relatorios/listas-de-presenca/pdf` | O PDF do recorte, uma página por sala |
 | `GET` | `/relatorios/listas-de-presenca/:salaFaixaId/pdf` | A folha avulsa de uma sala |
 
-Cada página traz o cabeçalho (modalidade, polo, data, horário, sala) e a tabela:
+Cada página traz o cabeçalho (formato, polo, data, horário, sala) e a tabela:
 
 ```
               EaD    Câmpus Asa Sul
@@ -1050,20 +1050,20 @@ não abriria a prova no dia. O mesmo vale para as linhas de
 `GET /senhas-de-prova/turmas` que não resolveram — **revise essa lista antes do
 primeiro dia**, não depois.
 
-**A turma ambígua tem saída na tela (10/09/2026).** Quando alunos de duas
-modalidades têm prova na mesma turma, o sistema não escolhe — o questionário tem
+**A turma ambígua tem saída na tela (10/09/2026).** Quando alunos de dois
+formatos têm prova na mesma turma, o sistema não escolhe — o questionário tem
 uma janela só, e escolher a maioria trancaria a prova da minoria. Só que "não
 escolher" tranca todo mundo: a turma fica fora do lote de datas e a prova
 permanece no horário antigo. Foi o caso real de uma turma com **EAD (583) e
 MODULAR (1)**.
 
 Na conferência (*Senhas e datas > Conferir*) cada linha dessas agora traz um
-seletor com as modalidades em disputa e quantos alunos cada uma tem. A escolha é
+seletor com os formatos em disputa e quantos alunos cada um tem. A escolha é
 de uma **pessoa**, fica gravada com o e-mail e a hora, e vale para a rodada
-vigente. Ela **caduca sozinha** se a turma deixar de ser ambígua ou se a
-modalidade escolhida ficar sem nenhum aluno com prova ali — e o servidor recusa
-(400) desempatar turma que não está ambígua ou escolher modalidade sem reserva
-na turma. Isso é o que impede a rota de virar uma coluna de modalidade no
+vigente. Ela **caduca sozinha** se a turma deixar de ser ambígua ou se o
+formato escolhido ficar sem nenhum aluno com prova ali — e o servidor recusa
+(400) desempatar turma que não está ambígua ou escolher formato sem reserva
+na turma. Isso é o que impede a rota de virar uma coluna de formato no
 cadastro, que a decisão de 10/08/2026 recusou.
 
 **A senha em texto claro existe em uma coluna só** (`senha_de_prova.senha`): o
@@ -1233,7 +1233,7 @@ Toda alteração registra **quem a fez**, e o administrador consulta em
 `GET /agendamentos/:id/historico`. É a resposta para "mudaram minha prova e não
 fui eu".
 
-O aluno não escolhe polo, modalidade nem sala. Polo e modalidade vêm do CSV; a
+O aluno não escolhe polo, formato nem sala. Polo e formato vêm do CSV; a
 sala é resultado da alocação no instante da confirmação.
 
 **De onde vêm as disciplinas de `/portal/disciplinas`.** A fonte é decidida em um
@@ -1386,7 +1386,7 @@ PeriodoAgendamento ── PeriodoLetivoModalidade ── Modalidade
 | `Polo` | Unidades do seed, `nome` **único** = chave de casamento com o CSV |
 | `Sala` | Polo + nome + capacidade. Neutra |
 | `Faixa` | Polo + data + horaInício + horaFim. Neutra |
-| `SalaFaixa` | Sala + Faixa + Modalidade + `vagas` + `ordem`. **O núcleo** |
+| `SalaFaixa` | Sala + Faixa + Formato + `vagas` + `ordem`. **O núcleo** |
 | `AlunoImportado` | Um registro **por vínculo** (matrícula + curso) |
 | `TurmaImportada` | Turmas reais com prova, chaveadas por `codigoTurma + nomeDisciplina` |
 | `ImportacaoCsv` | Auditoria: tipo, arquivo, linhas, quem, quando |
@@ -1403,13 +1403,13 @@ PeriodoAgendamento ── PeriodoLetivoModalidade ── Modalidade
 | `ConfiguracaoSenhaQuiz` | Linha única (`id=1`): o que o admin configura — questionário-alvo e os horários do cron |
 | `ExecucaoSenhaQuiz` | Uma rodada do lote de troca de senhas. Guarda contadores e a `versaoAplicada`; **nunca a senha** |
 | `ItemSenhaQuiz` | Uma linha por (turma, questionário) da execução, com o `resultado`. **Nunca a senha** |
-| `JanelaDeProva` | Um disparo: a que horas o questionário abre/fecha, por modalidade, e o grupo que libera a prova |
+| `JanelaDeProva` | Um disparo: a que horas o questionário abre/fecha, por formato, e o grupo que libera a prova |
 | `ModalidadeEscolhidaDaTurma` | O desempate da turma **ambígua**: `(orgUnitId, rodada) → modalidade`, com quem decidiu. **Só é lida quando a turma continua ambígua** |
 
 **Índices que importam para a regra**
 
 - `SalaFaixa @@unique([salaId, faixaId])` — uma sala entra uma única vez por
-  faixa, logo numa única modalidade. ⚠️ É por **faixa**, não por **horário**: não
+  faixa, logo num único formato. ⚠️ É por **faixa**, não por **horário**: não
   impede a mesma sala em duas faixas que se cruzam no relógio. Isso é regra de
   aplicação (`exigirSalaLivreNoHorario`), não de banco.
 - `SalaFaixa @@unique([faixaId, modalidadeId, ordem])` — a ordem de preenchimento
@@ -1433,12 +1433,12 @@ PeriodoAgendamento ── PeriodoLetivoModalidade ── Modalidade
 
 **`Agendamento.modalidadeId` e `Agendamento.poloId` são fotografia**, não consulta
 ao vínculo. `AlunoImportado` é tabela de **estado atual**: cada importação
-sobrescreve modalidade e polo, e não há versão anterior. Sem essas colunas,
-exportar um semestre passado mostrava a modalidade de **hoje** ao lado da data e
+sobrescreve formato e polo, e não há versão anterior. Sem essas colunas,
+exportar um semestre passado mostrava o formato de **hoje** ao lado da data e
 da sala corretas — duas colunas da mesma linha discordando sobre o mesmo fato.
 
-São redundantes com `salaFaixa` **por construção** (a alocação só aceita oferta da
-modalidade do aluno, e o portal recusa faixa de outro polo), e é essa redundância
+São redundantes com `salaFaixa` **por construção** (a alocação só aceita oferta do
+formato do aluno, e o portal recusa faixa de outro polo), e é essa redundância
 que tornou o *backfill* da migration exato em vez de aproximado: os dois valores
 já estavam gravados na reserva, só que indiretamente.
 
@@ -1484,9 +1484,8 @@ Cabeçalhos reais, confirmados nos arquivos entregues:
 | `CAMPUS` | `polo` | Casa com `Polo.nome` por string exata |
 | `CENTRO DE CUSTO` | — | Ignorado de propósito |
 
-A **modalidade não é coluna**: vem do dropdown do upload, correspondendo à aba de
-origem da planilha (`EaD`→`EAD`, `Semi`→`SEMI`, **`Híbrido`→`MODULAR`** — Híbrido
-e Modular são a mesma coisa).
+O **formato não é coluna**: vem do dropdown do upload, correspondendo à aba de
+origem da planilha (`EaD`→`EAD`, `Semi`→`SEMI`, `Modular`→`MODULAR`).
 
 **Encoding:** os arquivos reais são ISO-8859-1. O parser detecta e decodifica
 automaticamente (tenta UTF-8, cai para latin1 se houver caractere inválido), então
@@ -1531,10 +1530,10 @@ uma pessoa, basta um CSV com a linha dela — o `upsert` é por `[matricula, cur
 > São os três campos que a importação muda *por baixo* de uma reserva
 > confirmada, sem que nada mais no sistema reclame:
 >
-> - **modalidade** (vem do dropdown e sobrescreve todas as linhas do arquivo) e
+> - **formato** (vem do dropdown e sobrescreve todas as linhas do arquivo) e
 >   **polo** (segue a coluna `CAMPUS`): a reserva continua na sala antiga — prova
 >   de outra duração, ou em outro campus. O sintoma aparece depois e disfarçado:
->   o remanejo passa a ser recusado com *"esta sala não é da modalidade do
+>   o remanejo passa a ser recusado com *"esta sala não é do formato do
 >   aluno"*.
 > - **`statusCurso`**: o aluno saiu de "Ativo" (ex.: `Transf. Interna`) e
 >   **perdeu o direito de agendar** — não troca mais de horário, sai do
@@ -1703,7 +1702,7 @@ confiar em nada vindo do cliente.
 
 Matrícula fora do CSV resulta em `403` com mensagem orientando procurar a
 secretaria — não é "senha errada", é ausência de cadastro: sem a linha do CSV não
-há como saber modalidade nem polo.
+há como saber formato nem polo.
 
 ---
 
@@ -1983,14 +1982,14 @@ linha de relatório reprocessável, em vez de gente alocada para a disciplina er
 - [ ] `D2L_REDIRECT_URI` no domínio real **e** atualizada no app OAuth do Brightspace
 - [ ] URLs do LTI atualizadas no registro da ferramenta
 - [ ] `npm run prisma:deploy` aplicado (o container já faz no start)
-- [ ] `npm run seed` rodado — modalidades, polos e o primeiro admin
+- [ ] `npm run seed` rodado — formatos, polos e o primeiro admin
 - [ ] Senha do admin do seed trocada no primeiro login (`mustChangePassword`)
 - [ ] Autorização OAuth da Valence feita pelo domínio real, **com os escopos de
       `quizzing:` incluídos** (`npm run d2l:token` confirma o que foi concedido)
 - [ ] Grade de senhas cadastrada e `GET /senhas-de-prova/turmas` revisado — cada
       linha em `naoResolvidas` é uma turma que ficaria sem senha
-- [ ] Turmas **sem modalidade** decididas na mesma tela: as ambíguas (alunos de
-      duas modalidades) têm o seletor de desempate ali; as sem agendamento
+- [ ] Turmas **sem formato** decididas na mesma tela: as ambíguas (alunos de
+      dois formatos) têm o seletor de desempate ali; as sem agendamento
       nenhum só o fechamento do prazo resolve
 - [ ] Dry-run de um turno rodado, **com o tempo medido**: é o que diz se o horário
       do cron é cedo o bastante
@@ -2064,5 +2063,5 @@ A ordem de implementação segue a prioridade definida para o projeto.
   o portal cai para a turma do launch e o aluno continua agendando — mas só a
   disciplina de onde clicou, e o compulsório não roda. `GET /health` acusa o
   estado em `d2l` (`nao_autorizado`); ver [Deploy em produção](#deploy-em-produção).
-- A modalidade `PRESENCIAL` existe no modelo (prova de 2h) mas ainda não tem CSV
+- O formato `PRESENCIAL` existe no modelo (prova de 2h) mas ainda não tem CSV
   correspondente.

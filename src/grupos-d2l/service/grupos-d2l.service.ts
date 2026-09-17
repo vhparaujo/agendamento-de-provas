@@ -153,7 +153,7 @@ interface ContextoDoLote {
   nomesPorBloco: Map<BlocoDeGrupos, string[]>;
   turmas: TurmaDoLote[];
   reservasPorTurma: Map<string, ReservaNaTurma[]>;
-  /** O grupo daquela sessao para aquela modalidade — ou por que nao ha. */
+  /** O grupo daquela sessao para aquele formato — ou por que nao ha. */
   grupoDaSessao(
     reserva: ReservaNaTurma,
   ): { nome: string } | { falta: FaltaDeSessao };
@@ -783,7 +783,7 @@ export class GruposD2lService {
    * Garante a categoria do bloco e TODOS os nomes do bloco na turma.
    *
    * Todos, e nao so os das sessoes em que a turma tem aluno: a troca de condicao
-   * do quiz procura o grupo da sessao em TODA turma da modalidade, e uma turma
+   * do quiz procura o grupo da sessao em TODA turma do formato, e uma turma
    * sem aquele grupo viraria `GRUPO_NAO_ENCONTRADO` no disparo (decisao do
    * cliente: "toda turma tem todos os grupos").
    */
@@ -943,7 +943,7 @@ export class GruposD2lService {
    * remanejado ou cancelado depois do prazo.
    *
    * O grupo de cada reserva sai da mesma cadeia que o disparo do quiz usa:
-   * horario da faixa -> janela da modalidade (horario EXATO) -> celula do dia.
+   * horario da faixa -> janela do formato (horario EXATO) -> celula do dia.
    */
   private async inscreverNaTurma(
     turma: TurmaDoLote,

@@ -13,7 +13,7 @@ import { StatusAgendamento } from './../src/generated/prisma/client';
  * testa aqui e o recorte e a autenticacao da integracao, nao a alocacao (que
  * tem suite propria).
  *
- * Requer banco de pe, migrations e seed (modalidades).
+ * Requer banco de pe, migrations e seed (formatos).
  */
 describe('Integracao: dados de agendamento por matricula (e2e)', () => {
   let app: INestApplication<App>;

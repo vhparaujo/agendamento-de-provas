@@ -24,7 +24,7 @@ export const TAGS = {
   IMPORTACAO: 'Importacao de CSV',
   ALUNOS: 'Alunos importados (admin)',
   TURMAS: 'Turmas e disciplinas importadas (admin)',
-  MODALIDADES: 'Modalidades',
+  MODALIDADES: 'Formatos',
   POLOS: 'Polos',
   SALAS: 'Salas',
   FAIXAS: 'Faixas e oferta de vagas',
@@ -135,15 +135,15 @@ export function construirDocumento(app: INestApplication): OpenAPIObject {
       TAGS.TURMAS,
       'Consulta das turmas/disciplinas do CSV — o catalogo do que tem prova',
     )
-    .addTag(TAGS.MODALIDADES, 'Modalidades e a duracao de prova de cada uma')
+    .addTag(TAGS.MODALIDADES, 'Formatos e a duracao de prova de cada um')
     .addTag(TAGS.POLOS, 'Unidades fisicas (populadas por seed a partir do CSV)')
     .addTag(
       TAGS.SALAS,
-      'Espacos fisicos de um polo — neutros quanto a modalidade',
+      'Espacos fisicos de um polo — neutros quanto ao formato',
     )
     .addTag(
       TAGS.FAIXAS,
-      'Horarios de prova e a montagem de Sala + Modalidade + vagas (SalaFaixa), ' +
+      'Horarios de prova e a montagem de Sala + Formato + vagas (SalaFaixa), ' +
         'que e onde a oferta realmente existe',
     )
     .addTag(

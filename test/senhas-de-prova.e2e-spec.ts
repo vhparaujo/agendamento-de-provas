@@ -164,7 +164,7 @@ describe('Senhas de prova: a grade dia x turno (e2e)', () => {
    * regra em 26/08/2026.
    */
   describe('PUT /senhas-de-prova/janelas — o grupo que libera a prova', () => {
-    /** Uma modalidade so para este teste, para nao mexer no calendario real. */
+    /** Um formato so para este teste, para nao mexer no calendario real. */
     let modalidadeId: number;
 
     const janela = (extra: Record<string, unknown> = {}) => ({
@@ -184,7 +184,7 @@ describe('Senhas de prova: a grade dia x turno (e2e)', () => {
       );
 
     /**
-     * So as janelas DESTA modalidade: o GET devolve o calendario inteiro, e o
+     * So as janelas DESTE formato: o GET devolve o calendario inteiro, e o
      * seed real tem EaD, Semi, Modular e Presencial junto.
      *
      * Recebe `unknown` porque `res.body` do supertest e `any` — anotar aqui e o
@@ -287,8 +287,8 @@ describe('Senhas de prova: a grade dia x turno (e2e)', () => {
   /**
    * A grade dia x janela dos grupos (14/09/2026).
    *
-   * Roda DEPOIS do bloco das janelas, e usa a janela que ele deixou na
-   * modalidade de teste: a celula e FK da janela, e o `limpar` apaga as duas
+   * Roda DEPOIS do bloco das janelas, e usa a janela que ele deixou no
+   * formato de teste: a celula e FK da janela, e o `limpar` apaga as duas
    * juntas (cascade).
    */
   describe('GET/PUT /senhas-de-prova/grupos — a grade de grupos do dia', () => {

@@ -32,7 +32,7 @@ import {
 import { SalaService } from '../service/sala.service';
 
 /**
- * Sala e FISICA e NEUTRA: polo + nome + capacidade, sem modalidade. A modalidade
+ * Sala e FISICA e NEUTRA: polo + nome + capacidade, sem formato. O formato
  * e as vagas so existem quando a sala entra numa faixa (SalaFaixa).
  */
 @ApiTags(TAGS.SALAS)
@@ -71,7 +71,7 @@ export class SalaController {
     summary: 'Cadastra uma sala',
     description:
       'Cadastro manual e o caminho padrao (nao ha import de sala por CSV no MVP). ' +
-      'A sala nasce sem modalidade — ela so ganha modalidade e vagas ao entrar numa faixa.',
+      'A sala nasce sem formato — ela so ganha formato e vagas ao entrar numa faixa.',
   })
   @ApiCreatedResponse({ type: SalaDto })
   @ApiNotFoundResponse({ description: 'Polo nao encontrado' })

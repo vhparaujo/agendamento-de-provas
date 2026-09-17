@@ -4,7 +4,7 @@ import { ModalidadeDaTurmaService } from './modalidade-da-turma.service';
 
 /**
  * A pergunta que este servico responde nao tem coluna no banco: `TurmaImportada`
- * nao guarda modalidade, por decisao de 10/08/2026. Ela e derivada dos
+ * nao guarda formato, por decisao de 10/08/2026. Ele e derivado dos
  * agendamentos confirmados, e a regra e "uma, ou nenhuma" — nunca a maioria.
  *
  * A partir de 10/09/2026 ha uma segunda fonte, e ela NAO afrouxa a regra: o
@@ -53,7 +53,7 @@ describe('ModalidadeDaTurmaService', () => {
     reservas: number | bigint,
   ) => ({ orgUnitId, modalidadeId, codigo, nome: codigo, reservas });
 
-  it('uma modalidade so: resolve', async () => {
+  it('um formato so: resolve', async () => {
     const { servico } = montar([linha('7001', 1, 'EAD', 42)]);
     const mapa = await servico.resolver(['103'], 'N2');
 
@@ -75,7 +75,7 @@ describe('ModalidadeDaTurmaService', () => {
    * maioria deixaria a minoria sem conseguir abrir a prova, e o erro so
    * apareceria no dia. Mesma regra de ORGUNIT_AMBIGUO.
    */
-  it('duas modalidades: NAO escolhe a maioria', async () => {
+  it('dois formatos: NAO escolhe a maioria', async () => {
     const { servico } = montar([
       linha('7003', 1, 'EAD', 9),
       linha('7003', 2, 'SEMI', 7),
@@ -89,8 +89,8 @@ describe('ModalidadeDaTurmaService', () => {
 
     expect(decisao.motivo).toBe('AMBIGUA');
     expect(decisao.candidatas.map((c) => c.codigo)).toEqual(['EAD', 'SEMI']);
-    // O detalhe vai para o CSV do relatorio: quem le precisa das duas
-    // modalidades e do peso de cada uma para decidir o que fazer.
+    // O detalhe vai para o CSV do relatorio: quem le precisa dos dois
+    // formatos e do peso de cada um para decidir o que fazer.
     expect(decisao.detalhe).toContain('EAD (9)');
     expect(decisao.detalhe).toContain('SEMI (7)');
   });
@@ -175,7 +175,7 @@ describe('ModalidadeDaTurmaService', () => {
    *
    * A janela cobre as duas grades ao mesmo tempo (modulo e semestre), e uma
    * turma presencial so tem reserva sob o org unit do semestre. Consultar so um
-   * a devolveria como SEM_AGENDAMENTO — turma sem modalidade fica de fora do
+   * a devolveria como SEM_AGENDAMENTO — turma sem formato fica de fora do
    * lote de datas, e a prova nao abre no dia.
    */
   it('leva TODOS os periodos letivos da janela para o IN', async () => {
@@ -220,7 +220,7 @@ describe('ModalidadeDaTurmaService', () => {
       if (decisao.situacao !== 'ENCONTRADA') return;
 
       expect(decisao.codigo).toBe('EAD');
-      // As reservas sao as REAIS da modalidade eleita, nao o total da turma: e
+      // As reservas sao as REAIS do formato eleito, nao o total da turma: e
       // o numero que o relatorio mostra ao lado da decisao.
       expect(decisao.reservas).toBe(583);
       expect(decisao.escolha?.escolhidaPor).toBe('secretaria@ucb.br');
@@ -306,7 +306,7 @@ describe('ModalidadeDaTurmaService', () => {
     /**
      * A N2 e a SUB do mesmo semestre COMPARTILHAM o org unit. Sem a rodada no
      * recorte, o desempate da N2 decidiria a substitutiva, que tem outro
-     * publico — e podia ter outra composicao de modalidades.
+     * publico — e podia ter outra composicao de formatos.
      */
     it('o recorte da escolha leva a rodada, e so as turmas com agendamento', async () => {
       const { servico, findMany } = ambigua();
@@ -329,8 +329,8 @@ describe('ModalidadeDaTurmaService', () => {
   });
 
   /**
-   * As travas da gravacao. Sao elas que impedem isto de virar "definir a
-   * modalidade de qualquer turma" — a coluna de cadastro recusada em
+   * As travas da gravacao. Sao elas que impedem isto de virar "definir o
+   * formato de qualquer turma" — a coluna de cadastro recusada em
    * 10/08/2026, com outro nome.
    */
   describe('escolher / esquecer', () => {
@@ -396,7 +396,7 @@ describe('ModalidadeDaTurmaService', () => {
     });
 
     /**
-     * A trava principal. Sem ela, isto seria uma coluna de modalidade no
+     * A trava principal. Sem ela, isto seria uma coluna de formato no
      * cadastro da turma — exatamente o que a decisao de 10/08/2026 recusou.
      */
     it('RECUSA turma que nao esta ambigua', async () => {
@@ -418,10 +418,10 @@ describe('ModalidadeDaTurmaService', () => {
     });
 
     /**
-     * Uma modalidade sem reserva na turma aplicaria uma janela que ninguem ali
+     * Um formato sem reserva na turma aplicaria uma janela que ninguem ali
      * usa: a prova deixaria de abrir para TODOS, e nao so para a minoria.
      */
-    it('RECUSA modalidade que nao tem aluno com prova na turma', async () => {
+    it('RECUSA formato que nao tem aluno com prova na turma', async () => {
       const { servico, upsert } = montarEscrita(disputada);
 
       await expect(

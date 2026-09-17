@@ -30,7 +30,7 @@ export class SalaDaFaixaDto {
   @ApiProperty({
     example: 1,
     description:
-      'Modalidade desta sala NESTA faixa. A mesma sala pode ser Presencial numa ' +
+      'Formato desta sala NESTA faixa. A mesma sala pode ser Presencial numa ' +
       'faixa e EaD em outra — mas dentro de uma faixa fica travada nesta.',
   })
   @IsInt()
@@ -51,7 +51,7 @@ export class SalaDaFaixaDto {
     example: 1,
     minimum: 1,
     description:
-      'Sequencia de preenchimento dentro de faixa+modalidade: a alocacao enche a ' +
+      'Sequencia de preenchimento dentro de faixa+formato: a alocacao enche a ' +
       'de menor ordem antes de usar a proxima. Omitido, segue a ordem em que as ' +
       'salas vierem na lista.',
   })
@@ -94,7 +94,7 @@ export class CriarFaixaDto {
   @ApiProperty({
     type: [SalaDaFaixaDto],
     description:
-      'As salas que atendem esta faixa, com a modalidade de cada uma. Faixa sem ' +
+      'As salas que atendem esta faixa, com o formato de cada uma. Faixa sem ' +
       'sala nao aparece para aluno nenhum, por isso ao menos uma e obrigatoria.',
   })
   @IsArray()
@@ -154,7 +154,7 @@ export class AtualizarOfertaDto {
   @ApiPropertyOptional({
     example: 2,
     minimum: 1,
-    description: 'Unica dentro de faixa + modalidade.',
+    description: 'Unica dentro de faixa + formato.',
   })
   @IsOptional()
   @IsInt()
@@ -208,7 +208,7 @@ export class OfertaResumoDto implements OfertaResumo {
 
   @ApiProperty({
     example: 1,
-    description: 'Ordem de preenchimento dentro de faixa + modalidade.',
+    description: 'Ordem de preenchimento dentro de faixa + formato.',
   })
   ordem!: number;
 
@@ -256,7 +256,7 @@ export class FaixaDetalheDto implements FaixaDetalhe {
 
   @ApiProperty({
     type: [OfertaResumoDto],
-    description: 'As SalaFaixa desta faixa, ordenadas por modalidade e ordem.',
+    description: 'As SalaFaixa desta faixa, ordenadas por formato e ordem.',
   })
   ofertas!: OfertaResumoDto[];
 }

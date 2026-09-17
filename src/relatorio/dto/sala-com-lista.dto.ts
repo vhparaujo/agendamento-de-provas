@@ -29,7 +29,7 @@ export class SalaComListaDto implements SalaComLista {
   @ApiProperty({
     example: 'EaD',
     description:
-      'Da OFERTA — a modalidade em que a sala esta travada nesta faixa. E a ' +
+      'Da OFERTA — o formato em que a sala esta travada nesta faixa. E a ' +
       'que aparece no cabecalho da folha; a coluna `Modalidade` da tabela sai ' +
       'do agendamento de cada aluno.',
   })
@@ -55,7 +55,7 @@ export class SalaComListaDto implements SalaComLista {
     example: 3,
     description:
       'Agendamentos CONFIRMADOS nesta sala — as **linhas** da folha, nao ' +
-      'pessoas distintas. Um RA com dois vinculos na mesma modalidade ocupa ' +
+      'pessoas distintas. Um RA com dois vinculos no mesmo formato ocupa ' +
       'duas vagas e assina duas vezes.',
   })
   totalAlunos!: number;

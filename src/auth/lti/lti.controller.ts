@@ -188,7 +188,7 @@ export class LtiController {
   })
   @ApiForbiddenResponse({
     description:
-      'Matricula valida no LMS mas ausente da base importada: sem a linha do CSV nao ha modalidade ' +
+      'Matricula valida no LMS mas ausente da base importada: sem a linha do CSV nao ha formato ' +
       'nem polo, entao nao ha o que agendar',
   })
   async launch(@Body() body: CorpoLaunch, @Res() res: Response): Promise<void> {

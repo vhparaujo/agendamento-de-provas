@@ -13,7 +13,7 @@ import { NomesDosGruposService } from '../service/nomes-dos-grupos.service';
  *
  * Depende do `SenhaQuizModule` e nao o contrario: os nomes MORAM na grade de
  * grupos de la, e a categoria de cada turma sai da mesma derivacao de
- * modalidade que o lote de datas usa.
+ * formato que o lote de datas usa.
  *
  * PrismaService e AuditoriaService vem de modulos globais.
  */

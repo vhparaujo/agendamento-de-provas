@@ -13,7 +13,7 @@ export interface JanelaCadastrada {
  * `Agendamento` nao guarda o id da janela: guarda o PAR `periodoLetivoId +
  * rodada`, como fotografia. O par casa quando a rodada e a mesma e o periodo
  * letivo e um dos que a janela cobre — o principal OU um do mapa por
- * modalidade (`idsDaJanela`, a mesma leitura do portal). Comparar so com o
+ * formato (`idsDaJanela`, a mesma leitura do portal). Comparar so com o
  * principal perderia as provas presenciais de uma janela de duas grades.
  *
  * `janelas` tem de vir da MAIS RECENTE para a mais antiga: duas linhas do mesmo

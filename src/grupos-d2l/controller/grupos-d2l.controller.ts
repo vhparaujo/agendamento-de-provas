@@ -64,9 +64,9 @@ export class GruposD2lController {
       'vigente.\n\n' +
       'As **linhas** de cada bloco sao as celulas da grade de grupos (dia x ' +
       'janela) — inclusive as digitadas na aba "Senhas e datas". Em Semi/Modular, ' +
-      'a mesma sessao com o mesmo nome nas duas modalidades e uma linha so.\n\n' +
+      'a mesma sessao com o mesmo nome nos dois formatos e uma linha so.\n\n' +
       'Uma **pendencia de horario** e um horario de faixa sem janela ativa ' +
-      'IDENTICA na modalidade: os alunos dela nao tem como achar o grupo.',
+      'IDENTICA no formato: os alunos dela nao tem como achar o grupo.',
   })
   @ApiQuery({
     name: 'de',
@@ -93,8 +93,8 @@ export class GruposD2lController {
     summary: 'Substitui os nomes de grupo de um bloco no intervalo',
     description:
       'Cada linha (dia + horario de uma janela + nome) vira celula da grade de ' +
-      'grupos, com a categoria do bloco. Em Semi/Modular, grava nas duas ' +
-      'modalidades.\n\n' +
+      'grupos, com a categoria do bloco. Em Semi/Modular, grava nos dois ' +
+      'formatos.\n\n' +
       '**O que nao vier e apagado**, dentro do bloco e do intervalo.\n\n' +
       'Recusa: horario sem janela ativa, dia fora do intervalo, duas linhas para ' +
       'a mesma sessao, o mesmo nome em duas sessoes (cairiam no mesmo grupo), e ' +
@@ -132,7 +132,7 @@ export class GruposD2lController {
   @ApiOkResponse({ type: HorarioResolvidoDto })
   @ApiBadRequestResponse({
     description:
-      'Janela de outra modalidade ou desativada, nenhuma faixa com o horario, ou ' +
+      'Janela de outro formato ou desativada, nenhuma faixa com o horario, ou ' +
       'disparo que inverteria o dia da prova',
   })
   resolverHorario(

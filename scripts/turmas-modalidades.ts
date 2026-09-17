@@ -4,22 +4,22 @@ import { Prisma, PrismaClient } from '../src/generated/prisma/client';
 
 /**
  * ============================================================================
- * QUAL A MODALIDADE DE CADA TURMA — o diagnostico antes do primeiro dia
+ * QUAL O FORMATO DE CADA TURMA — o diagnostico antes do primeiro dia
  * ============================================================================
- * O lote de DATAS aplica uma janela de horario por MODALIDADE (EaD abre a prova
+ * O lote de DATAS aplica uma janela de horario por FORMATO (EaD abre a prova
  * em 3 sessoes de 3h; Semi/Modular em 6 de 1h30), e o questionario tem UMA
- * janela. Mas `turma_importada` nao guarda modalidade, e nao deve guardar: uma
+ * janela. Mas `turma_importada` nao guarda formato, e nao deve guardar: uma
  * turma tem alunos de varios cursos, e foi por isso que a coluna `curso` saiu em
  * 10/08/2026.
  *
- * A modalidade e DERIVADA dos agendamentos confirmados da rodada vigente. Este
+ * O formato e DERIVADO dos agendamentos confirmados da rodada vigente. Este
  * script mostra o resultado dessa derivacao **antes** de alguem depender dela:
  *
  *   npm run turmas:modalidades
  *
  * O que procurar, em ordem de gravidade:
  *
- *   AMBIGUA          alunos de DUAS modalidades na mesma turma. O lote NAO
+ *   AMBIGUA          alunos de DOIS formatos na mesma turma. O lote NAO
  *                    escolhe a maioria (a minoria ficaria sem abrir a prova),
  *                    entao a turma fica com a data antiga ate alguem DECIDIR.
  *                    A decisao se toma na tela — Senhas e datas > Conferir —, e
@@ -50,7 +50,7 @@ async function main(): Promise<void> {
     // recentemente. Ler daqui, e nao de um argumento, e o que faz o diagnostico
     // falar da MESMA rodada que o lote vai usar.
     //
-    // O mapa por modalidade vem junto porque a janela cobre as duas grades ao
+    // O mapa por formato vem junto porque a janela cobre as duas grades ao
     // mesmo tempo: as reservas dos presenciais estao gravadas sob o org unit do
     // semestre e as dos modulares sob o do modulo. Recortar por um so faria o
     // diagnostico dizer que metade das turmas nao tem agendamento nenhum.
@@ -112,7 +112,7 @@ async function main(): Promise<void> {
     // codigo 1 as vesperas da prova sem haver nada a fazer.
     //
     // ⚠️ A regra do servidor e reproduzida aqui, e nao importada: a escolha so
-    // vale se a modalidade escolhida AINDA tem reserva na turma. Ver
+    // vale se o formato escolhido AINDA tem reserva na turma. Ver
     // `decidir()`, em modalidade-da-turma.service.ts.
     const escolhas = new Map(
       (
@@ -128,12 +128,11 @@ async function main(): Promise<void> {
 
     const emDisputa = linhas.filter((l) => Number(l.quantas) > 1);
 
-    /** A escolha vale nesta turma? So se a modalidade dela tem reserva aqui. */
+    /** A escolha vale nesta turma? So se o formato dela tem reserva aqui. */
     const decidida = (l: Linha) => {
       const escolha = escolhas.get(l.orgUnitId);
 
-      return escolha &&
-        l.modalidades.split(', ').includes(escolha.codigo)
+      return escolha && l.modalidades.split(', ').includes(escolha.codigo)
         ? escolha
         : undefined;
     };
@@ -160,9 +159,7 @@ async function main(): Promise<void> {
     console.log('RESUMO');
     console.log(`  turmas no CSV .......................... ${totalNoCsv}`);
     console.log(`  com orgUnitId ja aprendido ............. ${comOrgUnitId}`);
-    console.log(
-      `  com modalidade UNICA (entram no lote) .. ${resolvidas.length}`,
-    );
+    console.log(`  com formato UNICO (entram no lote) .. ${resolvidas.length}`);
     console.log(
       `  ambiguas DECIDIDAS a mao (entram) ...... ${desempatadas.length}`,
     );
@@ -180,7 +177,7 @@ async function main(): Promise<void> {
         );
       }
 
-      console.log('TURMAS POR MODALIDADE');
+      console.log('TURMAS POR FORMATO');
       for (const [codigo, quantas] of [...porModalidade].sort()) {
         console.log(`  ${codigo.padEnd(12)} ${quantas}`);
       }
@@ -188,7 +185,7 @@ async function main(): Promise<void> {
     }
 
     if (desempatadas.length > 0) {
-      console.log('DECIDIDAS A MAO — entram no lote da modalidade escolhida');
+      console.log('DECIDIDAS A MAO — entram no lote do formato escolhido');
       for (const l of desempatadas) {
         const escolha = decidida(l)!;
         console.log(

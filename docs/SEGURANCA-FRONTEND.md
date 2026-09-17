@@ -190,7 +190,7 @@ de variável de ambiente. O texto que o aluno lê é do front
 ### 4.2 Aluno com mais de um curso (`precisaEscolherCurso`)
 
 `POST /api/lti/launch` responde com um array `vinculos`. Se
-`precisaEscolherCurso: true`, o RA tem mais de um curso (modalidades diferentes,
+`precisaEscolherCurso: true`, o RA tem mais de um curso (formatos diferentes,
 durações de prova diferentes) e **o portal precisa perguntar de qual curso é a
 prova** antes de listar horários. Cada vínculo gera um agendamento próprio.
 

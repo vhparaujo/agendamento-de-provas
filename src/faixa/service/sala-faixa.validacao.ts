@@ -64,7 +64,7 @@ export function validarOferta(
     throw new BadRequestException(
       `A faixa ${faixa.horaInicio}–${faixa.horaFim} tem ${janela} min, ` +
         `mas a prova ${modalidade.nome} dura ${modalidade.duracaoMinutos} min. ` +
-        'Aumente a faixa ou escolha outra modalidade para esta sala.',
+        'Aumente a faixa ou escolha outro formato para esta sala.',
     );
   }
 
@@ -121,9 +121,9 @@ export function seSobrepoem(
  *   17/08  09:00-12:00  Sala 1  EAD      <- duas faixas diferentes,
  *   17/08  10:30-12:00  Sala 1  SEMI     <- as duas validas, a mesma porta
  *
- * Sao duas ofertas internamente coerentes, cada uma com sua modalidade, e o
+ * Sao duas ofertas internamente coerentes, cada uma com seu formato, e o
  * sintoma so apareceria no dia: duas listas de presenca para a mesma sala, com
- * alunos de modalidades e duracoes diferentes disputando as cadeiras.
+ * alunos de formatos e duracoes diferentes disputando as cadeiras.
  *
  * QUANDO UMA FAIXA CONCORRENTE **NAO** OCUPA A SALA: quando esta inativa E nao
  * tem ninguem confirmado. Faixa inativa sumiu do portal, entao nao ganha aluno

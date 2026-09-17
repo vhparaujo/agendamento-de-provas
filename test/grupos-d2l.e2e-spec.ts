@@ -16,7 +16,7 @@ import { PrismaService } from './../src/database/prisma.service';
  *
  * - **Os nomes vao para a GRADE DE GRUPOS**, com a categoria do bloco. Se fossem
  *   para uma tabela propria, o disparo do quiz procuraria o grupo por outro nome.
- * - **Semi/Modular grava nas DUAS modalidades.** Gravando so numa, o disparo da
+ * - **Semi/Modular grava nos DOIS formatos.** Gravando so numa, o disparo da
  *   outra nao acharia grupo nenhum no dia.
  * - **Faixa sem janela identica vira pendencia**, e resolver "vale a janela"
  *   move a faixa — sem isso, os alunos dela ficam sem grupo, sem erro nenhum.
@@ -129,7 +129,7 @@ describe('Grupos do Brightspace — nomes e horarios (e2e)', () => {
     janelaDeOutraModalidadeId = semiOuModular[0].id;
 
     // Prefere um horario que Semi E Modular tenham: e o caso normal, e o que
-    // prova a gravacao nas duas modalidades.
+    // prova a gravacao nos dois formatos.
     const porHorario = new Map<string, number[]>();
     for (const j of semiOuModular) {
       const chave = `${j.horaInicio}-${j.horaFim}`;
@@ -228,7 +228,7 @@ describe('Grupos do Brightspace — nomes e horarios (e2e)', () => {
   });
 
   describe('nomes dos grupos', () => {
-    it('Semi/Modular grava a celula nas duas modalidades, com a categoria do bloco', async () => {
+    it('Semi/Modular grava a celula nos dois formatos, com a categoria do bloco', async () => {
       const res = await salvarNomes({
         bloco: 'SEMI_MODULAR',
         linhas: [
@@ -329,7 +329,7 @@ describe('Grupos do Brightspace — nomes e horarios (e2e)', () => {
       expect(p.janelas.map((j: any) => j.id)).toContain(janelaEad.id);
     });
 
-    it('recusa janela de outra modalidade', async () => {
+    it('recusa janela de outro formato', async () => {
       await comoAdmin(api().post('/api/grupos-d2l/horarios/resolver'))
         .send({
           ...INTERVALO,

@@ -139,7 +139,7 @@ export type OrigemDaReserva = 'ALUNO' | 'COMPULSORIO' | 'ADMIN';
 export interface AdesaoDaModalidade {
   modalidadeId: number;
   modalidade: string;
-  /** Vinculos ativos desta modalidade. */
+  /** Vinculos ativos deste formato. */
   total: number;
   /** Quantos deles tem prova confirmada na rodada vigente. */
   agendados: number;
@@ -166,7 +166,7 @@ export interface EstatisticasDaJanela {
    */
   agendadosInativos: number;
   /**
-   * Cabe todo mundo? Por polo + modalidade, quem ainda nao tem prova contra as
+   * Cabe todo mundo? Por polo + formato, quem ainda nao tem prova contra as
    * cadeiras livres nas faixas de hoje em diante. Pior saldo primeiro.
    */
   capacidade: CapacidadeDaCombinacao[];
@@ -230,8 +230,8 @@ export class AgendamentoAdminService {
    * O admin NAO depende do periodo estar aberto — como no remanejo, agendar
    * depois do fechamento e justamente o caso de uso.
    *
-   * O que ela recusa e o mesmo que o remanejo recusa (outro polo, outra
-   * modalidade, sala lotada, a mesma pessoa duas vezes no mesmo horario) mais o
+   * O que ela recusa e o mesmo que o remanejo recusa (outro polo, outro
+   * formato, sala lotada, a mesma pessoa duas vezes no mesmo horario) mais o
    * que so faz sentido ao CRIAR: aluno que ja tem prova neste semestre (para
    * isso existe o remanejo) e situacao de curso que nao permite agendar — esta
    * ultima liberavel com `ignorarStatusCurso`, porque bloquear de vez trancaria
@@ -262,9 +262,9 @@ export class AgendamentoAdminService {
     }
 
     // Duas leituras porque sao duas perguntas: o periodo letivo DESTE vinculo
-    // (pela modalidade dele, e o que vai gravado na reserva) e a janela inteira
+    // (pelo formato dele, e o que vai gravado na reserva) e a janela inteira
     // (que a trava por pessoa usa — a outra prova do mesmo RA pode estar num
-    // vinculo de outra modalidade, sob outro org unit).
+    // vinculo de outro formato, sob outro org unit).
     const vigente = await this.periodo.periodoLetivoDaModalidade(
       vinculo.modalidade.codigo,
     );
@@ -457,7 +457,7 @@ export class AgendamentoAdminService {
    */
   private async disciplinasParaOAdmin(
     vinculo: { id: number; matricula: string },
-    /** O periodo letivo JA resolvido pela modalidade — ver `agendarPeloAdmin`. */
+    /** O periodo letivo JA resolvido pelo formato — ver `agendarPeloAdmin`. */
     periodoLetivoId: string,
     modalidadeCodigo: string,
   ): Promise<{
@@ -470,8 +470,8 @@ export class AgendamentoAdminService {
 
     // A janela filtra por nota? Muda o que o fallback significa — ver o aviso
     // montado em `semBrightspace`. O criterio de nota e da JANELA, igual para
-    // todas as modalidades, entao `janelaVigente()` responde e evita uma
-    // segunda resolucao por modalidade que nao mudaria nada.
+    // todos os formatos, entao `janelaVigente()` responde e evita uma
+    // segunda resolucao por formato que nao mudaria nada.
     const janela = await this.periodo.janelaVigente();
     const filtroDeNota = janela?.filtroDeNota ?? null;
 
@@ -611,7 +611,7 @@ export class AgendamentoAdminService {
    * arvore do modulo e as de um Presencial saem da arvore do semestre. Copiar a
    * reserva do outro vinculo atravessaria as duas grades e marcaria a prova
    * cobrindo as disciplinas ERRADAS — em silencio, porque a lista viria cheia e
-   * plausivel. Quem tem dois vinculos na MESMA modalidade continua emprestando
+   * plausivel. Quem tem dois vinculos no MESMO formato continua emprestando
    * um para o outro, que e o caso que este metodo existe para servir.
    */
   private async reservaAnterior(
@@ -718,7 +718,7 @@ export class AgendamentoAdminService {
    * - `faixaId` — muda de horario e deixa a alocacao sequencial escolher a sala.
    *
    * O que NAO se pode remanejar, em nenhuma das duas: outro polo (o aluno
-   * viajaria para o campus errado), outra modalidade (a prova tem outra
+   * viajaria para o campus errado), outro formato (a prova tem outra
    * duracao) e o horario em que a MESMA PESSOA ja tem a prova do outro curso
    * dela. Sao os tres erros que o remanejo poderia esconder.
    */
@@ -775,7 +775,7 @@ export class AgendamentoAdminService {
         matricula: atual.matricula,
         faixaId: alvo.faixaId,
         // A janela inteira, e nao o periodo desta reserva: a outra prova do
-        // mesmo RA pode estar num vinculo de outra modalidade, gravada sob
+        // mesmo RA pode estar num vinculo de outro formato, gravada sob
         // outro org unit. Ver a nota em `exigirUmaProvaPorFaixa`.
         periodoLetivoIds: janela.periodoLetivoIds,
         exceto: id,
@@ -965,7 +965,7 @@ export class AgendamentoAdminService {
 
     if (modalidade && modalidade.modalidadeId !== aluno.modalidadeId) {
       throw new BadRequestException(
-        `Esta sala esta ofertada como "${modalidade.nome}", que nao e a modalidade ` +
+        `Esta sala esta ofertada como "${modalidade.nome}", que nao e o formato ` +
           'do aluno. A duracao da prova seria outra.',
       );
     }
@@ -1027,15 +1027,15 @@ export class AgendamentoAdminService {
    * COMO ESTA INDO O AGENDAMENTO — a tela de Inicio
    * ==========================================================================
    * As perguntas da secretaria durante a janela: quantos ja agendaram, em
-   * qual modalidade esta faltando gente, quanto disso o aluno fez sozinho
+   * qual formato esta faltando gente, quanto disso o aluno fez sozinho
    * versus o compulsorio, em que ritmo, e se as vagas que sobram cabem quem
-   * falta (por polo + modalidade, que e onde a vaga existe de fato).
+   * falta (por polo + formato, que e onde a vaga existe de fato).
    *
    * A BASE sao os vinculos ATIVOS — os mesmos que o compulsorio considera
    * elegiveis. Trancado ou cancelado nao pode agendar, e conta-lo no total
    * deixaria a adesao eternamente abaixo de 100% sem ninguem para cobrar.
    *
-   * Modalidade e polo aqui sao os de HOJE (`AlunoImportado`), e nao a
+   * Formato e polo aqui sao os de HOJE (`AlunoImportado`), e nao a
    * fotografia do agendamento: a pergunta e "quanto da base atual ja tem
    * prova", e numerador e denominador precisam cortar pelo mesmo campo.
    *
@@ -1211,7 +1211,7 @@ export class AgendamentoAdminService {
         total: totalPorModalidade.get(m.id) ?? 0,
         agendados: agendadosPorModalidade.get(m.id) ?? 0,
       }))
-      // Modalidade sem nenhum vinculo so ocuparia espaco com "0 de 0".
+      // Formato sem nenhum vinculo so ocuparia espaco com "0 de 0".
       .filter((m) => m.total > 0);
 
     return {
@@ -1348,7 +1348,7 @@ export class AgendamentoAdminService {
 
     // Filtrar por faixa, sala ou data e pedir a lista DAQUELA prova ("quem vai
     // estar na sala 3 no dia 12"), e ai quem nao tem prova ali nao faz parte da
-    // pergunta. Os filtros do ALUNO (polo, modalidade, busca) sao os unicos que
+    // pergunta. Os filtros do ALUNO (polo, formato, busca) sao os unicos que
     // continuam trazendo quem nao agendou.
     const recorteDeProva = Boolean(
       filtro.faixaId || filtro.salaId || filtro.de || filtro.ate,
@@ -1393,7 +1393,7 @@ export class AgendamentoAdminService {
               orderBy: { createdAt: 'asc' },
               take: 1,
             },
-            // A modalidade e o polo DA EPOCA da reserva, nao os de hoje — ver
+            // O formato e o polo DA EPOCA da reserva, nao os de hoje — ver
             // `dadosDoAluno` abaixo.
             modalidade: { select: { nome: true } },
             polo: { select: { nome: true } },
@@ -1432,7 +1432,7 @@ export class AgendamentoAdminService {
       if (aluno.agendamentos.length === 0) {
         // Sem reserva nao ha fotografia, e o estado atual e a unica resposta —
         // que aqui tambem e a certa: quem ainda precisa agendar vai agendar
-        // pela modalidade e pelo polo que tem HOJE.
+        // pelo formato e pelo polo que tem HOJE.
         return [
           [
             ...identificacao,
@@ -1455,7 +1455,7 @@ export class AgendamentoAdminService {
       }
 
       /**
-       * Modalidade e polo saem do AGENDAMENTO, nao do vinculo.
+       * Formato e polo saem do AGENDAMENTO, nao do vinculo.
        *
        * `AlunoImportado` guarda so o estado atual, e a importacao sobrescreve os
        * dois campos. Lendo de la, uma prova de 2026/1 feita como EaD aparecia
@@ -1546,7 +1546,7 @@ const CABECALHOS_EXPORTACAO = [
   'E-mail',
   'Curso',
   'Situação do Curso',
-  'Modalidade',
+  'Formato',
   'Polo',
   'Rodada',
   'Data da prova',

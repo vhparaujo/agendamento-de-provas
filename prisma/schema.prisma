@@ -5,20 +5,20 @@
 //
 // FLUXO DO ALUNO:
 // - Entra via LTI 1.3 (sem senha). A matricula chega no launch.
-// - Matricula cruza com AlunoImportado (CSV) -> modalidade + polo.
-// - Ve as FAIXAS (horarios) do polo dele que tenham vaga para a modalidade dele.
+// - Matricula cruza com AlunoImportado (CSV) -> formato + polo.
+// - Ve as FAIXAS (horarios) do polo dele que tenham vaga para o formato dele.
 // - As disciplinas agendaveis = disciplinas do aluno na Valence ∩ TurmaImportada
 //   (3o CSV de turmas reais com prova). NAO sao todas as disciplinas do aluno.
-// - Escolhe UMA faixa. O sistema aloca numa sala daquela faixa+modalidade,
+// - Escolhe UMA faixa. O sistema aloca numa sala daquela faixa+formato,
 //   preenchendo em ordem (enche uma sala antes da proxima).
 // - A reserva vale para TODAS as disciplinas agendaveis dele.
 //
 // MODELO DE SALAS/FAIXAS/MODALIDADE (nucleo):
-// - Sala e FISICA e NEUTRA: polo + nome + capacidade. Sem modalidade fixa.
-// - Faixa e um HORARIO NEUTRO: polo + data + horaInicio + horaFim. Sem modalidade.
-// - SalaFaixa liga Sala + Faixa + Modalidade + vagas. A MODALIDADE VIVE AQUI.
+// - Sala e FISICA e NEUTRA: polo + nome + capacidade. Sem formato fixo.
+// - Faixa e um HORARIO NEUTRO: polo + data + horaInicio + horaFim. Sem formato.
+// - SalaFaixa liga Sala + Faixa + Formato + vagas. O FORMATO VIVE AQUI.
 //   Uma sala fisica pode ser Presencial numa faixa e EaD em outra; dentro de
-//   uma faixa ela fica travada numa modalidade. Admin monta isso ao criar a faixa.
+//   uma faixa ela fica travada num formato. Admin monta isso ao criar a faixa.
 //
 // CADASTRO:
 // - Polos    -> SEED (prisma/seed-polos.ts), extraidos do CSV de alunos.
@@ -27,7 +27,7 @@
 //               Import por CSV existe so como opcao alternativa secundaria.
 // - Alunos   -> CSV. RA=matricula, ALUNO=nome, CURSO=curso (exibicao),
 //               STATUS CURSO=ativo (so "Ativo" agenda), CAMPUS=polo.
-//               Modalidade vem do dropdown no upload (aba EaD/Semi/Hibrido).
+//               Formato vem do dropdown no upload (aba EaD/Semi/Modular).
 // - Turmas   -> CSV. Turmas/disciplinas reais que TERAO prova. Filtro final.
 //
 // PERIODO DE AGENDAMENTO:
@@ -78,38 +78,38 @@ model Admin {
 }
 
 // ----------------------------------------------------------------------------
-// MODALIDADE (duracao da prova)
+// FORMATO (duracao da prova)
 // ----------------------------------------------------------------------------
-// Uma modalidade por aluno. Ex: EaD=180min, Semi/Modular=90min, Presencial=120min.
+// Um formato por aluno. Ex: EaD=180min, Semi/Modular=90min, Presencial=120min.
 
 model Modalidade {
   id             Int    @id @default(autoincrement())
   codigo         String @unique // EAD | SEMI | MODULAR | PRESENCIAL
   nome           String
   duracaoMinutos Int
-  /// O `TimeLimitValue` que o special access grava para quem e desta modalidade
+  /// O `TimeLimitValue` que o special access grava para quem e deste formato
   /// (15/09/2026). NAO e `duracaoMinutos`: aquela decide o tamanho da faixa que
-  /// aceita a modalidade, e muda-la invalidaria faixas publicadas; esta e o
+  /// aceita o formato, e muda-la invalidaria faixas publicadas; esta e o
   /// tempo do questionario, e o admin a ajusta na tela. Nasce igual a duracao.
   /// O aluno do NIOP recebe esta mais `ConfiguracaoSpecialAccess.tempoExtraNiopMinutos`.
   tempoDeProvaMinutos Int
 
   alunos       AlunoImportado[]
   salaFaixas   SalaFaixa[]
-  agendamentos Agendamento[] // fotografia da modalidade do aluno na reserva
+  agendamentos Agendamento[] // fotografia do formato do aluno na reserva
   janelas      JanelaDeProva[] // horarios do questionario no dia da prova
-  // Qual periodo letivo do Brightspace vale para esta modalidade em cada janela
+  // Qual periodo letivo do Brightspace vale para este formato em cada janela
   // de agendamento: modular anda por modulo, presencial por semestre.
   periodosLetivos PeriodoLetivoModalidade[]
-  // As turmas em que o admin DECIDIU que esta e a modalidade da prova, por nao
-  // haver como derivar (alunos de duas modalidades na mesma turma).
+  // As turmas em que o admin DECIDIU que esta e o formato da prova, por nao
+  // haver como derivar (alunos de dois formatos na mesma turma).
   escolhasDeTurma ModalidadeEscolhidaDaTurma[]
 
   @@map("modalidade")
 }
 
 // ----------------------------------------------------------------------------
-// POLO / SALA (estrutura fisica) — sala e NEUTRA (sem modalidade)
+// POLO / SALA (estrutura fisica) — sala e NEUTRA (sem formato)
 // ----------------------------------------------------------------------------
 
 // Polos sao populados por SEED (prisma/seed-polos.ts) a partir dos nomes
@@ -158,7 +158,7 @@ model Sala {
 }
 
 // ----------------------------------------------------------------------------
-// FAIXA (horario neutro que o admin abre) — ligada ao POLO, SEM modalidade
+// FAIXA (horario neutro que o admin abre) — ligada ao POLO, SEM formato
 // ----------------------------------------------------------------------------
 
 model Faixa {
@@ -180,10 +180,10 @@ model Faixa {
 }
 
 // ----------------------------------------------------------------------------
-// SALA_FAIXA (NUCLEO) — Sala + Faixa + Modalidade + vagas
+// SALA_FAIXA (NUCLEO) — Sala + Faixa + Formato + vagas
 // ----------------------------------------------------------------------------
-// A modalidade e a vaga vivem AQUI. Uma sala fisica travada numa modalidade
-// dentro de uma faixa; livre para outra modalidade em outra faixa.
+// O formato e a vaga vivem AQUI. Uma sala fisica travada num formato
+// dentro de uma faixa; livre para outro formato em outra faixa.
 // ordem = sequencia de preenchimento (enche a de menor ordem primeiro).
 // vagas = capacidade daquela sala nessa oferta (default = Sala.capacidade).
 
@@ -193,21 +193,21 @@ model SalaFaixa {
   faixaId      Int
   modalidadeId Int
   vagas        Int // capacidade desta sala nesta faixa
-  ordem        Int // ordem de preenchimento dentro da faixa+modalidade
+  ordem        Int // ordem de preenchimento dentro da faixa+formato
 
   sala         Sala          @relation(fields: [salaId], references: [id])
   faixa        Faixa         @relation(fields: [faixaId], references: [id])
   modalidade   Modalidade    @relation(fields: [modalidadeId], references: [id])
   agendamentos Agendamento[]
 
-  @@unique([salaId, faixaId]) // uma sala so entra uma vez por faixa (1 modalidade)
-  @@unique([faixaId, modalidadeId, ordem]) // ordem unica por faixa+modalidade
-  @@index([faixaId, modalidadeId]) // query: salas de uma modalidade numa faixa
+  @@unique([salaId, faixaId]) // uma sala so entra uma vez por faixa (1 formato)
+  @@unique([faixaId, modalidadeId, ordem]) // ordem unica por faixa+formato
+  @@index([faixaId, modalidadeId]) // query: salas de um formato numa faixa
   @@map("sala_faixa")
 }
 
 // ----------------------------------------------------------------------------
-// ALUNO IMPORTADO (CSV) — fonte de verdade de modalidade + polo
+// ALUNO IMPORTADO (CSV) — fonte de verdade de formato + polo
 // ----------------------------------------------------------------------------
 // NAO e conta com senha. Reconhecido via LTI e cruzado por matricula.
 
@@ -217,12 +217,12 @@ model SalaFaixa {
 //   CURSO        -> curso (SO EXIBICAO; nao entra em nenhuma regra/filtro)
 //   STATUS CURSO -> ativo (true so quando "Ativo"; inativos nao agendam)
 //   CAMPUS       -> polo (casa com Polo.nome por string exata)
-//   modalidade   -> escolhida pelo admin no dropdown do upload (aba EaD/Semi/Hibrido)
+//   formato      -> escolhido pelo admin no dropdown do upload (aba EaD/Semi/Modular)
 // UM REGISTRO POR VINCULO (aluno + curso), nao por aluno.
 // Decisao de 30/07/2026: um mesmo RA pode estar em dois cursos ao mesmo tempo
-// (ex: Pedagogia/EaD e Psicologia/Hibrido) e precisa fazer as provas dos dois.
-// Como a modalidade — e portanto a duracao da prova — vem do curso, cada vinculo
-// e uma linha propria, com sua modalidade e seu polo.
+// (ex: Pedagogia/EaD e Psicologia/Modular) e precisa fazer as provas dos dois.
+// Como o formato — e portanto a duracao da prova — vem do curso, cada vinculo
+// e uma linha propria, com seu formato e seu polo.
 // Por isso `curso` deixou de ser "so exibicao" e virou parte da chave; e por isso
 // `matricula` sozinha NAO e mais unica.
 // No launch LTI, um RA com mais de um vinculo faz o portal perguntar de qual
@@ -347,15 +347,15 @@ enum TipoImportacao {
 // ----------------------------------------------------------------------------
 // AGENDAMENTO (a reserva do aluno)
 // ----------------------------------------------------------------------------
-// Aponta para a SalaFaixa alocada (que ja carrega sala+faixa+modalidade).
+// Aponta para a SalaFaixa alocada (que ja carrega sala+faixa+formato).
 // Ocupacao = count(Agendamento WHERE salaFaixaId = X) vs SalaFaixa.vagas.
 // Alocacao sequencial + concorrencia tratadas em transacao no service.
 
-// MODALIDADE E POLO SAO FOTOGRAFIA, nao consulta ao vinculo (13/08/2026).
+// FORMATO E POLO SAO FOTOGRAFIA, nao consulta ao vinculo (13/08/2026).
 //
 // `AlunoImportado` e tabela de ESTADO ATUAL: cada importacao sobrescreve
-// modalidade e polo do vinculo, e nao ha versao anterior. Sem estas duas
-// colunas, exportar o semestre PASSADO mostrava a modalidade/polo de HOJE — o
+// formato e polo do vinculo, e nao ha versao anterior. Sem estas duas
+// colunas, exportar o semestre PASSADO mostrava o formato/polo de HOJE — o
 // aluno que era EaD em 2026/1 e virou Modular em 2026/2 aparecia como Modular na
 // lista de uma prova que fez como EaD, ao lado de data e sala corretas. Duas
 // colunas da mesma linha discordando entre si.
@@ -364,13 +364,13 @@ enum TipoImportacao {
 // pronta): aqui os valores tambem sao filtro de relatorio, e `Polo.nome` ja e
 // imutavel por decisao — nao ha renome para congelar, so reatribuicao do aluno.
 //
-// Redundantes com `salaFaixa` POR CONSTRUCAO: a alocacao so aceita oferta da
-// modalidade do aluno, e o portal recusa faixa de outro polo. E essa redundancia
+// Redundantes com `salaFaixa` POR CONSTRUCAO: a alocacao so aceita oferta do
+// formato do aluno, e o portal recusa faixa de outro polo. E essa redundancia
 // que torna o backfill exato — ver a migration.
 model Agendamento {
   id              Int               @id @default(autoincrement())
   alunoId         Int
-  salaFaixaId     Int // sala+faixa+modalidade alocada; admin pode trocar
+  salaFaixaId     Int // sala+faixa+formato alocado; admin pode trocar
   matricula       String // desnormalizado p/ exportacao
   userIdD2L       String // id numerico Valence vindo do launch LTI
   periodoLetivoId String
@@ -567,17 +567,17 @@ model IntegracaoD2L {
 // Em novembro de 2026 o aluno EaD esta sob `2026/4` e o presencial sob `2026/2`,
 // que sao dois org units DIFERENTES e VIVOS ao mesmo tempo no Brightspace. Como
 // as disciplinas do aluno saem dos descendentes desse org unit, o id errado nao
-// da erro nenhum: devolve lista vazia, e a modalidade inteira recebe "nenhuma
+// da erro nenhum: devolve lista vazia, e o formato inteiro recebe "nenhuma
 // disciplina sua aparece no periodo letivo vigente".
 //
 // Por isso o `periodoLetivoId` de uma janela nao e uma string, e sim um MAPA por
-// modalidade (`PeriodoLetivoModalidade`). O que continua unico na janela e o
+// formato (`PeriodoLetivoModalidade`). O que continua unico na janela e o
 // PRAZO: datas, `rodada` e faixa de nota valem para todo mundo.
 
 model PeriodoAgendamento {
   id              Int       @id @default(autoincrement())
   /// O periodo letivo PRINCIPAL da janela — na pratica o dos modulos, que cobre
-  /// tres das quatro modalidades. NAO e mais o unico: quem responde "qual org
+  /// tres dos quatro formatos. NAO e mais o unico: quem responde "qual org
   /// unit vale para ESTE aluno" e `letivosPorModalidade`.
   ///
   /// Continua existindo por tres razoes concretas:
@@ -585,8 +585,8 @@ model PeriodoAgendamento {
   ///    `periodoLetivoId + rodada`, e e assim que 2026/3+SUB convive com
   ///    2026/3+N2);
   /// 2. e o rotulo da janela na tela do admin e no portal do aluno;
-  /// 3. e o FALLBACK de uma modalidade sem linha no mapa — semear uma quinta
-  ///    modalidade nao pode derrubar o agendamento das outras quatro.
+  /// 3. e o FALLBACK de um formato sem linha no mapa — semear um quinto
+  ///    formato nao pode derrubar o agendamento dos outros quatro.
   periodoLetivoId String // Id do Periodo Letivo no Brightspace (ex: 103)
   /// Qual prova do semestre e esta janela: "N2", "SUB", "N1"... Texto livre de
   /// proposito: quem nomeia a rodada e a secretaria, e um enum obrigaria uma
@@ -622,7 +622,7 @@ model PeriodoAgendamento {
   updatedAt       DateTime  @updatedAt
 
   /// O mapa `modalidade -> periodo letivo` desta janela. Uma linha por
-  /// modalidade cadastrada; ver `PeriodoLetivoModalidade`.
+  /// formato cadastrado; ver `PeriodoLetivoModalidade`.
   letivosPorModalidade PeriodoLetivoModalidade[]
 
   @@map("periodo_agendamento")
@@ -639,8 +639,8 @@ model PeriodoAgendamento {
 //
 // POR QUE UMA TABELA, e nao duas colunas (`periodoLetivoIdModular` /
 // `...Semestral`): duas colunas embutem no schema a suposicao de que existem
-// exatamente duas grades e de que se sabe, aqui, qual modalidade cai em qual.
-// Quem sabe disso e a secretaria, no cadastro. Uma linha por modalidade tambem
+// exatamente duas grades e de que se sabe, aqui, qual formato cai em qual.
+// Quem sabe disso e a secretaria, no cadastro. Uma linha por formato tambem
 // deixa o mapa APARECER na tela do admin, que e o unico jeito de um id errado
 // deixar de ser invisivel.
 //
@@ -655,14 +655,14 @@ model PeriodoLetivoModalidade {
   id                   Int    @id @default(autoincrement())
   periodoAgendamentoId Int
   modalidadeId         Int
-  /// Org unit do Periodo Letivo no Brightspace PARA ESTA MODALIDADE. O do aluno
-  /// sai da modalidade do VINCULO dele, nunca do relogio.
+  /// Org unit do Periodo Letivo no Brightspace PARA ESTE FORMATO. O do aluno
+  /// sai do formato do VINCULO dele, nunca do relogio.
   periodoLetivoId      String
 
   periodo    PeriodoAgendamento @relation(fields: [periodoAgendamentoId], references: [id], onDelete: Cascade)
   modalidade Modalidade         @relation(fields: [modalidadeId], references: [id])
 
-  // Uma modalidade nao pode ter dois periodos letivos na mesma janela: seria
+  // Um formato nao pode ter dois periodos letivos na mesma janela: seria
   // impossivel dizer qual das duas arvores vale para o aluno.
   @@unique([periodoAgendamentoId, modalidadeId])
   @@index([modalidadeId])
@@ -779,9 +779,9 @@ enum MotivoExcecao {
   /// aquele motivo manda a secretaria conferir o CSV de turmas, e aqui nao ha
   /// nada para conferir.
   NAO_ELEGIVEL_PELA_NOTA
-  /// O polo do aluno nao tem faixa cadastrada para a modalidade dele.
+  /// O polo do aluno nao tem faixa cadastrada para o formato dele.
   SEM_FAIXA_NO_POLO
-  /// Ha faixa, mas todas as salas da modalidade lotaram. Abrir mais sala.
+  /// Ha faixa, mas todas as salas do formato lotaram. Abrir mais sala.
   SEM_VAGA
   /// Cancelou e nao remarcou. Fica de fora POR DECISAO do cliente, e aparece
   /// aqui para a secretaria ver quem ficou sem lugar nenhum.
@@ -839,8 +839,8 @@ enum OrigemExecucao {
 /// Os dois compartilham TUDO — a resolucao de orgUnitId, a tabela de execucao, o
 /// relatorio, o guard de "so um lote por vez". O discriminador existe porque o
 /// RECORTE difere: SENHA aplica uma celula da grade em TODAS as turmas do CSV;
-/// DATA aplica a janela de cada MODALIDADE, e por isso precisa saber a
-/// modalidade de cada turma (derivada dos agendamentos).
+/// DATA aplica a janela de cada FORMATO, e por isso precisa saber o
+/// formato de cada turma (derivado dos agendamentos).
 ///
 /// ⚠️ Eles moram na MESMA tabela de proposito, e nao por economia de codigo. Os
 /// dois fazem GET -> altera -> PUT no MESMO questionario, e o PUT substitui o
@@ -990,8 +990,8 @@ model ExecucaoSenhaQuiz {
   /// Quantos orgUnitId foram aprendidos NESTA execucao. Sinal de CSV novo.
   orgUnitsAprendidos Int @default(0)
 
-  /// Fase 1b, so em `DATA` — quantas turmas resolvidas ficaram DE FORA porque a
-  /// modalidade nao pode ser derivada dos agendamentos.
+  /// Fase 1b, so em `DATA` — quantas turmas resolvidas ficaram DE FORA porque o
+  /// formato nao pode ser derivado dos agendamentos.
   ///
   /// Sao os dois contadores mais importantes do lote de datas, e pelo mesmo
   /// motivo de `naoEncontradas`: nao sao falha de rede nem erro de ninguem, e
@@ -1089,12 +1089,12 @@ enum ResultadoSenhaQuiz {
   ORGUNIT_AMBIGUO
 
   /// So em execucoes `DATA`. Nenhum agendamento CONFIRMADO aponta para esta
-  /// turma no periodo+rodada vigentes, entao nao ha de onde derivar a modalidade
-  /// — e sem modalidade nao ha janela. Ou ninguem agendou ainda, ou a turma do
+  /// turma no periodo+rodada vigentes, entao nao ha de onde derivar o formato
+  /// — e sem formato nao ha janela. Ou ninguem agendou ainda, ou a turma do
   /// CSV nao tem prova nesta rodada.
   SEM_AGENDAMENTO
 
-  /// So em execucoes `DATA`. Alunos de DUAS modalidades diferentes tem prova
+  /// So em execucoes `DATA`. Alunos de DOIS formatos diferentes tem prova
   /// nesta turma, e o questionario tem UMA janela so. Escolher a maioria
   /// deixaria a minoria sem conseguir abrir a prova, e o erro so apareceria no
   /// dia — entao nada e gravado. Mesma regra de ORGUNIT_AMBIGUO.
@@ -1192,7 +1192,7 @@ model ItemSenhaQuiz {
   /// postura de seguranca no cabecalho de senha-quiz.service.ts.
   senhaAnteriorLida Boolean @default(false)
 
-  /// So em execucoes `DATA`. O codigo da modalidade DERIVADA para esta turma
+  /// So em execucoes `DATA`. O codigo do formato DERIVADO para esta turma
   /// ("EAD", "SEMI", ...). Guardado como texto, e nao como FK, pelo mesmo motivo
   /// de `codigoTurma`: o CSV do relatorio precisa dele sem join. Nulo quando a
   /// derivacao falhou — que e justamente o caso que o relatorio existe para
@@ -1210,8 +1210,8 @@ model ItemSenhaQuiz {
 
   /// So em execucoes `DATA` cuja janela tem `nomeGrupo`. NULO significa "a troca
   /// de grupo nem foi tentada nesta linha" — janela sem grupo cadastrado, ou
-  /// linha que nem chegou ao questionario (orgUnit nao resolvido, modalidade
-  /// ambigua). Nao confunda com um desfecho ruim: aqui ausencia e ausencia.
+  /// linha que nem chegou ao questionario (orgUnit nao resolvido, formato
+  /// ambiguo). Nao confunda com um desfecho ruim: aqui ausencia e ausencia.
   resultadoGrupo ResultadoGrupoQuiz?
 
   /// O grupo que a condicao apontava ANTES, no formato "Prova 1 (#156988)".
@@ -1245,7 +1245,7 @@ model ItemSenhaQuiz {
 }
 
 // ----------------------------------------------------------------------------
-// JANELA DE PROVA — a que horas o questionario abre e fecha, por MODALIDADE
+// JANELA DE PROVA — a que horas o questionario abre e fecha, por FORMATO
 // ----------------------------------------------------------------------------
 //
 // Uma linha = um DISPARO. `horaDisparo` diz quando o cron aplica; `horaInicio` e
@@ -1253,7 +1253,7 @@ model ItemSenhaQuiz {
 // da prova o questionario fica aberto SO durante a sessao corrente, e a senha da
 // grade continua sendo o segundo fator.
 //
-// POR QUE POR MODALIDADE: a duracao da prova vem dela (EaD 3h, Semi/Modular 1h30
+// POR QUE POR FORMATO: a duracao da prova vem dele (EaD 3h, Semi/Modular 1h30
 // — ver `Modalidade.duracaoMinutos`), entao EaD cabe em 3 sessoes por dia e
 // Semi/Modular em 6. Nao ha um calendario unico possivel.
 //
@@ -1272,7 +1272,7 @@ model ItemSenhaQuiz {
 model JanelaDeProva {
   id           Int    @id @default(autoincrement())
   modalidadeId Int
-  /// Sequencia da janela DENTRO da modalidade. Nao e ordem cronologica do dia:
+  /// Sequencia da janela DENTRO do formato. Nao e ordem cronologica do dia:
   /// a janela que dispara as 22:01 e a primeira (ela arma a prova das 09:00 de
   /// amanha) e mesmo assim e a ultima do relogio.
   ordem        Int
@@ -1330,7 +1330,7 @@ model JanelaDeProva {
   /// ⚠️ **Nao e um grupo unico com os alunos trocados a cada sessao**: cada
   /// turma tem UM GRUPO POR SESSAO — "Prova 1", "Prova 2", "Prova 3"… — e o que
   /// o disparo troca e o grupo APONTADO pela condicao, nao o conteudo dele. O
-  /// numero de grupos por turma cai da modalidade, como as janelas: 3 no EaD, 6
+  /// numero de grupos por turma cai do formato, como as janelas: 3 no EaD, 6
   /// em Semi/Modular, 5 no Presencial. Sao ~14 nomes no total, um por janela.
   ///
   /// ⚠️ **Desde 14/09/2026 e o PADRAO, nao a regra.** O nome de cada DIA vem da
@@ -1346,7 +1346,7 @@ model JanelaDeProva {
   ///
   /// ⚠️ **NULO = a troca de grupo nao acontece nesta janela**, e o lote de datas
   /// se comporta exatamente como antes. E o que mantem o recurso opt-in por
-  /// modalidade e o que deixa o Presencial (que ainda nao tem aluno importado)
+  /// formato e o que deixa o Presencial (que ainda nao tem aluno importado)
   /// sem efeito colateral nenhum.
   ///
   /// NAO tem semente. Mesmo argumento de `ConfiguracaoSenhaQuiz.nomeQuiz`: um
@@ -1472,12 +1472,12 @@ model GrupoDaJanela {
 }
 
 // ----------------------------------------------------------------------------
-// A MODALIDADE QUE O ADMIN DECIDIU — o desempate da turma ambigua
+// O FORMATO QUE O ADMIN DECIDIU — o desempate da turma ambigua
 // ----------------------------------------------------------------------------
 //
-// O lote de DATAS precisa de UMA modalidade por turma, e ela e derivada dos
+// O lote de DATAS precisa de UM formato por turma, e ele e derivado dos
 // agendamentos confirmados (`modalidade-da-turma.service.ts`). Quando a turma
-// tem alunos de DUAS modalidades, nada e derivado de proposito: o questionario
+// tem alunos de DOIS formatos, nada e derivado de proposito: o questionario
 // tem uma janela so, e escolher a maioria trancaria a prova da minoria.
 //
 // So que "nada" tambem tranca — a turma inteira fica de fora do lote e a prova
@@ -1491,16 +1491,16 @@ model GrupoDaJanela {
 // ⚠️ **A linha so vale enquanto a turma for AMBIGUA**, e a checagem e feita em
 // toda leitura, nunca na gravacao (ver `decidir()`):
 //
-//  - voltou a ter uma modalidade so? a derivacao vence, e esta linha e ignorada.
+//  - voltou a ter um formato so? a derivacao vence, e esta linha e ignorada.
 //    O dado real e sempre mais confiavel que uma decisao de dias atras;
-//  - a modalidade escolhida ficou sem NENHUMA reserva na turma? a linha e
+//  - o formato escolhido ficou sem NENHUMA reserva na turma? a linha e
 //    ignorada tambem, e a turma volta a aparecer como ambigua na conferencia.
-//    Aplicar a janela de uma modalidade que ninguem ali cursa seria pior que nao
+//    Aplicar a janela de um formato que ninguem ali cursa seria pior que nao
 //    aplicar nada — ninguem abriria a prova, em vez de quase todos.
 //
 // POR QUE NAO E UMA COLUNA EM `turma_importada`: pelo mesmo motivo de 10/08/2026
-// que removeu `curso` de la. Uma turma nao "e" de uma modalidade — ela tem
-// alunos de varias. O que existe aqui e uma DECISAO OPERACIONAL, valida para uma
+// que removeu `curso` de la. Uma turma nao "e" de um formato — ela tem
+// alunos de varios. O que existe aqui e uma DECISAO OPERACIONAL, valida para uma
 // rodada de prova, com autor e data; escrever isso no cadastro transformaria um
 // desempate pontual em um fato permanente sobre a turma. Alem disso o CSV de
 // turmas e reimportado, e o upsert sobrescreveria a decisao em silencio.
@@ -1513,7 +1513,7 @@ model GrupoDaJanela {
 model ModalidadeEscolhidaDaTurma {
   id Int @id @default(autoincrement())
 
-  /// A oferta no Brightspace. E a mesma chave com que o mapa de modalidades
+  /// A oferta no Brightspace. E a mesma chave com que o mapa de formatos
   /// responde, e o que faz a decisao valer para a conferencia, para o lote
   /// manual e para o cron sem nenhum deles saber que ela existe.
   orgUnitId String
@@ -1681,7 +1681,7 @@ model ItemGruposD2L {
 // prova. Os dois caminhos convivem ate o novo substituir o antigo.
 
 /// Quem e do NIOP (Nucleo de Inclusao — pessoas com deficiencia): recebe o tempo
-/// de prova da modalidade mais `tempoExtraNiopMinutos`.
+/// de prova do formato mais `tempoExtraNiopMinutos`.
 ///
 /// POR MATRICULA, e fora de `AlunoImportado`, de proposito: a importacao
 /// sobrescreve o vinculo a cada upload, e a marca feita na tela sumiria no

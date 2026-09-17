@@ -54,9 +54,9 @@ describe('janelasParaDisparar', () => {
     expect(ids(janelasParaDisparar('18:01', CALENDARIO, 30))).toEqual([3]);
   });
 
-  it('AS 12:01 DISPARA TRES MODALIDADES, cada uma com a sua janela', () => {
+  it('AS 12:01 DISPARA TRES FORMATOS, cada um com a sua janela', () => {
     // O caso que motivou a funcao devolver lista. Um item so faria duas das tres
-    // modalidades perderem a sessao inteira, sem erro nenhum no log.
+    // formatos perderem a sessao inteira, sem erro nenhum no log.
     // O presencial NAO entra aqui: o calendario dele nao tem disparo as 12:01.
     expect(ids(janelasParaDisparar('12:01', CALENDARIO, 30))).toEqual([
       2, 13, 23,
@@ -74,8 +74,8 @@ describe('janelasParaDisparar', () => {
 
   /**
    * O presencial (5 sessoes de 2h) partilha dois minutos de disparo com as
-   * outras modalidades — 22:01 com o EaD e 19:31 com Semi/Modular. Nao ha
-   * conflito: cada modalidade tem o seu calendario, e o cron aplica uma janela
+   * outros formatos — 22:01 com o EaD e 19:31 com Semi/Modular. Nao ha
+   * conflito: cada formato tem o seu calendario, e o cron aplica uma janela
    * por tick, dentro da tolerancia.
    */
   it('as 19:31 dispara Semi, Modular E Presencial', () => {
@@ -123,15 +123,15 @@ describe('janelasParaDisparar', () => {
       ]);
     });
 
-    it('a tolerancia padrao NAO faz duas janelas da mesma modalidade se cruzarem', () => {
-      // O menor intervalo dentro de uma modalidade, no calendario real, e de 120
+    it('a tolerancia padrao NAO faz duas janelas do mesmo formato se cruzarem', () => {
+      // O menor intervalo dentro de um formato, no calendario real, e de 120
       // min (10:01 -> 12:01 no Semi/Modular; 150 min no Presencial), contra 30
       // de tolerancia. Se alguem apertar os horarios na tela, o desempate abaixo
       // entra em acao — mas hoje ele nunca precisa.
       //
-      // O laco varre TODOS os disparos das quatro modalidades: e a rede que pega
+      // O laco varre TODOS os disparos dos quatro formatos: e a rede que pega
       // o dia em que um calendario novo for semeado perto demais de outro da
-      // mesma modalidade.
+      // mesmo formato.
       for (const hhmm of [...new Set(CALENDARIO.map((j) => j.horaDisparo))]) {
         const resultado = janelasParaDisparar(hhmm, CALENDARIO, 30);
         const porModalidade = new Set(resultado.map((j) => j.modalidadeId));
@@ -140,14 +140,14 @@ describe('janelasParaDisparar', () => {
     });
   });
 
-  describe('empate dentro da mesma modalidade', () => {
+  describe('empate dentro do mesmo formato', () => {
     it('vence a que comecou MAIS TARDE — e a sessao corrente', () => {
       // Aplicar a anterior por cima reabriria a prova que acabou de fechar.
       const apertadas = [janela(1, EAD, '10:00'), janela(2, EAD, '10:20')];
       expect(ids(janelasParaDisparar('10:25', apertadas, 60))).toEqual([2]);
     });
 
-    it('modalidades diferentes no mesmo minuto NAO competem', () => {
+    it('formatos diferentes no mesmo minuto NAO competem', () => {
       const duas = [janela(1, EAD, '10:00'), janela(2, SEMI, '10:00')];
       expect(ids(janelasParaDisparar('10:00', duas, 30))).toEqual([1, 2]);
     });
@@ -222,7 +222,7 @@ describe('ehDoDiaSeguinte', () => {
 
   /**
    * A rede que importa: nos tres calendarios reais, EXATAMENTE UMA janela por
-   * modalidade cai no dia seguinte. Zero deixaria a prova da manha sem ser
+   * formato cai no dia seguinte. Zero deixaria a prova da manha sem ser
    * armada; duas fariam uma sessao do dia sumir.
    */
   it.each([

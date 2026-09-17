@@ -30,7 +30,7 @@ export class CelulaDeGrupoDto {
   @Matches(PADRAO_DIA, { message: 'data deve estar em AAAA-MM-DD' })
   data!: string;
 
-  @ApiProperty({ example: 10, description: 'A janela (sessao) da modalidade.' })
+  @ApiProperty({ example: 10, description: 'A janela (sessao) do formato.' })
   @IsInt()
   @Min(1)
   janelaDeProvaId!: number;

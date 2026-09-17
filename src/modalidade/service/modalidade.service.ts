@@ -14,7 +14,7 @@ export interface Modalidade {
 export class ModalidadeService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Popula o dropdown de modalidade na montagem da faixa. */
+  /** Popula o dropdown de formato na montagem da faixa. */
   listar(): Promise<Modalidade[]> {
     return this.prisma.modalidade.findMany({ orderBy: { id: 'asc' } });
   }
@@ -25,7 +25,7 @@ export class ModalidadeService {
     });
 
     if (!modalidade) {
-      throw new NotFoundException(`Modalidade ${id} nao encontrada`);
+      throw new NotFoundException(`Formato ${id} nao encontrado`);
     }
 
     return modalidade;

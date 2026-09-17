@@ -183,8 +183,8 @@ async function main(): Promise<void> {
         id: true,
         matricula: true,
         userIdD2L: true,
-        // A modalidade do AGENDAMENTO (fotografia): e ela que diz de qual grade
-        // as disciplinas daquela reserva sairam, e reconferir pela modalidade
+        // O formato do AGENDAMENTO (fotografia): e ele que diz de qual grade
+        // as disciplinas daquela reserva sairam, e reconferir pelo formato
         // de hoje compararia a lista contra a arvore errada.
         modalidade: { select: { codigo: true } },
         aluno: { select: { nome: true, curso: true } },

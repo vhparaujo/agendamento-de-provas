@@ -30,7 +30,7 @@ export class PoloVinculoDto {
 }
 
 /**
- * Um vinculo = aluno + curso. A modalidade e o polo vem daqui, nunca do cliente.
+ * Um vinculo = aluno + curso. O formato e o polo vem daqui, nunca do cliente.
  */
 export class VinculoLaunchDto implements VinculoLaunch {
   @ApiProperty({

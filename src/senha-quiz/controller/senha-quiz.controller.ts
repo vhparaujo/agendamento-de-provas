@@ -57,7 +57,7 @@ export class SenhaQuizController {
   @Post()
   @ApiOperation({
     summary:
-      'Aplica a senha de um turno, ou a janela de horario de uma modalidade ' +
+      'Aplica a senha de um turno, ou a janela de horario de um formato ' +
       '(simula por padrao)',
     description:
       '### Dois lotes, a mesma maquinaria\n\n' +
@@ -65,9 +65,9 @@ export class SenhaQuizController {
       'em **todas as turmas do CSV importado que pertencem ao periodo letivo ' +
       'vigente**. Nao verifica se ha agendamento na turma.\n\n' +
       '`tipo: DATA` troca `StartDate`/`EndDate` — a janela em que a prova fica ' +
-      'aberta — nas turmas de **UMA modalidade**, a da janela informada em ' +
-      '`janelaId`. A modalidade de cada turma e DERIVADA dos agendamentos ' +
-      'confirmados; turma sem modalidade derivavel fica de fora e vira linha de ' +
+      'aberta — nas turmas de **UM formato**, a da janela informada em ' +
+      '`janelaId`. O formato de cada turma e DERIVADO dos agendamentos ' +
+      'confirmados; turma sem formato derivavel fica de fora e vira linha de ' +
       'relatorio (`SEM_AGENDAMENTO` / `MODALIDADE_AMBIGUA`).\n\n' +
       '`tipo: PREPARO` deixa o questionario pronto para o **special access** em ' +
       'todas as turmas do CSV (ou so nas de `orgUnitIds`): apaga `StartDate`/`EndDate`, ' +
@@ -218,7 +218,7 @@ export class SenhaQuizController {
    */
   @Get('datas-por-modalidade')
   @ApiOperation({
-    summary: 'A ultima mudanca de datas de CADA modalidade',
+    summary: 'A ultima mudanca de datas de CADA formato',
     description:
       '`/ultima` responde "qual foi a mais recente?", e essa nao e a pergunta ' +
       'que a secretaria faz.\n\n' +
@@ -226,10 +226,10 @@ export class SenhaQuizController {
       'tres (EaD 15:00-18:00, Semi e Modular 14:00-15:30), aplicadas em ticks ' +
       'seguidos porque os dois lotes escrevem no mesmo questionario e o servidor ' +
       'serializa. Mostrar so a mais recente exibe a terceira delas e esconde as ' +
-      'outras duas — quem le conclui que a janela errada foi aplicada.\n\n' +
-      'A pergunta util e por modalidade: **cada uma esta com a janela certa?**\n\n' +
-      'So lista modalidades que tem calendario cadastrado. `execucao: null` ' +
-      'significa "nunca rodou", que e o estado normal de uma modalidade sem ' +
+      'outros dois — quem le conclui que a janela errada foi aplicada.\n\n' +
+      'A pergunta util e por formato: **cada um esta com a janela certa?**\n\n' +
+      'So lista formatos que tem calendario cadastrado. `execucao: null` ' +
+      'significa "nunca rodou", que e o estado normal de um formato sem ' +
       'aluno importado — nao um erro.',
   })
   @ApiQuery({
@@ -237,7 +237,7 @@ export class SenhaQuizController {
     required: false,
     enum: OrigemExecucao,
     description:
-      'MANUAL ou CRON. Ausente = a mais recente de cada modalidade, de qualquer ' +
+      'MANUAL ou CRON. Ausente = a mais recente de cada formato, de qualquer ' +
       'origem.',
   })
   @ApiOkResponse({ type: [UltimaDataPorModalidadeDto] })

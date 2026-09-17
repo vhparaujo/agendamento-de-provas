@@ -87,7 +87,7 @@ describe('Catalogo administrativo: alunos e turmas importados (e2e)', () => {
 
     poloId = (await prisma.polo.create({ data: { nome: POLO_NOME } })).id;
 
-    // O caso real: um RA em dois cursos, com modalidades diferentes.
+    // O caso real: um RA em dois cursos, com formatos diferentes.
     vinculoEadId = (
       await prisma.alunoImportado.create({
         data: {
@@ -210,7 +210,7 @@ describe('Catalogo administrativo: alunos e turmas importados (e2e)', () => {
       expect(itens.map((i) => i.curso).sort()).toEqual(
         [CURSO_EAD, CURSO_MODULAR].sort(),
       );
-      // Modalidades diferentes: sao duas provas, com duracoes diferentes.
+      // Formatos diferentes: sao duas provas, com duracoes diferentes.
       expect(new Set(itens.map((i) => i.modalidade)).size).toBe(2);
     });
 

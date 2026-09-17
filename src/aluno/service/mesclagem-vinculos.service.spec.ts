@@ -331,7 +331,7 @@ describe('MesclagemVinculosService', () => {
     );
   });
 
-  it('avisa quando as modalidades divergiam — a prova herdada tem outra duracao', async () => {
+  it('avisa quando os formatos divergiam — a prova herdada tem outra duracao', async () => {
     const { service } = montar([{ ...NOVO }, { ...ANTIGO, ...MODULAR }]);
 
     const { avisos } = await service.mesclar(91, 48, 'admin@ucb.br');

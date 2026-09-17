@@ -12,35 +12,35 @@ import { PrismaService } from './../src/database/prisma.service';
  * ============================================================================
  *
  * O caso real de 10/09/2026: uma turma com EAD (583) e MODULAR (1). Sem
- * modalidade derivavel ela fica de fora do lote de datas, e a prova continua no
+ * formato derivavel ela fica de fora do lote de datas, e a prova continua no
  * horario antigo — para os 583 tanto quanto para o 1.
  *
  * O que estas rotas precisam provar NAO e que gravam e leem. E que continuam
  * dizendo NAO nos casos em que o sistema se recusa a escolher:
  *
- *  - turma que nao esta ambigua (a modalidade ja se deriva sozinha);
+ *  - turma que nao esta ambigua (o formato ja se deriva sozinha);
  *  - turma sem agendamento nenhum (nao e ambiguidade, e ausencia);
- *  - modalidade sem nenhum aluno com prova ali.
+ *  - formato sem nenhum aluno com prova ali.
  *
- * Sem essas tres, a rota seria "definir a modalidade de qualquer turma" — a
+ * Sem essas tres, a rota seria "definir o formato de qualquer turma" — a
  * coluna de cadastro que a decisao de 10/08/2026 recusou, com outro nome.
  *
  * ⚠️ **Estas rotas nao dependem do Brightspace**, ao contrario de
  * `GET /senhas-de-prova/turmas`: elas so leem agendamentos e gravam a decisao.
  * Por isso rodam com `D2L_HABILITADO=false`, que e o default do e2e.
  */
-describe('Modalidade escolhida da turma ambigua (e2e)', () => {
+describe('Formato escolhido da turma ambigua (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
   let token: string;
 
   const EMAIL = 'e2e-modalidade-turma@ucb.br';
   const SENHA_ADMIN = 'senha-do-teste-123';
-  const POLO_NOME = 'Polo E2E Modalidade Da Turma';
+  const POLO_NOME = 'Polo E2E Formato Da Turma';
   const PERIODO_LETIVO = 'e2e-mod-turma-103';
   const RODADA = 'N2';
 
-  /** A turma disputada, e uma segunda com uma modalidade so. */
+  /** A turma disputada, e uma segunda com um formato so. */
   const ORG_AMBIGUA = 'ou-e2e-mod-ambigua';
   const ORG_UNANIME = 'ou-e2e-mod-unanime';
   const ORG_SEM_PROVA = 'ou-e2e-mod-sem-prova';
@@ -158,12 +158,12 @@ describe('Modalidade escolhida da turma ambigua (e2e)', () => {
       turmas.map((t) => t.id);
 
     // 583 x 1 na turma ambigua — a proporcao real que motivou o recurso, em
-    // escala: o que importa e que sao DUAS modalidades, e que a minoria e uma.
+    // escala: o que importa e que sao DOIS formatos, e que a minoria e uma.
     await reservar('E2EMOD-A1', eadId, polo.id, salaFaixaId, ORG_AMBIGUA);
     await reservar('E2EMOD-A2', eadId, polo.id, salaFaixaId, ORG_AMBIGUA);
     await reservar('E2EMOD-A3', modularId, polo.id, salaFaixaId, ORG_AMBIGUA);
 
-    // A unanime tem so EaD, e por isso a modalidade dela se deriva sozinha.
+    // A unanime tem so EaD, e por isso o formato dela se deriva sozinha.
     await reservar('E2EMOD-U1', eadId, polo.id, salaFaixaId, ORG_UNANIME);
   }, 60_000);
 
@@ -185,7 +185,7 @@ describe('Modalidade escolhida da turma ambigua (e2e)', () => {
       data: {
         matricula,
         nome: `ALUNO ${matricula}`,
-        curso: 'CURSO E2E MODALIDADE',
+        curso: 'CURSO E2E FORMATO',
         statusCurso: 'Ativo',
         ativo: true,
         modalidadeId,
@@ -259,7 +259,7 @@ describe('Modalidade escolhida da turma ambigua (e2e)', () => {
       });
     });
 
-    it('define a modalidade da turma ambigua e devolve a linha pronta', async () => {
+    it('define o formato da turma ambigua e devolve a linha pronta', async () => {
       const res = await comoAdmin(api().put(rota(turmaAmbiguaId)))
         .send({ modalidadeId: eadId })
         .expect(200);
@@ -305,7 +305,7 @@ describe('Modalidade escolhida da turma ambigua (e2e)', () => {
     });
 
     /**
-     * ⚠️ A trava principal. Sem ela isto vira uma coluna de modalidade no
+     * ⚠️ A trava principal. Sem ela isto vira uma coluna de formato no
      * cadastro da turma — o que a decisao de 10/08/2026 recusou, com outro nome.
      */
     it('RECUSA turma que nao esta ambigua', async () => {
@@ -330,11 +330,11 @@ describe('Modalidade escolhida da turma ambigua (e2e)', () => {
     });
 
     /**
-     * SEMI e uma modalidade real e existente — e nao tem nenhum aluno com prova
+     * SEMI e um formato real e existente — e nao tem nenhum aluno com prova
      * nesta turma. Aplicar a janela dela fecharia a prova para a turma INTEIRA,
      * e nao so para a minoria.
      */
-    it('RECUSA modalidade sem nenhum aluno com prova na turma', async () => {
+    it('RECUSA formato sem nenhum aluno com prova na turma', async () => {
       const res = await comoAdmin(api().put(rota(turmaAmbiguaId)))
         .send({ modalidadeId: semiId })
         .expect(400);

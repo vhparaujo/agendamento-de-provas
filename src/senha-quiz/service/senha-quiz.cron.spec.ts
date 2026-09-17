@@ -151,7 +151,7 @@ describe('SenhaQuizCron', () => {
 
     /**
      * O questionario preparado nao tem data. Uma janela aplicada pelo cron o
-     * abriria no horario de UMA modalidade para todos — e a senha precisa
+     * abriria no horario de UM formato para todos — e a senha precisa
      * continuar trocando, porque ela nao mexe na data.
      */
     it('com a opcao, nao aplica a janela e segue para a senha', async () => {
@@ -431,7 +431,7 @@ describe('SenhaQuizCron', () => {
     });
 
     /**
-     * As 12:01 tres modalidades tem janela. Os dois lotes fazem GET -> PUT no
+     * As 12:01 tres formatos tem janela. Os dois lotes fazem GET -> PUT no
      * mesmo questionario e `recusarSeJaRodando` os serializa, entao disparar
      * dois no mesmo minuto so produziria um 409. O tick pega UM; a tolerancia
      * de 30 min cobre os outros nos minutos seguintes.
@@ -467,7 +467,7 @@ describe('SenhaQuizCron', () => {
         ],
       });
 
-      // A da modalidade 1 ja rodou hoje; a da 2 ainda nao.
+      // O do formato 1 ja rodou hoje; a da 2 ainda nao.
       const prisma = (cron as unknown as { prisma: Record<string, any> })
         .prisma;
       prisma.execucaoSenhaQuiz.findMany = jest

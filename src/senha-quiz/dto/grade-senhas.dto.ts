@@ -274,9 +274,9 @@ export class HorariosDoCronDto {
   toleranciaMin!: number;
 }
 
-/** Uma das modalidades em disputa numa turma ambigua. */
+/** Um dos formatos em disputa numa turma ambigua. */
 export class CandidataDeModalidadeDto {
-  @ApiProperty({ example: 3, description: 'Id da modalidade, para o PUT.' })
+  @ApiProperty({ example: 3, description: 'Id do formato, para o PUT.' })
   modalidadeId!: number;
 
   @ApiProperty({ example: 'EAD' })
@@ -288,7 +288,7 @@ export class CandidataDeModalidadeDto {
   @ApiProperty({
     example: 583,
     description:
-      'Quantos alunos desta modalidade tem prova confirmada na turma. E o ' +
+      'Quantos alunos deste formato tem prova confirmada na turma. E o ' +
       'numero que a secretaria olha para decidir — 583 contra 1 e uma decisao ' +
       'diferente de 12 contra 9.',
   })
@@ -299,9 +299,9 @@ export class EscolherModalidadeDaTurmaDto {
   @ApiProperty({
     example: 3,
     description:
-      'A modalidade que passa a valer para esta turma. Precisa ser uma das ' +
-      '`candidatas` — o servidor recusa qualquer outra, inclusive uma ' +
-      'modalidade real que simplesmente nao tenha aluno com prova ali.',
+      'O formato que passa a valer para esta turma. Precisa estar entre as ' +
+      '`candidatas` — o servidor recusa qualquer outro, inclusive um ' +
+      'formato real que simplesmente nao tenha aluno com prova ali.',
   })
   @IsInt()
   @Min(1)
@@ -325,7 +325,7 @@ export class TurmaDoLoteDto {
     example: 'EAD',
     nullable: true,
     description:
-      'A modalidade DERIVADA dos agendamentos confirmados da rodada vigente — ' +
+      'O formato DERIVADO dos agendamentos confirmados da rodada vigente — ' +
       'e ela que decide qual janela de horario o lote de datas aplica nesta ' +
       'turma. Nula quando nao foi possivel derivar; o motivo vem em ' +
       '`motivoSemModalidade`, e a turma fica de fora do lote de datas.',
@@ -337,11 +337,11 @@ export class TurmaDoLoteDto {
 
   @ApiProperty({
     example:
-      'Alunos de 2 modalidades tem prova nesta turma: EAD (9), SEMI (7). ' +
+      'Alunos de 2 formatos tem prova nesta turma: EAD (9), SEMI (7). ' +
       'O questionario tem uma janela so, entao nenhuma foi escolhida.',
     nullable: true,
     description:
-      'Por que a modalidade nao pode ser derivada. **Revise antes do primeiro ' +
+      'Por que o formato nao pode ser derivado. **Revise antes do primeiro ' +
       'dia**: cada linha destas e uma turma que ficaria com a data antiga.',
   })
   motivoSemModalidade!: string | null;
@@ -349,7 +349,7 @@ export class TurmaDoLoteDto {
   @ApiProperty({
     type: [CandidataDeModalidadeDto],
     description:
-      'As modalidades que tem prova nesta turma, quando ha mais de uma — ' +
+      'Os formatos que tem prova nesta turma, quando ha mais de um — ' +
       'ordenadas por reservas. **Vazio significa que nao ha o que escolher**: ' +
       'ou a derivacao foi unanime, ou ninguem agendou ali. E este array que ' +
       'habilita `PUT /senhas-de-prova/turmas/:turmaId/modalidade`, e a mesma ' +
@@ -361,7 +361,7 @@ export class TurmaDoLoteDto {
     example: 'secretaria@ucb.br',
     nullable: true,
     description:
-      'Quem decidiu a modalidade desta turma, quando ela veio de uma escolha ' +
+      'Quem decidiu o formato desta turma, quando ele veio de uma escolha ' +
       'manual. **Nulo na derivacao normal** — a tela precisa distinguir "a ' +
       'turma so tem EaD" de "alguem decidiu que ela vale como EaD".',
   })
@@ -466,7 +466,7 @@ export class JanelaDeProvaDto {
   @ApiProperty({
     example: 2,
     description:
-      'Sequencia da sessao dentro da modalidade. NAO e a ordem do relogio: ' +
+      'Sequencia da sessao dentro do formato. NAO e a ordem do relogio: ' +
       'a primeira e a que dispara a noite armando a prova do dia seguinte.',
   })
   @IsInt()
@@ -477,7 +477,7 @@ export class JanelaDeProvaDto {
     example: '12:01',
     description:
       'A que horas o cron aplica esta janela (fuso de Brasilia). Duas janelas ' +
-      'ativas da mesma modalidade nao podem disparar no mesmo minuto.',
+      'ativas do mesmo formato nao podem disparar no mesmo minuto.',
   })
   @Matches(PADRAO_HORA, { message: MSG_HORA_OBRIGATORIA('horaDisparo') })
   horaDisparo!: string;
@@ -522,7 +522,7 @@ export class JanelaDeProvaDto {
       'turmas com um id diferente em cada. O id e resolvido turma a turma no ' +
       'momento do disparo.\n\n' +
       'Nao e um grupo unico com os alunos trocados a cada sessao: cada turma ' +
-      'tem UM GRUPO POR SESSAO, na quantidade que a modalidade define (3 no ' +
+      'tem UM GRUPO POR SESSAO, na quantidade que o formato define (3 no ' +
       'EaD, 6 em Semi/Modular, 5 no Presencial), e o disparo troca o grupo ' +
       'APONTADO pela condicao.\n\n' +
       '**Desde 14/09/2026 e o nome PADRAO.** O grupo de cada dia vem da grade ' +
@@ -568,8 +568,8 @@ export class SalvarJanelasDto {
   @ApiProperty({
     example: 1,
     description:
-      'A modalidade cujo calendario esta sendo salvo. O PUT substitui as ' +
-      'janelas DESTA modalidade e nao toca nas outras.',
+      'O formato cujo calendario esta sendo salvo. O PUT substitui as ' +
+      'janelas DESTE formato e nao toca nos outros.',
   })
   @IsInt()
   @Min(1)
@@ -578,7 +578,7 @@ export class SalvarJanelasDto {
   @ApiProperty({
     type: [JanelaDeProvaDto],
     description:
-      'O calendario completo da modalidade. Sessao que nao vier aqui e ' +
+      'O calendario completo do formato. Sessao que nao vier aqui e ' +
       'REMOVIDA — e assim que a tela apaga uma janela.',
   })
   @IsArray()

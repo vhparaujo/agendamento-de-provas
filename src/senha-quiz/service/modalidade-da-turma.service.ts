@@ -10,20 +10,20 @@ import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 
 /**
  * ============================================================================
- * QUAL E A MODALIDADE DE UMA TURMA — e por que a pergunta nao tem coluna
+ * QUAL E O FORMATO DE UMA TURMA — e por que a pergunta nao tem coluna
  * ============================================================================
  *
- * O lote de DATAS precisa de uma modalidade por turma: EaD abre a prova em 3
+ * O lote de DATAS precisa de um formato por turma: EaD abre a prova em 3
  * sessoes de 3h, Semi/Modular em 6 de 1h30, e o questionario tem UMA janela.
  *
- * ⚠️ **`TurmaImportada` NAO tem modalidade, e isso e deliberado.** A coluna
+ * ⚠️ **`TurmaImportada` NAO tem formato, e isso e deliberado.** A coluna
  * `curso` foi REMOVIDA em 10/08/2026 (migration `turma_sem_curso`) com a razao
  * escrita no schema: "uma turma tem alunos de VARIOS cursos — disciplina
  * compartilhada, eletiva, equivalencia —, entao dizer que ela 'e do curso X' e
- * falso". Como a modalidade vem do curso, o mesmo argumento a alcanca. Nao ha
+ * falso". Como o formato vem do curso, o mesmo argumento a alcanca. Nao ha
  * coluna a acrescentar aqui: haveria uma afirmacao a inventar.
  *
- * O que existe de verdade e a modalidade do ALUNO, e ela chega ate a turma pelo
+ * O que existe de verdade e o formato do ALUNO, e ele chega ate a turma pelo
  * unico caminho que o modelo oferece:
  *
  *     agendamento (CONFIRMADO, periodo + rodada vigentes)
@@ -31,7 +31,7 @@ import { AuditoriaService } from '../../seguranca/service/auditoria.service';
  *            -> turma_importada.orgUnitId
  *                 => agendamento.modalidadeId
  *
- * `Agendamento.modalidadeId` e FOTOGRAFIA da modalidade do aluno no momento da
+ * `Agendamento.modalidadeId` e FOTOGRAFIA do formato do aluno no momento da
  * reserva (migration `snapshot_modalidade_polo_agendamento`, 13/08/2026) — e nao
  * o estado atual do vinculo. E o que se quer: a prova acontece na duracao com
  * que foi marcada, mesmo que o aluno tenha trocado de curso desde entao. Ler de
@@ -43,7 +43,7 @@ import { AuditoriaService } from '../../seguranca/service/auditoria.service';
  * do lote de senhas, que ignora agendamentos de proposito porque roda sobre
  * todas as turmas do CSV (`resolucao-orgunit.service.ts`).
  *
- * **NADA E CHUTADO** — a regra do projeto. Duas modalidades na mesma turma nao
+ * **NADA E CHUTADO** — a regra do projeto. Dois formatos na mesma turma nao
  * viram voto de maioria: o questionario tem uma janela so, e a minoria ficaria
  * sem conseguir abrir a prova. Vira linha de relatorio, como `ORGUNIT_AMBIGUO`.
  *
@@ -53,11 +53,11 @@ import { AuditoriaService } from '../../seguranca/service/auditoria.service';
  *
  * "Nada e chutado" resolvia metade do problema. A outra metade apareceu numa
  * turma real de PROBABILIDADE E ESTATISTICA: EAD (583) e MODULAR (1). Sem
- * modalidade, a turma inteira fica fora do lote de datas e a prova permanece com
+ * formato, a turma inteira fica fora do lote de datas e a prova permanece com
  * a DATA ANTIGA — para os 583 tanto quanto para o 1. A conferencia mostrava o
  * problema e nao oferecia saida nenhuma.
  *
- * Agora oferece: o admin ESCOLHE a modalidade da turma, e a escolha fica em
+ * Agora oferece: o admin ESCOLHE o formato da turma, e a escolha fica em
  * `modalidade_escolhida_turma` com quem decidiu e quando. O sistema continua sem
  * escolher — o que mudou e que existe um lugar para a decisao de uma pessoa.
  *
@@ -65,13 +65,13 @@ import { AuditoriaService } from '../../seguranca/service/auditoria.service';
  * toda LEITURA** (`decidir`), nunca na gravacao. Sao dois casos, e os dois
  * derrubam a linha gravada:
  *
- * 1. **Voltou a ter uma modalidade so** (o unico MODULAR cancelou). A derivacao
+ * 1. **Voltou a ter um formato so** (o unico MODULAR cancelou). A derivacao
  *    vence. O dado de agora vale mais que uma decisao de dias atras, e manter a
  *    escolha faria uma turma 100% EaD receber a janela MODULAR porque alguem
  *    desempatou na terca.
- * 2. **A modalidade escolhida ficou sem NENHUMA reserva** (escolheram MODULAR, e
+ * 2. **O formato escolhido ficou sem NENHUMA reserva** (escolheram MODULAR, e
  *    depois o unico MODULAR trocou por SEMI). A turma volta a aparecer como
- *    ambigua, com o aviso no `detalhe`. Aplicar a janela de uma modalidade que
+ *    ambigua, com o aviso no `detalhe`. Aplicar a janela de um formato que
  *    ninguem ali cursa e pior que nao aplicar nada: em vez de quase todos
  *    abrirem a prova no horario antigo, NINGUEM abre no horario novo.
  *
@@ -80,10 +80,10 @@ import { AuditoriaService } from '../../seguranca/service/auditoria.service';
  * existe.
  */
 
-/** Por que uma turma nao recebeu modalidade. */
+/** Por que uma turma nao recebeu formato. */
 export type MotivoSemModalidade = 'SEM_AGENDAMENTO' | 'AMBIGUA';
 
-/** Quantas reservas cada modalidade tem numa turma. */
+/** Quantas reservas cada formato tem numa turma. */
 export interface ContagemPorModalidade {
   modalidadeId: number;
   codigo: string;
@@ -110,13 +110,13 @@ export type ModalidadeDaTurma =
       nome: string;
       reservas: number;
       /**
-       * Preenchido SO quando a modalidade veio de uma decisao do admin. Nulo na
+       * Preenchido SO quando o formato veio de uma decisao do admin. Nulo na
        * derivacao normal — a tela e o relatorio precisam distinguir "a turma so
        * tem EaD" de "alguem decidiu que ela vale como EaD".
        */
       escolha: EscolhaDoAdmin | null;
       /**
-       * As modalidades em disputa. Vazio quando a derivacao foi unanime; com 2+
+       * Os formatos em disputa. Vazio quando a derivacao foi unanime; com 2+
        * entradas quando a turma e ambigua e uma escolha a desempatou — e e daqui
        * que a tela monta o seletor para TROCAR a escolha.
        */
@@ -190,7 +190,7 @@ export class ModalidadeDaTurmaService {
   }
 
   /**
-   * Resolve a modalidade de TODAS as turmas de uma vez.
+   * Resolve o formato de TODAS as turmas de uma vez.
    *
    * Uma consulta agregada, e nao uma por turma: sao ~300 turmas por semestre, e
    * o lote ja gasta o tempo dele em rede contra a Valence. O mesmo motivo pelo
@@ -205,10 +205,10 @@ export class ModalidadeDaTurmaService {
    * Os periodos letivos vao no plural (`IN`) porque a janela cobre as duas
    * grades: uma turma presencial so tem reserva sob o org unit do semestre, e
    * consultar so o do modulo a devolveria como SEM_AGENDAMENTO — turma sem
-   * modalidade fica de fora do lote de datas, e a prova nao abre.
+   * formato fica de fora do lote de datas, e a prova nao abre.
    *
    * `status = CONFIRMADO` pelo mesmo motivo de toda contagem do projeto: quem
-   * cancelou devolveu a vaga e nao vai fazer a prova, entao a modalidade dele
+   * cancelou devolveu a vaga e nao vai fazer a prova, entao o formato dele
    * nao diz nada sobre esta turma.
    */
   async resolver(
@@ -269,9 +269,9 @@ export class ModalidadeDaTurmaService {
     const escolhas = await this.escolhasDaRodada([...porTurma.keys()], rodada);
 
     this.logger.log(
-      `Modalidade por turma: ${porTurma.size} turma(s) com agendamento confirmado ` +
+      `Formato por turma: ${porTurma.size} turma(s) com agendamento confirmado ` +
         `em ${periodoLetivoIds.join('+')}/${rodada}; ${ambiguas} com mais de ` +
-        `uma modalidade; ${escolhas.size} com desempate manual gravado.`,
+        `um formato; ${escolhas.size} com desempate manual gravado.`,
     );
 
     return {
@@ -286,13 +286,13 @@ export class ModalidadeDaTurmaService {
    * O ADMIN DESEMPATA — a unica escrita desta tabela
    * ==========================================================================
    *
-   * ⚠️ **So aceita turma que esta AMBIGUA AGORA, e so uma das modalidades que
+   * ⚠️ **So aceita turma que esta AMBIGUA AGORA, e so um dos formatos que
    * de fato tem reserva ali.** As duas checagens sao a razao de a rota existir
-   * do jeito que existe: sem a primeira, isto viraria "definir a modalidade de
+   * do jeito que existe: sem a primeira, isto viraria "definir o formato de
    * qualquer turma" — uma coluna de cadastro por outro nome, que e exatamente o
    * que a decisao de 10/08/2026 recusou. Sem a segunda, um clique errado (ou um
-   * `modalidadeId` chutado por um cliente qualquer) aplicaria a janela de uma
-   * modalidade que ninguem cursa, e a prova nao abriria para NINGUEM.
+   * `modalidadeId` chutado por um cliente qualquer) aplicaria a janela de um
+   * formato que ninguem cursa, e a prova nao abriria para NINGUEM.
    *
    * Trocar uma escolha ja gravada continua valendo: a turma segue ambigua por
    * baixo, e `decidir` a devolve com `candidatas` preenchidas justamente para
@@ -316,8 +316,8 @@ export class ModalidadeDaTurmaService {
 
     if (!eleita) {
       throw new BadRequestException(
-        `Nenhum aluno de prova nesta turma esta na modalidade informada. As ` +
-          `modalidades em disputa sao: ${candidatas
+        `Nenhum aluno de prova nesta turma este no formato informado. As ` +
+          `formatos em disputa sao: ${candidatas
             .map((c) => `${c.codigo} (${c.reservas})`)
             .join(', ')}. Escolher outra aplicaria uma janela de horario que ` +
           'nenhum aluno da turma usa, e ai a prova nao abriria para ninguem.',
@@ -338,7 +338,7 @@ export class ModalidadeDaTurmaService {
 
     // A decisao e do mesmo peso das outras da aba: ela muda EM QUE HORARIO uma
     // turma inteira abre a prova, e a pergunta "quem decidiu isto?" vai
-    // aparecer. Nenhum dado sensivel — turma, modalidade e quem escolheu.
+    // aparecer. Nenhum dado sensivel — turma, formato e quem escolheu.
     this.auditoria.registrar('DATA_QUIZ_MODALIDADE_ESCOLHIDA', {
       ator: admin,
       detalhe:
@@ -407,13 +407,13 @@ export class ModalidadeDaTurmaService {
     if (!turma) throw new NotFoundException('Turma nao encontrada.');
 
     // Turma sem orgUnitId nem chega ao lote: ela e uma das `naoResolvidas`, que
-    // ficam sem senha e sem data. Desempatar a modalidade dela nao resolveria
+    // ficam sem senha e sem data. Desempatar o formato dela nao resolveria
     // nada, e a decisao gravada nunca seria lida (o mapa e por orgUnitId).
     if (!turma.orgUnitId) {
       throw new BadRequestException(
         'Esta turma do CSV ainda nao casou com nenhuma oferta do semestre, ' +
           'entao ela fica de fora do lote inteiro — nem senha ela recebe. ' +
-          'Resolva isso antes: escolher a modalidade aqui nao teria efeito.',
+          'Resolva isso antes: escolher o formato aqui nao teria efeito.',
       );
     }
 
@@ -426,7 +426,7 @@ export class ModalidadeDaTurmaService {
   }
 
   /**
-   * As modalidades em disputa numa turma, exigindo que haja disputa.
+   * Os formatos em disputa numa turma, exigindo que haja disputa.
    *
    * Reusa `resolver` de proposito, em vez de uma consulta enxuta so desta
    * turma: e a MESMA pergunta que a conferencia e o lote fazem, e duas
@@ -446,15 +446,15 @@ export class ModalidadeDaTurmaService {
     if (decisao.situacao === 'ENCONTRADA') {
       throw new BadRequestException(
         `Esta turma nao esta ambigua: todos os alunos com prova nela sao ` +
-          `${decisao.codigo}, e a modalidade ja foi derivada sozinha. So ha o ` +
-          'que escolher quando alunos de modalidades diferentes tem prova na ' +
+          `${decisao.codigo}, e o formato ja foi derivado sozinha. So ha o ` +
+          'que escolher quando alunos de formatos diferentes tem prova na ' +
           'mesma turma.',
       );
     }
 
     throw new BadRequestException(
       'Nenhum agendamento confirmado aponta para esta turma nesta rodada, ' +
-        'entao nao ha modalidade nenhuma para escolher — nao e ambiguidade, e ' +
+        'entao nao ha formato nenhum para escolher — nao e ambiguidade, e ' +
         'ausencia. Se o prazo de agendamento ainda esta aberto, confira de ' +
         'novo depois do fechamento.',
     );
@@ -487,7 +487,7 @@ export class ModalidadeDaTurmaService {
   }
 
   /**
-   * A regra, isolada: uma modalidade resolve; zero ou duas, nao — a menos que
+   * A regra, isolada: um formato resolve; zero ou duas, nao — a menos que
    * um humano tenha desempatado as duas.
    *
    * ⚠️ **A `escolha` so e consultada no ramo ambiguo.** Nao e economia de
@@ -506,13 +506,13 @@ export class ModalidadeDaTurmaService {
         candidatas: [],
         detalhe:
           'Nenhum agendamento confirmado aponta para esta turma na rodada ' +
-          'vigente, entao nao ha de onde derivar a modalidade. Ou ninguem ' +
+          'vigente, entao nao ha de onde derivar o formato. Ou ninguem ' +
           'agendou ainda, ou a turma do CSV nao tem prova nesta rodada.',
       };
     }
 
     if (contagens.length > 1) {
-      // A escolha so vale se a modalidade escolhida AINDA tem reserva aqui. Uma
+      // A escolha so vale se o formato escolhido AINDA tem reserva aqui. Uma
       // janela aplicada em nome de quem ninguem cursa fecharia a prova para a
       // turma inteira, e nao so para a minoria.
       const eleita = escolha
@@ -551,12 +551,12 @@ export class ModalidadeDaTurmaService {
         // ja apareceu resolvida na conferencia de ontem, e sumir do painel sem
         // explicacao seria a pior versao deste aviso.
         detalhe:
-          `Alunos de ${contagens.length} modalidades tem prova nesta turma: ` +
+          `Alunos de ${contagens.length} formatos tem prova nesta turma: ` +
           `${detalhado}. O questionario tem uma janela so, entao nenhuma foi ` +
           'escolhida.' +
           (escolha
             ? ` A escolha anterior (${escolha.codigo}, de ${escolha.escolhidaPor}) ` +
-              'nao vale mais: nenhum aluno dessa modalidade tem prova aqui. ' +
+              'nao vale mais: nenhum aluno desse formato tem prova aqui. ' +
               'Escolha de novo.'
             : ''),
       };

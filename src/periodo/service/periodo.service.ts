@@ -54,7 +54,7 @@ export interface SituacaoPeriodo {
   /**
    * Id do periodo letivo no Brightspace. Vai gravado em cada agendamento.
    *
-   * ⚠️ E o do ALUNO quando `situacaoAtual` recebeu uma modalidade, e o
+   * ⚠️ E o do ALUNO quando `situacaoAtual` recebeu um formato, e o
    * PRINCIPAL da janela quando nao recebeu. A mesma janela cobre mais de um
    * periodo letivo ao mesmo tempo (modulos e semestres correm em paralelo), e
    * quem precisa dos dois usa `periodoLetivoIds`.
@@ -62,7 +62,7 @@ export interface SituacaoPeriodo {
   periodoLetivoId?: string;
   /**
    * TODOS os periodos letivos que esta janela cobre — o principal mais os do
-   * mapa por modalidade, sem repetir.
+   * mapa por formato, sem repetir.
    *
    * Existe porque as travas por PESSOA (uma prova por matricula em cada faixa)
    * nao podem recortar pelo periodo de UM vinculo: um mesmo RA pode ter um
@@ -95,7 +95,7 @@ export interface SituacaoPeriodo {
 
 export interface PeriodoVigente {
   /**
-   * O periodo letivo DESTE ALUNO — resolvido pela modalidade do vinculo. E o
+   * O periodo letivo DESTE ALUNO — resolvido pelo formato do vinculo. E o
    * que vai gravado na reserva como fotografia.
    */
   periodoLetivoId: string;
@@ -125,9 +125,9 @@ export interface LetivoDaModalidade {
   modalidadeNome: string;
   periodoLetivoId: string;
   /**
-   * `true` quando esta modalidade NAO tem linha propria no mapa e caiu no
+   * `true` quando este formato NAO tem linha propria no mapa e caiu no
    * periodo letivo principal da janela. A tela destaca; o log avisa. Nao e erro
-   * — e o que segura o sistema de pe quando uma modalidade nova e semeada
+   * — e o que segura o sistema de pe quando um formato novo e semeada
    * depois de a janela ja estar cadastrada.
    */
   herdadoDoPrincipal: boolean;
@@ -140,9 +140,9 @@ export interface PeriodoAdmin {
   periodoLetivoId: string;
   /**
    * O mapa `modalidade -> periodo letivo` desta janela, uma linha por
-   * modalidade cadastrada. Vai INTEIRO para a tela: e o unico jeito de um id
+   * formato cadastrado. Vai INTEIRO para a tela: e o unico jeito de um id
    * errado deixar de ser invisivel — o id que nao bate nao da erro, so devolve
-   * lista vazia de disciplina para a modalidade inteira.
+   * lista vazia de disciplina para o formato inteiro.
    */
   letivosPorModalidade: LetivoDaModalidade[];
   rodada: string;
@@ -229,7 +229,7 @@ export class PeriodoService {
     const base: SituacaoPeriodo = {
       aberto: false,
       encerrado: false,
-      // Com modalidade, o periodo letivo DELA; sem modalidade, o principal —
+      // Com formato, o periodo letivo DELA; sem formato, o principal —
       // e o caso de `GET /portal/periodo`, que so informa o prazo.
       periodoLetivoId: modalidadeCodigo
         ? this.resolverPorModalidade(periodo, modalidadeCodigo)
@@ -276,16 +276,16 @@ export class PeriodoService {
 
   /**
    * ==========================================================================
-   * O PERIODO LETIVO DE UM ALUNO — resolvido pela MODALIDADE do vinculo
+   * O PERIODO LETIVO DE UM ALUNO — resolvido pelo FORMATO do vinculo
    * ==========================================================================
    * Vigente, ABERTO OU NAO. A distincao importa: o portal usa isto para mostrar
    * so a prova atual, e o aluno precisa continuar enxergando onde e quando e a
    * prova dele depois de o prazo fechar. Fechar tranca a ESCOLHA, nao a consulta.
    *
-   * ⚠️ **A modalidade e obrigatoria, e e a metade nova da pergunta.** A UCB
+   * ⚠️ **O formato e obrigatorio, e e a metade nova da pergunta.** A UCB
    * corre duas grades em paralelo: EaD/Semi/Modular andam por MODULO (2026/4) e
    * Presencial anda por SEMESTRE (2026/2) — dois org units vivos ao mesmo tempo
-   * no Brightspace. Sem a modalidade nao ha resposta certa, so um chute que
+   * no Brightspace. Sem o formato nao ha resposta certa, so um chute que
    * deixa metade da universidade sem disciplina agendavel. E deixa em silencio:
    * o org unit errado devolve 200 com lista vazia, nunca um erro.
    *
@@ -373,9 +373,9 @@ export class PeriodoService {
   }
 
   /**
-   * O periodo letivo de uma modalidade dentro de UMA janela ja carregada.
+   * O periodo letivo de um formato dentro de UMA janela ja carregada.
    *
-   * O fallback para o principal e deliberado e ruidoso: uma modalidade semeada
+   * O fallback para o principal e deliberado e ruidoso: um formato semeado
    * depois de a janela ser cadastrada nao pode derrubar o agendamento das
    * outras, mas tambem nao pode passar despercebida — o aluno dela vai buscar
    * disciplina na arvore errada e receber lista vazia. Por isso o `warn` diz
@@ -394,7 +394,7 @@ export class PeriodoService {
     if (linha) return linha.periodoLetivoId;
 
     this.logger.warn(
-      `A modalidade ${codigo} nao tem periodo letivo proprio na janela ` +
+      `O formato ${codigo} nao tem periodo letivo proprio na janela ` +
         `${periodo.id} e caiu no principal (${periodo.periodoLetivoId}). Se ela ` +
         'nao segue a mesma grade, os alunos dela vao receber "nenhuma disciplina ' +
         'sua aparece no periodo letivo vigente". Cadastre o mapa em /periodos.',
@@ -407,7 +407,7 @@ export class PeriodoService {
    * Devolve o periodo vigente ou recusa a operacao com o motivo exato — o aluno
    * precisa saber se ainda nao abriu, se ja fechou, ou se ninguem configurou.
    *
-   * Recebe a modalidade do VINCULO e devolve os dois recortes de uma leitura so:
+   * Recebe o formato do VINCULO e devolve os dois recortes de uma leitura so:
    * `periodoLetivoId` (o do aluno, que vai gravado na reserva) e
    * `periodoLetivoIds` (a janela inteira, que as travas por pessoa usam). Ler os
    * dois separadamente abriria a janela para eles divergirem no meio da
@@ -462,7 +462,7 @@ export class PeriodoService {
     }
 
     return {
-      // Sem modalidade: aqui e o PRINCIPAL. A declaracao filtra pela janela
+      // Sem formato: aqui e o PRINCIPAL. A declaracao filtra pela janela
       // inteira (`periodoLetivoIds`), porque o aluno pode ter dois vinculos em
       // grades diferentes e as duas provas sao dele.
       periodoLetivoId: situacao.periodoLetivoId!,
@@ -485,7 +485,7 @@ export class PeriodoService {
 
     if (periodos.length === 0) return [];
 
-    // O mapa vai para a tela com TODAS as modalidades, inclusive as que nao tem
+    // O mapa vai para a tela com TODOS os formatos, inclusive as que nao tem
     // linha propria — sao justamente as que o admin precisa ver para saber que
     // caem no principal.
     const modalidades = await this.prisma.modalidade.findMany({
@@ -554,15 +554,15 @@ export class PeriodoService {
     /**
      * O mapa `modalidade -> periodo letivo` desta janela.
      *
-     * OMITIDO = todas as modalidades ficam no `periodoLetivoId` principal. E o
+     * OMITIDO = todos os formatos ficam no `periodoLetivoId` principal. E o
      * comportamento de antes do mapa, e continua sendo o caso legitimo de quem
      * tem uma grade so.
      *
-     * INFORMADO = tem de cobrir TODAS as modalidades cadastradas. Cobrir
-     * parcialmente seria pior que nao cobrir: a modalidade esquecida cairia no
+     * INFORMADO = tem de cobrir TODOS os formatos cadastrados. Cobrir
+     * parcialmente seria pior que nao cobrir: o formato esquecido cairia no
      * principal em silencio, que e exatamente o erro que o mapa existe para
      * impedir. Recusar aqui custa uma correcao de formulario; deixar passar
-     * custa uma modalidade inteira sem disciplina no dia da abertura.
+     * custa um formato inteiro sem disciplina no dia da abertura.
      */
     letivosPorModalidade?: {
       modalidadeCodigo: string;
@@ -645,16 +645,16 @@ export class PeriodoService {
 
   /**
    * ==========================================================================
-   * O MAPA VALIDADO — traduz codigos de modalidade em linhas gravaveis
+   * O MAPA VALIDADO — traduz codigos de formato em linhas gravaveis
    * ==========================================================================
    * Tres recusas, todas pelo mesmo motivo: o `periodoLetivoId` errado NAO da
    * erro em lugar nenhum. A busca de ofertas responde 200 com lista vazia, a
-   * intersecao com as matriculas do aluno da vazia, e a modalidade inteira
+   * intersecao com as matriculas do aluno da vazia, e o formato inteiro
    * recebe "nenhuma disciplina sua aparece no periodo letivo vigente". Toda
    * conferencia que nao acontecer aqui vira suporte no dia da abertura.
    *
-   * 1. codigo de modalidade que nao existe → 400 dizendo quais existem;
-   * 2. modalidade cadastrada que ficou de fora → 400 nomeando as que faltam;
+   * 1. codigo de formato que nao existe → 400 dizendo quais existem;
+   * 2. formato cadastrado que ficou de fora → 400 nomeando as que faltam;
    * 3. `periodoLetivoId` vazio → 400.
    */
   private async exigirMapaCompleto(
@@ -665,7 +665,7 @@ export class PeriodoService {
       orderBy: { id: 'asc' },
     });
 
-    // Sem modalidade cadastrada nao ha mapa a montar — banco recem-migrado,
+    // Sem formato cadastrado nao ha mapa a montar — banco recem-migrado,
     // antes do seed. A janela nasce so com o principal e o seed seguinte nao
     // quebra nada: `resolverPorModalidade` cai no principal e avisa.
     if (modalidades.length === 0) return [];
@@ -689,7 +689,7 @@ export class PeriodoService {
 
       if (!modalidade) {
         throw new BadRequestException(
-          `Modalidade "${linha.modalidadeCodigo}" nao existe. As cadastradas sao: ` +
+          `Formato "${linha.modalidadeCodigo}" nao existe. Os cadastrados sao: ` +
             `${modalidades.map((m) => m.codigo).join(', ')}.`,
         );
       }
@@ -698,7 +698,7 @@ export class PeriodoService {
 
       if (!letivo) {
         throw new BadRequestException(
-          `Informe o periodo letivo da modalidade ${modalidade.codigo}. Sem ele, ` +
+          `Informe o periodo letivo do formato ${modalidade.codigo}. Sem ele, ` +
             'os alunos dela nao teriam disciplina nenhuma para agendar.',
         );
       }
@@ -711,7 +711,7 @@ export class PeriodoService {
     if (faltando.length > 0) {
       throw new BadRequestException(
         `Falta o periodo letivo de: ${faltando.map((m) => m.codigo).join(', ')}. ` +
-          'O mapa tem de cobrir todas as modalidades — a que ficar de fora cai no ' +
+          'O mapa tem de cobrir todos os formatos — a que ficar de fora cai no ' +
           'periodo letivo principal em silencio, e os alunos dela recebem "nenhuma ' +
           'disciplina sua aparece no periodo letivo vigente" sem nada indicando a causa.',
       );
@@ -725,7 +725,7 @@ export class PeriodoService {
 
   /**
    * ⚠️ `periodoLetivoId` (o principal) NAO se edita. `rodada` e o MAPA por
-   * modalidade so enquanto a janela esta VAZIA — ver `exigirJanelaVazia`.
+   * formato so enquanto a janela esta VAZIA — ver `exigirJanelaVazia`.
    */
   async atualizar(
     id: number,
@@ -733,7 +733,7 @@ export class PeriodoService {
       rodada?: string;
       /**
        * O mapa novo, INTEIRO. Nao ha edicao de uma linha so: o mapa e validado
-       * como conjunto (toda modalidade coberta), e aceitar um pedaco deixaria o
+       * como conjunto (todo formato coberto), e aceitar um pedaco deixaria o
        * resto no estado anterior sem ninguem conferir se os dois ainda fazem
        * sentido juntos.
        */
@@ -815,7 +815,7 @@ export class PeriodoService {
         await this.exigirJanelaVazia(
           tx,
           periodo,
-          'o periodo letivo por modalidade',
+          'o periodo letivo por formato',
         );
 
         await tx.periodoLetivoModalidade.deleteMany({
@@ -1006,7 +1006,7 @@ export class PeriodoService {
    * ==========================================================================
    * MEXER NA CHAVE DA JANELA: so enquanto ela nao tiver prova nenhuma
    * ==========================================================================
-   * Vale para a `rodada` E para o mapa por modalidade — as duas metades da
+   * Vale para a `rodada` E para o mapa por formato — as duas metades da
    * chave que liga esta janela as reservas, e as duas gravadas em cada
    * `Agendamento` como FOTOGRAFIA, no instante da reserva.
    *
@@ -1095,7 +1095,7 @@ type JanelaComMapa = {
  * Todos os periodos letivos que a janela cobre, sem repetir.
  *
  * O PRINCIPAL entra sempre, mesmo quando ja esta no mapa: ele e o destino do
- * fallback de uma modalidade sem linha propria, entao uma reserva pode ter sido
+ * fallback de um formato sem linha propria, entao uma reserva pode ter sido
  * gravada com ele. Deixa-lo de fora faria essa prova sumir de toda consulta pela
  * janela — e ela existe.
  */
@@ -1112,7 +1112,7 @@ export function idsDaJanela(periodo: {
 }
 
 /**
- * O mapa como a TELA do admin precisa ver: uma linha por modalidade cadastrada,
+ * O mapa como a TELA do admin precisa ver: uma linha por formato cadastrado,
  * inclusive as que nao tem entrada propria e caem no principal — sao justamente
  * as que ele precisa enxergar para decidir se aquilo esta certo.
  */

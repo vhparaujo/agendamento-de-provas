@@ -19,8 +19,8 @@ import { SenhaQuizService } from '../service/senha-quiz.service';
  * `tipo: SENHA` — uma celula da grade (dia + turno), aplicada em todas as turmas
  * do CSV que pertencem ao periodo letivo vigente.
  *
- * `tipo: DATA` — uma janela (`StartDate`/`EndDate`), aplicada nas turmas de UMA
- * modalidade. A modalidade da turma nao existe no cadastro: e derivada dos
+ * `tipo: DATA` — uma janela (`StartDate`/`EndDate`), aplicada nas turmas de UM
+ * formato. O formato da turma nao existe no cadastro: e derivado dos
  * agendamentos confirmados (`ModalidadeDaTurmaService`).
  *
  * Desde 26/08/2026 o lote `DATA` faz uma terceira coisa no MESMO disparo: troca
@@ -70,7 +70,7 @@ import { SenhaQuizService } from '../service/senha-quiz.service';
     SenhaQuizService,
     SenhaQuizCron,
   ],
-  // Grade de grupos e modalidade da turma: o modulo de grupos do Brightspace
+  // Grade de grupos e formato da turma: o modulo de grupos do Brightspace
   // grava os nomes na MESMA grade e escolhe a categoria pela MESMA derivacao.
   exports: [
     SenhaQuizService,

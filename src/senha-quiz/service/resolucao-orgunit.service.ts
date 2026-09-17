@@ -85,7 +85,7 @@ export class ResolucaoOrgUnitService {
    * nova no CSV entrar no lote seguinte sem ninguem precisar fazer nada.
    *
    * Recebe os periodos letivos da JANELA, no plural: o CSV de turmas nao separa
-   * modalidade, e as turmas dos presenciais vivem sob o org unit do semestre
+   * formato, e as turmas dos presenciais vivem sob o org unit do semestre
    * enquanto as dos modulares vivem sob o do modulo. Resolver contra um so
    * deixaria metade das turmas em `naoResolvidas` — e elas ficariam de fora do
    * lote de senhas, com a prova trancada no dia.

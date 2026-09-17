@@ -52,7 +52,7 @@ export interface AlunoNaLista {
 /** Tudo que uma pagina precisa dizer sobre si mesma. */
 export interface ListaDePresenca {
   polo: string;
-  /** Da oferta (`SalaFaixa`): a modalidade em que a sala esta travada. */
+  /** Da oferta (`SalaFaixa`): o formato em que a sala esta travada. */
   modalidade: string;
   sala: string;
   data: Date;
@@ -80,7 +80,7 @@ const COLUNAS = [
   { titulo: 'Nº', largura: 26 },
   { titulo: 'RA', largura: 85 },
   { titulo: 'Nome', largura: 215 },
-  { titulo: 'Modalidade', largura: 74 },
+  { titulo: 'Formato', largura: 74 },
   { titulo: 'Assinatura', largura: 115 },
 ] as const;
 

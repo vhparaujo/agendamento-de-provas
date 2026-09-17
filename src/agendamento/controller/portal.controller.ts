@@ -43,7 +43,7 @@ const DESCRICAO_ALUNO_ID =
 
 /**
  * O que o ALUNO acessa depois do launch LTI. Tudo aqui e filtrado pelo vinculo:
- * ele nunca escolhe polo nem modalidade, que vem do CSV importado.
+ * ele nunca escolhe polo nem formato, que vem do CSV importado.
  */
 @ApiTags(TAGS.PORTAL)
 @Controller('portal')
@@ -104,7 +104,7 @@ export class PortalController {
   @ApiOperation({
     summary: 'Os horarios que este aluno pode escolher',
     description:
-      'Faixas do polo do aluno que ofertam a modalidade dele, ativas e ainda por ' +
+      'Faixas do polo do aluno que ofertam o formato dele, ativas e ainda por ' +
       'acontecer. Sem sala: a sala e definida pela alocacao na hora de confirmar. ' +
       'Horario lotado vem com `temVaga: false` em vez de sumir da lista.',
   })

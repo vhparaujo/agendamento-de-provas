@@ -1,0 +1,11 @@
+-- O formato MODULAR passa a se chamar so "Modular" (17/09/2026).
+--
+-- "Hibrido" nao e o nome correto: era o rotulo da aba da planilha, e o seed
+-- gravava "Modular / Híbrido". O seed ja foi corrigido, mas producao tem dados
+-- e nao roda seed — por isso o nome vai por migration, que o `CMD` do container
+-- aplica no start (`prisma migrate deploy`).
+--
+-- So o `nome` (o rotulo exibido). O `codigo` continua `MODULAR`, e e ele que o
+-- codigo usa; agendamentos apontam por `modalidadeId`, entao nada mais muda.
+-- Idempotente: numa base que ja tem "Modular", nao altera linha nenhuma.
+UPDATE `modalidade` SET `nome` = 'Modular' WHERE `codigo` = 'MODULAR';

@@ -33,10 +33,10 @@ import { createMariaDbAdapter } from '../src/database/mariadb-adapter';
  * reaproveitam as mesmas salas. Seis salas cobrem o dia inteiro sem nenhum
  * choque fisico, e se repetem em todos os dias do periodo.
  *
- * SEMI e MODULAR ganham salas PROPRIAS na mesma faixa porque a modalidade vive
+ * SEMI e MODULAR ganham salas PROPRIAS na mesma faixa porque o formato vive
  * na oferta, nao na faixa: uma faixa so com salas SEMI deixaria todo aluno
  * Modular sem onde agendar naquele horario — que e justamente o que se quer
- * testar. Sao 2 salas por modalidade, como pedido, e nao 2 por faixa.
+ * testar. Sao 2 salas por formato, como pedido, e nao 2 por faixa.
  */
 
 const DATA_INICIO = '2026-08-17';
@@ -45,7 +45,7 @@ const DATA_FIM = '2026-08-23';
 const CAPACIDADE_MINIMA = 20;
 const CAPACIDADE_MAXIMA = 30;
 
-/** Horarios de EaD — 3h, a duracao da modalidade. */
+/** Horarios de EaD — 3h, a duracao do formato. */
 const FAIXAS_EAD = [
   { horaInicio: '09:00', horaFim: '12:00' },
   { horaInicio: '15:00', horaFim: '18:00' },
@@ -53,8 +53,8 @@ const FAIXAS_EAD = [
 ] as const;
 
 /**
- * Horarios de SEMI e MODULAR — 1h30 cada, as mesmas faixas para as duas
- * modalidades. Agrupados pelo bloco do dia (manha/tarde/noite) na mesma ordem
+ * Horarios de SEMI e MODULAR — 1h30 cada, as mesmas faixas para os dois
+ * formatos. Agrupados pelo bloco do dia (manha/tarde/noite) na mesma ordem
  * de FAIXAS_EAD: e o indice do bloco que decide quais salas cada faixa usa.
  */
 const FAIXAS_CURTAS_POR_BLOCO = [
@@ -72,7 +72,7 @@ const FAIXAS_CURTAS_POR_BLOCO = [
   ],
 ] as const;
 
-/** Quais salas (1-based, na ordem de criacao) atendem cada modalidade. */
+/** Quais salas (1-based, na ordem de criacao) atendem cada formato. */
 const SALAS_EAD = [1, 2];
 const SALAS_SEMI = [3, 4];
 const SALAS_MODULAR = [5, 6];
@@ -187,7 +187,7 @@ async function main(): Promise<void> {
     const modular = idPorCodigo.get('MODULAR');
 
     if (!ead || !semi || !modular) {
-      throw new Error('modalidades ausentes — rode `npm run seed` antes');
+      throw new Error('formatos ausentes — rode `npm run seed` antes');
     }
 
     const polos = await prisma.polo.findMany({

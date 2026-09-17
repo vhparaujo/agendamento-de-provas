@@ -26,8 +26,8 @@ import {
 import { SalaFaixaService } from '../service/sala-faixa.service';
 
 /**
- * Uma oferta = Sala + Faixa + Modalidade + vagas + ordem (SalaFaixa). E o nucleo
- * do modelo: e aqui que modalidade e vaga existem de fato.
+ * Uma oferta = Sala + Faixa + Formato + vagas + ordem (SalaFaixa). E o nucleo
+ * do modelo: e aqui que formato e vaga existem de fato.
  *
  * Criar oferta e feito pelas rotas de faixa (POST /faixas e POST /faixas/:id/salas),
  * porque oferta nasce sempre dentro de uma faixa.
@@ -51,8 +51,8 @@ export class SalaFaixaController {
   @ApiOperation({
     summary: 'Ajusta vagas e ordem de preenchimento',
     description:
-      'A MODALIDADE nao muda por aqui: dentro de uma faixa a sala fica travada ' +
-      'numa modalidade, e troca-la depois de haver agendamento colocaria alunos ' +
+      'O FORMATO nao muda por aqui: dentro de uma faixa a sala fica travada ' +
+      'num formato, e troca-lo depois de haver agendamento colocaria alunos ' +
       'numa prova de outra duracao. Para mudar, remova a oferta e adicione de novo.\n\n' +
       'Reduzir `vagas` abaixo do numero de alunos ja agendados e recusado.',
   })
@@ -62,7 +62,7 @@ export class SalaFaixaController {
   @ApiNotFoundResponse({ description: 'Oferta nao encontrada' })
   @ApiConflictResponse({
     description:
-      'Ordem ja usada na modalidade, ou vagas abaixo dos agendamentos existentes',
+      'Ordem ja usada no formato, ou vagas abaixo dos agendamentos existentes',
   })
   atualizar(
     @Param('id', ParseIntPipe) id: number,

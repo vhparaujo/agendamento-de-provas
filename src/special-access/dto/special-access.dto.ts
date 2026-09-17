@@ -41,7 +41,7 @@ export class TempoDaModalidadeEntradaDto {
     example: 180,
     minimum: 1,
     maximum: TEMPO_MAXIMO_DA_VALENCE,
-    description: 'O tempo do questionario, em minutos, para esta modalidade.',
+    description: 'O tempo do questionario, em minutos, para este formato.',
   })
   @Type(() => Number)
   @IsInt()
@@ -77,7 +77,7 @@ export class SalvarConfiguracaoSpecialAccessDto {
   @ApiProperty({
     type: [TempoDaModalidadeEntradaDto],
     description:
-      'O tempo de prova de cada modalidade. Modalidade que nao vier nao muda.',
+      'O tempo de prova de cada formato. Formato que nao vier nao muda.',
   })
   @IsArray()
   @ArrayMaxSize(20)
@@ -129,7 +129,7 @@ export class TempoDaModalidadeDto implements TempoDaModalidade {
 
   @ApiProperty({
     example: 180,
-    description: 'O tamanho de faixa que a modalidade exige. So leitura aqui.',
+    description: 'O tamanho de faixa que o formato exige. So leitura aqui.',
   })
   duracaoMinutos!: number;
 

@@ -12,7 +12,7 @@ import { PrismaService } from './../src/database/prisma.service';
  * Os tokens sao emitidos pelo proprio AuthService (o mesmo caminho do launch
  * LTI), so pulando a assinatura do Brightspace, que nao da para reproduzir aqui.
  *
- * Requer banco de pe, migrations e seed (modalidades).
+ * Requer banco de pe, migrations e seed (formatos).
  */
 describe('Portal do aluno: listar e agendar (e2e)', () => {
   let app: INestApplication<App>;

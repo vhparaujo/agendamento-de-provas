@@ -133,7 +133,7 @@ export class AgendamentoIntegracaoDto implements AgendamentoIntegracao {
 
   @ApiProperty({
     type: ModalidadeDoPortalDto,
-    description: 'O "Formato" da prova (modalidade e duracao).',
+    description: 'O formato da prova e a sua duracao.',
   })
   formato!: ModalidadeDoPortalDto;
 

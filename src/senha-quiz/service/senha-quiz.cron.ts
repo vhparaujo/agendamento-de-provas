@@ -48,8 +48,8 @@ import { minutosDaHora, rotuloDoTurno, turnoParaDisparar } from './turno';
  * DESDE 25/08/2026 O TICK DECIDE DUAS COISAS
  * ============================================================================
  * A SENHA (uma celula da grade, em todas as turmas) e a DATA (uma janela, nas
- * turmas de uma modalidade). Sao dois calendarios independentes: tres horarios
- * de turno contra ate seis janelas por modalidade.
+ * turmas de um formato). Sao dois calendarios independentes: tres horarios
+ * de turno contra ate seis janelas por formato.
  *
  * ⚠️ **UM DISPARO POR TICK, e nunca dois.** Os dois lotes fazem GET -> altera ->
  * PUT no MESMO questionario, e o PUT substitui o objeto inteiro;
@@ -117,7 +117,7 @@ export class SenhaQuizCron {
     //
     // (0a) ...a menos que o SPECIAL ACCESS substitua as janelas (15/09/2026). O
     // questionario preparado nao tem data, e aplicar uma janela aqui o abriria
-    // no horario de UMA modalidade. A senha continua, logo abaixo.
+    // no horario de UM formato. A senha continua, logo abaixo.
     const substituidas = await this.janelasSubstituidas(data);
     if (!substituidas && (await this.decidirDatas(data, hhmm, cfg))) return;
 
@@ -287,7 +287,7 @@ export class SenhaQuizCron {
 
       // Idempotencia NO BANCO — e o que sobrevive ao restart. Se esta janela ja
       // rodou hoje, passa para a proxima candidata em vez de sair: as 12:01 sao
-      // tres modalidades, e parar na primeira ja concluida deixaria as outras
+      // tres formatos, e parar no primeiro ja concluido deixaria os outros
       // duas para o minuto seguinte sem necessidade.
       // A celula da grade de grupos do dia ALVO — a janela das 22:01 le a de
       // amanha, como a senha. Mesma consulta que o lote fara ao comecar.

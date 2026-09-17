@@ -124,7 +124,7 @@ export async function exigirUmaProvaPorFaixa(
 }
 
 /**
- * O portao: trava as ofertas da faixa+modalidade e devolve a que a alocacao
+ * O portao: trava as ofertas da faixa+formato e devolve a que a alocacao
  * sequencial escolheu. Toda gravacao de vaga naquelas salas passa por aqui, uma
  * de cada vez — e a contagem so acontece DEPOIS do lock.
  *
@@ -150,7 +150,7 @@ export async function escolherOfertaComLock(
 
   if (travadas.length === 0) {
     throw new ConflictException(
-      'Este horario nao atende a modalidade deste curso.',
+      'Este horario nao atende o formato deste curso.',
     );
   }
 

@@ -17,7 +17,7 @@ const ambigua = (...codigos: string[]): ModalidadeDaTurma => ({
   situacao: 'SEM_MODALIDADE',
   motivo: 'AMBIGUA',
   candidatas: codigos.map((c) => contagem(c)),
-  detalhe: `Alunos de ${codigos.length} modalidades.`,
+  detalhe: `Alunos de ${codigos.length} formatos.`,
 });
 
 const encontrada = (codigo: string): ModalidadeDaTurma => ({
@@ -51,7 +51,7 @@ describe('Blocos de grupos', () => {
   });
 
   describe('blocoDaTurma', () => {
-    it('turma de uma modalidade vai para o bloco dela', () => {
+    it('turma de um formato vai para o bloco dela', () => {
       expect(blocoDaTurma(encontrada('EAD'))).toEqual({
         situacao: 'BLOCO',
         bloco: 'EAD',

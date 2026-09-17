@@ -212,7 +212,7 @@ export class EstatisticasDaJanelaDto implements EstatisticasDaJanela {
   @ApiProperty({
     type: () => [CapacidadeDaCombinacaoDto],
     description:
-      'Por polo + modalidade: pendentes contra vagas livres nas faixas ativas ' +
+      'Por polo + formato: pendentes contra vagas livres nas faixas ativas ' +
       'de hoje em diante. Pior saldo primeiro.',
   })
   capacidade!: CapacidadeDaCombinacaoDto[];

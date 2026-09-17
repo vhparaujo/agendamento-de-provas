@@ -517,7 +517,7 @@ export class SpecialAccessService {
               matricula: true,
               userIdD2L: true,
               status: true,
-              // A modalidade da RESERVA (fotografia), e nao a do vinculo hoje:
+              // O formato da RESERVA (fotografia), e nao a do vinculo hoje:
               // a prova acontece na duracao com que foi marcada.
               modalidade: { select: { tempoDeProvaMinutos: true } },
               salaFaixa: {
