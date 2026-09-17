@@ -5,7 +5,6 @@ import type {
   AgendamentosDoDia,
   AgendamentoAdmin,
   AgendamentoPeloAdmin,
-  CapacidadeDaCombinacao,
   EstatisticasDaJanela,
   EventoDoHistorico,
   LinhaDoResumo,
@@ -210,46 +209,12 @@ export class EstatisticasDaJanelaDto implements EstatisticasDaJanela {
   agendadosInativos!: number;
 
   @ApiProperty({
-    type: () => [CapacidadeDaCombinacaoDto],
-    description:
-      'Por polo + formato: pendentes contra vagas livres nas faixas ativas ' +
-      'de hoje em diante. Pior saldo primeiro.',
-  })
-  capacidade!: CapacidadeDaCombinacaoDto[];
-
-  @ApiProperty({
     type: () => [AgendamentosDoDiaDto],
     description:
       'Reservas confirmadas por dia de criacao (fuso da operacao), por origem. ' +
       'So os dias com alguma reserva.',
   })
   porDia!: AgendamentosDoDiaDto[];
-}
-
-class CapacidadeDaCombinacaoDto implements CapacidadeDaCombinacao {
-  @ApiProperty({ example: 6 })
-  poloId!: number;
-
-  @ApiProperty({ example: 'Câmpus Taguatinga' })
-  polo!: string;
-
-  @ApiProperty({ example: 1 })
-  modalidadeId!: number;
-
-  @ApiProperty({ example: 'EaD' })
-  modalidade!: string;
-
-  @ApiProperty({
-    example: 310,
-    description: 'Vinculos ativos sem prova confirmada na rodada vigente.',
-  })
-  pendentes!: number;
-
-  @ApiProperty({
-    example: 180,
-    description: 'Cadeiras livres nas ofertas ativas de hoje em diante.',
-  })
-  vagasRestantes!: number;
 }
 
 class AgendamentosDoDiaDto implements AgendamentosDoDia {

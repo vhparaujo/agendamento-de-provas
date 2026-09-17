@@ -168,24 +168,8 @@ export interface EstatisticasDaJanela {
    * do periodo.
    */
   agendadosInativos: number;
-  /**
-   * Cabe todo mundo? Por polo + formato, quem ainda nao tem prova contra as
-   * cadeiras livres nas faixas de hoje em diante. Pior saldo primeiro.
-   */
-  capacidade: CapacidadeDaCombinacao[];
   /** Reservas confirmadas por dia de CRIACAO (fuso da operacao), por origem. */
   porDia: AgendamentosDoDia[];
-}
-
-export interface CapacidadeDaCombinacao {
-  poloId: number;
-  polo: string;
-  modalidadeId: number;
-  modalidade: string;
-  /** Vinculos ativos sem prova confirmada na rodada vigente. */
-  pendentes: number;
-  /** Soma de `vagas - confirmados` das ofertas futuras e ativas. */
-  vagasRestantes: number;
 }
 
 export interface AgendamentosDoDia {
@@ -1031,8 +1015,7 @@ export class AgendamentoAdminService {
    * ==========================================================================
    * As perguntas da administracao durante a janela: quantos ja agendaram, em
    * qual formato esta faltando gente, quanto disso o aluno fez sozinho
-   * versus o compulsorio, em que ritmo, e se as vagas que sobram cabem quem
-   * falta (por polo + formato, que e onde a vaga existe de fato).
+   * versus o compulsorio, e em que ritmo.
    *
    * A BASE sao os vinculos ATIVOS — os mesmos que o compulsorio considera
    * elegiveis. Trancado ou cancelado nao pode agendar, e conta-lo no total
@@ -1050,42 +1033,15 @@ export class AgendamentoAdminService {
   }): Promise<EstatisticasDaJanela> {
     const janela = await this.periodo.janelaVigente();
 
-    const [modalidades, polos, vinculos, ofertas] = await Promise.all([
+    const [modalidades, vinculos] = await Promise.all([
       this.prisma.modalidade.findMany({
         orderBy: { id: 'asc' },
         select: { id: true, nome: true },
       }),
-      this.prisma.polo.findMany({ select: { id: true, nome: true } }),
       this.prisma.alunoImportado.groupBy({
-        by: ['poloId', 'modalidadeId'],
+        by: ['modalidadeId'],
         where: { ativo: true, poloId: filtro.poloId },
         _count: { _all: true },
-      }),
-      // As vagas que o compulsorio ainda pode usar: o MESMO recorte de
-      // `faixasPorPolo` (faixa ativa, de hoje em diante). Contar faixa passada
-      // prometeria cadeira numa prova que ja aconteceu.
-      this.prisma.salaFaixa.findMany({
-        where: {
-          faixa: {
-            ativo: true,
-            data: { gte: hojeUtc() },
-            poloId: filtro.poloId,
-          },
-        },
-        select: {
-          vagas: true,
-          modalidadeId: true,
-          faixa: { select: { poloId: true } },
-          // Ocupacao contada igual em todo lugar: CONFIRMADO, de qualquer
-          // rodada — a cadeira tomada nao volta por ser de outra prova.
-          _count: {
-            select: {
-              agendamentos: {
-                where: { status: StatusAgendamento.CONFIRMADO },
-              },
-            },
-          },
-        },
       }),
     ]);
 
@@ -1101,9 +1057,7 @@ export class AgendamentoAdminService {
           select: {
             alunoId: true,
             createdAt: true,
-            aluno: {
-              select: { ativo: true, modalidadeId: true, poloId: true },
-            },
+            aluno: { select: { ativo: true, modalidadeId: true } },
             historico: {
               where: { evento: EventoAgendamento.CRIADO },
               select: { autorTipo: true, autor: true },
@@ -1118,7 +1072,7 @@ export class AgendamentoAdminService {
     // duplicata, se um dia existir, nao infle a adesao acima de 100%.
     const porVinculo = new Map(reservas.map((r) => [r.alunoId, r]));
 
-    const agendadosPorCombinacao = new Map<string, number>();
+    const agendadosPorModalidade = new Map<number, number>();
     const porOrigem = { aluno: 0, compulsorio: 0, admin: 0, semRegistro: 0 };
     const porDia = new Map<string, AgendamentosDoDia>();
     let agendadosInativos = 0;
@@ -1129,11 +1083,7 @@ export class AgendamentoAdminService {
         continue;
       }
 
-      somar(
-        agendadosPorCombinacao,
-        chaveDaCombinacao(reserva.aluno.poloId, reserva.aluno.modalidadeId),
-        1,
-      );
+      somar(agendadosPorModalidade, reserva.aluno.modalidadeId, 1);
 
       const campo =
         CAMPO_DA_ORIGEM[
@@ -1154,58 +1104,9 @@ export class AgendamentoAdminService {
       porDia.set(dia, doDia);
     }
 
-    const vagasPorCombinacao = new Map<string, number>();
-    for (const oferta of ofertas) {
-      somar(
-        vagasPorCombinacao,
-        chaveDaCombinacao(oferta.faixa.poloId, oferta.modalidadeId),
-        Math.max(0, oferta.vagas - oferta._count.agendamentos),
-      );
-    }
-
-    const nomeDaModalidade = new Map(modalidades.map((m) => [m.id, m.nome]));
-    const nomeDoPolo = new Map(polos.map((p) => [p.id, p.nome]));
-
-    const totalPorModalidade = new Map<number, number>();
-    const agendadosPorModalidade = new Map<number, number>();
-    const capacidade = new Map<string, CapacidadeDaCombinacao>();
-
-    const linhaDe = (poloId: number, modalidadeId: number) => {
-      const chave = chaveDaCombinacao(poloId, modalidadeId);
-      const linha = capacidade.get(chave) ?? {
-        poloId,
-        polo: nomeDoPolo.get(poloId) ?? `Polo ${poloId}`,
-        modalidadeId,
-        modalidade: nomeDaModalidade.get(modalidadeId) ?? `${modalidadeId}`,
-        pendentes: 0,
-        vagasRestantes: vagasPorCombinacao.get(chave) ?? 0,
-      };
-      capacidade.set(chave, linha);
-      return linha;
-    };
-
-    for (const v of vinculos) {
-      const total = v._count._all;
-      const agendados =
-        agendadosPorCombinacao.get(
-          chaveDaCombinacao(v.poloId, v.modalidadeId),
-        ) ?? 0;
-
-      somar(totalPorModalidade, v.modalidadeId, total);
-      somar(agendadosPorModalidade, v.modalidadeId, agendados);
-
-      linhaDe(v.poloId, v.modalidadeId).pendentes = Math.max(
-        0,
-        total - agendados,
-      );
-    }
-
-    // Vaga sobrando onde nao ha aluno tambem vira linha: e a sala que talvez
-    // nem precise abrir.
-    for (const chave of vagasPorCombinacao.keys()) {
-      const [poloId, modalidadeId] = chave.split(':').map(Number);
-      linhaDe(poloId, modalidadeId);
-    }
+    const totalPorModalidade = new Map(
+      vinculos.map((v) => [v.modalidadeId, v._count._all]),
+    );
 
     const porModalidade = modalidades
       .map((m) => ({
@@ -1224,13 +1125,6 @@ export class AgendamentoAdminService {
       porModalidade,
       porOrigem,
       agendadosInativos,
-      // Pior saldo primeiro: e a lista de onde abrir sala antes do compulsorio.
-      capacidade: [...capacidade.values()].sort(
-        (a, b) =>
-          a.vagasRestantes - a.pendentes - (b.vagasRestantes - b.pendentes) ||
-          a.polo.localeCompare(b.polo, 'pt-BR') ||
-          a.modalidadeId - b.modalidadeId,
-      ),
       porDia: [...porDia.values()].sort((a, b) => a.dia.localeCompare(b.dia)),
     };
   }
@@ -1615,9 +1509,6 @@ const CAMPO_DA_ORIGEM = {
   ADMIN: 'admin',
   SEM_REGISTRO: 'semRegistro',
 } as const;
-
-const chaveDaCombinacao = (poloId: number, modalidadeId: number) =>
-  `${poloId}:${modalidadeId}`;
 
 function somar<K>(mapa: Map<K, number>, chave: K, valor: number): void {
   mapa.set(chave, (mapa.get(chave) ?? 0) + valor);

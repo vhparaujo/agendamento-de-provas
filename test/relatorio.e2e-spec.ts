@@ -430,24 +430,6 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
       });
     });
 
-    it('cruza pendentes com as vagas livres do polo + formato', async () => {
-      const res = await comoAdmin(
-        api().get(`/api/agendamentos/estatisticas?poloId=${poloId}`),
-      ).expect(200);
-
-      // 2 ativos, 1 agendado; a sala tem 5 vagas numa faixa futura, 1 tomada.
-      expect(res.body.capacidade).toEqual([
-        {
-          poloId,
-          polo: POLO_NOME,
-          modalidadeId: ead.id,
-          modalidade: 'EaD',
-          pendentes: 1,
-          vagasRestantes: 4,
-        },
-      ]);
-    });
-
     it('conta as reservas por dia de criacao, separadas por origem', async () => {
       const res = await comoAdmin(
         api().get(`/api/agendamentos/estatisticas?poloId=${poloId}`),
