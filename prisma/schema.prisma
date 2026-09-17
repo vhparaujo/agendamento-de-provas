@@ -1546,7 +1546,8 @@ model ModalidadeEscolhidaDaTurma {
 // GRUPOS NO BRIGHTSPACE — criar e inscrever pela API (14/09/2026)
 // ----------------------------------------------------------------------------
 //
-// Substitui o import manual dos CSVs de `GET /relatorios/grupos-d2l`. Os NOMES
+// Substitui o import manual dos CSVs que `GET /relatorios/grupos-d2l` gerava
+// (rotas removidas em 17/09/2026, com este caminho ja em uso). Os NOMES
 // dos grupos continuam na grade `GrupoDaJanela` (dia x janela) — a mesma que o
 // disparo do quiz usa para trocar a condicao de liberacao. Sao duas acoes
 // SEPARADAS de proposito (pedido do cliente): criar as categorias e os grupos, e

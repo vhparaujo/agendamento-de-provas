@@ -2,48 +2,36 @@ import { dataDaProva } from '../../agendamento/service/csv-relatorio';
 
 /**
  * ============================================================================
- * COMO OS ARQUIVOS DE GRUPO SE CHAMAM
+ * COMO A LISTA DE PRESENCA SE CHAMA
  * ============================================================================
- * Um arquivo identifica DUAS coisas: o horario da prova e a turma. As duas
- * precisam aparecer no nome, porque e por ele que a pessoa acha o arquivo certo
- * na pasta de downloads — o conteudo e uma lista de matriculas, sem cabecalho
- * que diga de que prova e.
+ * O nome identifica a folha antes de ela ser aberta, porque quem baixa varias
+ * de uma vez precisa saber qual e qual na pasta de downloads:
  *
- *   20-08-2026 08h30-11h30 - GSPS0I10227 - HISTORIA E CULTURA DO CORPO.csv
- *   \_________ o horario __/   \_ turma _/   \_______ disciplina _______/
- *
- * Dentro do zip a mesma identificacao vira PASTA, e o arquivo fica so com o
- * horario. E o formato que acompanha o trabalho real: a pessoa abre a turma no
- * Brightspace e importa, um a um, os horarios daquela turma — procurar arquivo
- * no meio de centenas soltos na raiz seria o gargalo.
- *
- *   GSPS0I10227 - HISTORIA E CULTURA DO CORPO/
- *       20-08-2026 08h30-11h30.csv
- *       20-08-2026 14h00-17h00.csv
+ *   Lista de presenca - 11-06-2026 09h00-12h00 - Campus Asa Sul - SALA 1 EAD.pdf
+ *   \______ o que e _____/ \____ o horario ____/ \___ polo ___/ \__ sala __/
  *
  * ---------------------------------------------------------------------------
  * POR QUE O NOME PERDE OS ACENTOS
  * ---------------------------------------------------------------------------
- * "HISTÓRIA" vira "HISTORIA" so no NOME; na tela e dentro do CSV o nome da
- * disciplina continua inteiro. Nome de arquivo atravessa lugares que tratam
+ * "Taguatinga Norte" vira "Taguatinga Norte" e "Educacao Fisica" perde o til so
+ * no NOME; na tela e dentro do PDF o texto continua inteiro, com acento. Nome
+ * de arquivo atravessa lugares que tratam
  * codificacao de jeitos diferentes — o `Content-Disposition` (que precisaria do
- * `filename*=UTF-8''` do RFC 5987 para nao chegar corrompido), a tabela de
- * nomes do zip, e o proprio sistema de arquivos de quem baixa. Em ASCII puro
- * nao ha o que negociar em nenhum dos tres, e o custo e um acento que ninguem
- * procura ao abrir a pasta.
+ * `filename*=UTF-8''` do RFC 5987 para nao chegar corrompido) e o proprio
+ * sistema de arquivos de quem baixa. Em ASCII puro nao ha o que negociar em
+ * nenhum dos dois, e o custo e um acento que ninguem procura ao abrir a pasta.
  */
 
-/** `:` quebra no Windows; `/` e `\` viram diretorio dentro do zip. */
+/** `:` quebra no Windows; `/` e `\` seriam lidos como diretorio. */
 const INVALIDOS = /[\\/:*?"<>|]/g;
 
 /** Fora do ASCII imprimivel: sobra do que a dobra de acento nao resolveu. */
 const FORA_DO_ASCII = /[^\x20-\x7e]/g;
 
 /**
- * Limite por segmento. Nomes de disciplina chegam longos ("PRATICAS
- * PROFISSIONAIS EM FISIOTERAPIA E ETICA") e o caminho dentro do zip e pasta +
- * arquivo: sem corte, o total passa dos 255 bytes que a maioria dos sistemas de
- * arquivos aceita por componente, e o unzip falha na hora de gravar.
+ * Limite por segmento. Nome de polo e de sala chegam longos, e o nome final
+ * junta quatro partes: sem corte, o total passa dos 255 bytes que a maioria dos
+ * sistemas de arquivos aceita por componente, e a gravacao falha.
  */
 const LIMITE = 60;
 
@@ -68,13 +56,6 @@ export function sanear(texto: string): string {
   );
 }
 
-export interface TurmaDoArquivo {
-  orgUnitId: string;
-  /** Do CSV de turmas. Ausente enquanto o `orgUnitId` nao foi aprendido. */
-  codigoTurma: string | null;
-  nomeDisciplina: string | null;
-}
-
 export interface FaixaDoArquivo {
   data: Date;
   horaInicio: string;
@@ -96,40 +77,12 @@ export function horarioDaProva(faixa: FaixaDoArquivo): string {
 }
 
 /**
- * `GSPS0I10227 - HISTORIA E CULTURA DO CORPO` — a parte da turma, usada tanto no
- * nome do arquivo avulso quanto como pasta dentro do zip.
- *
- * O `codigoTurma` vem do CSV de turmas, encontrado pelo `orgUnitId` que o portal
- * aprendeu no launch. Quando ele falta — turma que nunca teve launch, ou
- * `TURMAS_FILTER_ENABLED=false`, que libera disciplina sem cruzar com o CSV — o
- * `orgUnitId` entra no lugar: e feio, mas identifica sem ambiguidade, e um nome
- * generico faria dois grupos diferentes disputarem o mesmo arquivo.
- */
-export function identificacaoDaTurma(turma: TurmaDoArquivo): string {
-  const codigo = turma.codigoTurma
-    ? sanear(turma.codigoTurma)
-    : `orgUnit ${sanear(turma.orgUnitId)}`;
-
-  const disciplina = turma.nomeDisciplina ? sanear(turma.nomeDisciplina) : '';
-
-  return disciplina ? `${codigo} - ${disciplina}` : codigo;
-}
-
-/** O nome do arquivo baixado avulso, com horario e turma. */
-export function nomeDoArquivo(
-  faixa: FaixaDoArquivo,
-  turma: TurmaDoArquivo,
-): string {
-  return `${horarioDaProva(faixa)} - ${identificacaoDaTurma(turma)}.csv`;
-}
-
-/**
  * `Lista de presenca - 11-06-2026 09h00-12h00 - Campus Asa Sul - SALA 1 EAD.pdf`
  *
- * Aqui o POLO entra no nome, ao contrario do CSV de grupos: as folhas de dois
- * campi no mesmo dia e horario vao para lugares fisicos diferentes, e quem
- * baixa precisa saber de qual campus e o arquivo antes de abrir. E tambem o que
- * torna o nome unico — sala com o mesmo nome em dois polos e comum.
+ * O POLO entra no nome porque as folhas de dois campi no mesmo dia e horario vao
+ * para lugares fisicos diferentes, e quem baixa precisa saber de qual campus e o
+ * arquivo antes de abrir. E tambem o que torna o nome unico — sala com o mesmo
+ * nome em dois polos e comum.
  */
 export function nomeDaListaDePresenca(
   pagina: FaixaDoArquivo & { polo: string; sala: string },
@@ -142,39 +95,4 @@ export function nomeDaListaDePresenca(
   ];
 
   return `${partes.join(' - ')}.pdf`;
-}
-
-/**
- * O caminho dentro do zip: uma pasta por turma, o horario como nome do arquivo.
- *
- * Ate 17/08/2026 o desempate aqui era o `faixaId`, e disparava no caso NORMAL de
- * operacao: duas faixas do mesmo dia e horario em polos diferentes cairiam no
- * mesmo caminho, porque o polo nao entra no nome. Isso deixou de acontecer
- * quando o grupo passou a ser a JANELA (dia + horario) em vez da faixa — os dois
- * polos agora sao um arquivo so, que e o que o Brightspace precisa. Ver o
- * cabecalho de `relatorio.service.ts`.
- *
- * O desempate continua porque a colisao continua POSSIVEL, so que por outro
- * motivo: `sanear` corta cada segmento em 60 caracteres, e duas disciplinas do
- * mesmo codigo de turma cujos nomes so diferem depois do 60o caractere geram a
- * mesma pasta. Dentro de um zip o segundo arquivo sobrescreve o primeiro em
- * silencio, e ninguem descobre ate conferir o numero de arquivos.
- *
- * O que desempata agora e o `orgUnitId`, nao o `faixaId`: e ele que realmente
- * difere entre os dois grupos, e ele nao muda de um download para o outro (a
- * ordem das faixas mudaria).
- */
-export function caminhoNoZip(
-  grupo: FaixaDoArquivo & TurmaDoArquivo,
-  usados: Set<string>,
-): string {
-  const pasta = identificacaoDaTurma(grupo);
-  const caminho = `${pasta}/${horarioDaProva(grupo)}.csv`;
-
-  if (!usados.has(caminho)) {
-    usados.add(caminho);
-    return caminho;
-  }
-
-  return `${pasta}/${horarioDaProva(grupo)} #${sanear(grupo.orgUnitId)}.csv`;
 }

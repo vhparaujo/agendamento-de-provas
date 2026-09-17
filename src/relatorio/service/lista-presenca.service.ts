@@ -8,7 +8,28 @@ import {
   pdfDeListasDePresenca,
   type ListaDePresenca,
 } from './pdf-lista-presenca';
-import type { ArquivoGerado, FiltroRelatorio } from './relatorio.service';
+
+export interface FiltroRelatorio {
+  poloId?: number;
+  /** Data da prova (AAAA-MM-DD). */
+  de?: string;
+  ate?: string;
+  /**
+   * O(s) periodo(s) letivo(s) do recorte. Vazio = a janela vigente inteira.
+   *
+   * PLURAL porque uma janela cobre mais de um org unit ao mesmo tempo: os
+   * modulares sob o periodo do modulo e os presenciais sob o do semestre.
+   * Filtrar por um so faria a lista de presenca de uma sala presencial sair
+   * VAZIA — e ninguem descobriria antes do dia da prova. A tela manda a janela
+   * inteira; um id sozinho continua valendo, e recorta aquela grade.
+   */
+  periodoLetivoId?: string[];
+}
+
+export interface ArquivoGerado {
+  nomeArquivo: string;
+  conteudo: string | Buffer;
+}
 
 /**
  * ============================================================================
@@ -19,12 +40,11 @@ import type { ArquivoGerado, FiltroRelatorio } from './relatorio.service';
  * polo** — e por isso o recorte e a `SalaFaixa`, a oferta que ja e exatamente
  * esse trio (a faixa carrega polo, data e hora; a oferta acrescenta a sala).
  *
- * Nao confunda com os outros dois relatorios:
+ * Nao confunda com a exportacao da administracao:
  *
  * | | quem le | recorte | quem entra |
  * |---|---|---|---|
  * | `/agendamentos/exportacao` | administracao, no Excel | um periodo letivo | TODOS os vinculos |
- * | `/relatorios/grupos-d2l` | o Brightspace | faixa **x turma** | confirmados, 1 linha por RA |
  * | **lista de presenca** | o **fiscal**, no papel | **sala x faixa** | confirmados, 1 linha por RA |
  *
  * Tres decisoes que nao sao acidente:

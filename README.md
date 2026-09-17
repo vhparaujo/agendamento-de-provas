@@ -760,88 +760,16 @@ colunas da prova vazias e `Status = Não Agendado`.
   restringe o arquivo a quem tem prova ali (é a lista daquela sala/daquele dia).
   `poloId`, `modalidadeId` e `busca` filtram o **aluno** e continuam trazendo
   quem não agendou.
-
-### Relatórios — grupos para o Brightspace
-
-A aba **Relatorios** do painel tem **dois documentos**, com públicos opostos: os
-grupos abaixo, lidos por máquina, e as [listas de presença](#listas-de-presença-pdf--o-papel-que-vai-para-a-sala),
-lidas por gente, no papel. Este primeiro gera o arquivo que o *Groups Import* do
-Brightspace consome, para criar um grupo por horário de prova **de cada turma**
-(e depois liberar o quiz para o grupo).
-
-Filtros comuns às três rotas: `poloId`, `periodoLetivoId`, `de`, `ate` (data da
-**prova**). Na rota de um arquivo só, `poloId`/`de`/`ate` são ignorados — quem
-pediu aquele grupo já escolheu a faixa, e um filtro esquecido na URL devolveria
-404 em vez do arquivo.
-
-| Método | Rota | Descrição |
-|---|---|---|
-| `GET` | `/relatorios/grupos-d2l` | Lista os grupos do recorte com quantos alunos cada um tem |
-| `GET` | `/relatorios/grupos-d2l/zip` | Zip com o CSV de todos, em uma pasta por turma |
-| `GET` | `/relatorios/grupos-d2l/:faixaId/:orgUnitId` | O CSV de uma turma num horário |
-
-O arquivo tem **duas colunas**: `Nome de usuário` com a matrícula (RA) e
-`Código do Grupo` **em branco** — o código é preenchido à mão depois de criar o
-grupo no D2L.
-
-```
-Nome de usuário,Código do Grupo
-UC25426847,
-0009552430,
-```
-
-- **Um arquivo por HORÁRIO E TURMA.** O grupo vive *dentro* de uma disciplina do
-  Brightspace (`orgUnitId`) e libera o quiz **dela**. Uma lista com o horário
-  inteiro importaria sem erro nenhum e daria acesso à prova de HISTÓRIA para quem
-  só cursa NUTRIÇÃO. O mesmo aluno sai em vários arquivos — um por disciplina que
-  a prova dele cobre.
-- **Nem a sala nem o polo entram**: o grupo libera o quiz numa janela de tempo, e
-  onde a pessoa senta — que cadeira, que campus — não muda o acesso. A mesma
-  prova aplicada em dois polos no mesmo dia e horário sai num **arquivo só**.
-  Por isso `poloId` estreita a *listagem* e nunca o *conteúdo* do arquivo:
-  filtrado, ele continua saindo com os alunos de todos os campi.
-- **Cada matrícula aparece uma vez por arquivo.** Um RA com dois vínculos na
-  mesmo formato pode ter dois agendamentos na mesma janela cobrindo a mesma
-  disciplina; o grupo é por *usuário*.
-- **Só agendamentos `CONFIRMADO`**, no período letivo do recorte (ou o vigente).
-- Nome do arquivo:
-  **`20-08-2026 08h30-11h30 - GSPS0I10227 - HISTORIA E CULTURA.csv`** — horário,
-  código da turma e disciplina, **sem acento** (só no nome; na tela e no conteúdo
-  o nome fica inteiro). O `codigoTurma` vem de `TurmaImportada`, achada pelo
-  `orgUnitId` que o launch ensinou; sem ele o nome cai em `orgUnit <id>`.
-- O **zip é organizado em uma pasta por turma**, com o horário no arquivo:
-
-  ```
-  GSPS0I10227 - HISTORIA E CULTURA DO CORPO/
-      20-08-2026 08h30-11h30.csv
-      20-08-2026 14h00-17h00.csv
-  ```
-
-  O sufixo `#<orgUnitId>` só aparece no caso raro de duas disciplinas gerarem a
-  mesma pasta depois do corte de 60 caracteres do nome. Dois polos no mesmo
-  horário **não** produzem dois arquivos — são um grupo só.
-- **Horário sem ninguém agendado não aparece**: as linhas nascem dos
-  agendamentos, e uma faixa não "tem" disciplinas — são os alunos que as trazem.
-  Ocupação por horário é `GET /agendamentos/resumo`.
-
-#### ⚠️ Este CSV é o oposto do outro
-
-| | `/agendamentos/exportacao` | `/relatorios/grupos-d2l/:faixaId/:orgUnitId` |
-|---|---|---|
-| Quem lê | Pessoa, no Excel pt-BR | O Brightspace |
-| Separador | `;` | `,` |
-| BOM UTF-8 | sim | **não** |
-| Colunas | 12 | 2 |
-
-Com `;` o D2L lê a linha inteira como um campo só; com BOM, os três bytes grudam
-no cabeçalho e `Nome de usuário` deixa de casar com a coluna esperada. O
-montador é o mesmo (`csv-relatorio.ts`), parametrizado por `{ separador, bom }`,
-com **default no formato do Excel**.
+- ⚠️ **A tela não usa nenhum deles.** O botão fica em **Relatórios** e chama a
+  rota sem filtro: quem cobra quer a lista toda, e um recorte esquecido no
+  formulário sairia plausível, com cara de completo. Os filtros acima servem a
+  quem cola e edita a URL.
 
 ### Grupos no Brightspace — criar e inscrever pela API
 
-Tela **Grupos**. Substitui o import manual dos CSVs da seção anterior (que
-continuam disponíveis). O admin escreve os nomes dos grupos de cada bloco — **EaD**
+Tela **Grupos**. Substitui o import manual, turma a turma, dos CSVs que
+`/relatorios/grupos-d2l` gerava — rotas removidas em 17/09/2026, quando este
+caminho passou a ser o único. O admin escreve os nomes dos grupos de cada bloco — **EaD**
 (categoria `Provas Presenciais - EAD`), **Semipresencial/Modular** (categoria
 `Provas Presenciais - Semi e Modular`) e **Presencial** (categoria
 `Provas Presenciais - Presencial`) —, uma linha por sessão, e usa dois botões:
@@ -984,8 +912,8 @@ Cada página traz o cabeçalho (formato, polo, data, horário, sala) e a tabela:
   quem tem lugar ali.
 - Nome do arquivo:
   **`Lista de presenca - 11-06-2026 09h00-12h00 - Campus Asa Sul - SALA 1 EAD.pdf`**.
-  Aqui **o polo entra** (ao contrário do CSV de grupos): as folhas de dois campi
-  vão para lugares físicos diferentes, e sala homônima em dois polos é comum.
+  **O polo entra no nome**: as folhas de dois campi vão para lugares físicos
+  diferentes, e sala homônima em dois polos é comum.
 
 **O logo é opcional.** Coloque um `logo.png` em `src/relatorio/assets/` e ele
 passa a aparecer no canto superior esquerdo de toda página — nada mais precisa
@@ -1743,9 +1671,9 @@ src/
   periodo/        janela de agendamento (CRUD do admin + leitura do portal)
   polo/  sala/  sala-faixa/    estrutura física e ajuste da oferta
   relatorio/
-    service/      relatorio.service.ts (os grupos horário × turma e o zip)
-                  csv-grupos-d2l.ts (o formato que o Groups Import aceita)
-                  nome-de-arquivo.ts (nome do arquivo e pasta dentro do zip)
+    service/      lista-presenca.service.ts (o recorte por sala)
+                  pdf-lista-presenca.ts (o desenho da folha, puro)
+                  nome-de-arquivo.ts (o nome com que a folha baixa)
   seguranca/      auditoria + filtro global de exceções
   senha-quiz/
     service/      grade-senhas.service.ts (a grade dia × turno)

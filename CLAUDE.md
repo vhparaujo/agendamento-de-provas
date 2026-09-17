@@ -385,7 +385,6 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `GET/POST /periodos` · `GET/PATCH/DELETE /periodos/:id` | admin | Abrir/fechar a janela de agendamento |
 | `GET /agendamentos` · `/resumo` · `/exportacao` · `/:id` | admin | Relatório: consulta, ocupação por sala e o CSV de **todos os alunos** |
 | `GET /agendamentos/estatisticas` | admin | A tela de Início: adesão da rodada vigente sobre os vínculos **ativos**, por formato e por origem (aluno/compulsório/admin — a mesma regra do "Agendado por" da exportação), por dia de criação, e vagas livres nas faixas futuras x pendentes por polo + formato (o mesmo recorte de faixas do compulsório) |
-| `GET /relatorios/grupos-d2l` · `/zip` · `/:faixaId/:orgUnitId` | admin | Grupos do Brightspace: um CSV de matrículas **por horário e turma** |
 | `GET /relatorios/listas-de-presenca` · `/pdf` · `/:salaFaixaId/pdf` | admin | Lista de presença: um PDF com **uma página por sala** de aplicação |
 | `PATCH /agendamentos/:id/remanejar` · `DELETE /agendamentos/:id` | admin | Mover de sala/horário e cancelar |
 | `POST /agendamentos/compulsorio` · `GET /:id` · `/:id/relatorio` | admin | Agenda por quem não agendou; acompanha o lote e baixa o CSV de exceções |
@@ -843,10 +842,9 @@ src/
   modalidade/  ✅  polo/  ✅  sala/  ✅  faixa/  ✅  sala-faixa/  ✅
   agendamento/ ✅ portal do aluno · alocacao.ts (pura) · disciplinas-do-aluno.service.ts
   periodo/     ✅ CRUD do admin + leitura usada pelo portal
-  relatorio/   ✅ grupos do Brightspace por horário e turma (csv-grupos-d2l.ts,
-               nome-de-arquivo.ts, zip com uma pasta por turma) +
-               lista de presença por sala (lista-presenca.service.ts,
-               pdf-lista-presenca.ts puro, assets/logo.png opcional)
+  relatorio/   ✅ lista de presença por sala (lista-presenca.service.ts,
+               pdf-lista-presenca.ts puro, nome-de-arquivo.ts,
+               assets/logo.png opcional)
   d2l/         ✅ autorização OAuth (d2l-oauth) · canal HTTP compartilhado
                (d2l-http) · leitura de matrículas (d2l-enrollments) · cliente de
                questionários (d2l-quizzes) · condições de liberação e grupos
@@ -929,10 +927,10 @@ comentários de código e documentação.
   `seguranca/filter/mensagens-amigaveis.ts`. Campo novo de DTO com nome pouco
   legível ganha rótulo em `ROTULOS`, lá.
 - **CSVs — cuidado para não quebrar**: nunca renomeie as colunas aceitas na
-  importação (`TURMA_CSV_COLUNAS`, `ALUNO_CSV_COLUNAS`) nem o CSV que o AVA
-  importa (`CABECALHOS_GRUPOS_D2L`, separado por `,` e sem BOM). Relatórios
-  para Excel usam o `montarCsv` padrão (`;` + BOM UTF-8), que aceita acento no
-  cabeçalho. Nomes de arquivo do `Content-Disposition` continuam ASCII.
+  importação (`TURMA_CSV_COLUNAS`, `ALUNO_CSV_COLUNAS`). Relatórios para Excel
+  usam o `montarCsv` padrão (`;` + BOM UTF-8), que aceita acento no cabeçalho.
+  Nomes de arquivo do `Content-Disposition` continuam ASCII. (O `,`-sem-BOM que
+  o AVA importava saiu com as rotas de `grupos-d2l`, em 17/09/2026.)
 - **Migration aplicada não se edita**, nem em comentário: o Prisma guarda o
   checksum, e qualquer mudança faz o `migrate` acusar migration modificada.
 
@@ -1493,8 +1491,19 @@ quem a administração precisa falar**: a base são os **vínculos importados, t
 eles**, e o agendamento entra como coluna. Quem não marcou sai com as colunas da
 prova vazias e `Status = Não Agendado`.
 
-Colunas, e só estas: `Matrícula · Aluno · E-mail · Curso · Formato · Polo ·
-Rodada · Data da prova · Início · Fim · Sala · Status · Agendado em`.
+Colunas, e só estas: `Matrícula · Aluno · E-mail · Curso · Situação do Curso ·
+Formato · Polo · Rodada · Data da prova · Início · Fim · Sala · Status ·
+Agendado em · Agendado por`.
+
+⚠️ **A TELA chama esta rota SEM FILTRO NENHUM** (17/09/2026). O botão mora em
+**Relatórios** — saiu de Agendamentos, onde herdava o filtro daquela tela — e o
+front chama `exportarCsv({})`. Quem cobra quer a lista toda, e um recorte
+esquecido no formulário produziria uma cobrança pela metade com cara de completa:
+o arquivo sai plausível, e ninguém confere quantas linhas deveria ter. O filtro da
+tela de Relatórios é das listas de presença e **não alcança este arquivo** — por
+isso ele mora dentro daquele cartão, e não no topo da página.
+
+Os filtros abaixo continuam existindo na ROTA, para quem cola e edita a URL.
 
 - **`Modalidade` e `Polo` saem do AGENDAMENTO, não do vínculo** (13/08/2026).
   `AlunoImportado` guarda só o estado atual e a importação o sobrescreve; lendo
@@ -1522,147 +1531,54 @@ Rodada · Data da prova · Início · Fim · Sala · Status · Agendado em`.
 Não "otimize" isso de volta para uma consulta em `agendamento`: o arquivo
 deixaria de listar exatamente as pessoas para as quais ele existe.
 
-## ⚠️ São TRÊS documentos, com públicos e recortes OPOSTOS
+## ⚠️ São DOIS documentos, com públicos e recortes OPOSTOS
 
-Confundir os três é o erro fácil desta parte do sistema. Eles respondem a
+Confundir os dois é o erro fácil desta parte do sistema. Eles respondem a
 perguntas diferentes e recortam a mesma base de jeitos incompatíveis:
 
-| | `GET /agendamentos/exportacao` | `GET /relatorios/grupos-d2l/:faixaId/:orgUnitId` | `GET /relatorios/listas-de-presenca/pdf` |
-|---|---|---|---|
-| Quem lê | **Pessoa**, no Excel pt-BR | **Máquina**: o *Groups Import* do Brightspace | **Pessoa**, no papel: o fiscal da sala |
-| Responde | "com quem a administração precisa falar" | "quem entra no grupo desta prova" | "quem senta nesta sala" |
-| Base | Todos os vínculos, agendados ou não | Só quem tem prova **confirmada** | Só quem tem prova **confirmada** |
-| Formato | CSV, 12 colunas | CSV, 2 colunas (`Nome de usuário`, `Código do Grupo` **vazia**) | PDF A4, 5 colunas |
-| Uma linha é | um vínculo | um **usuário** (RA distinto) | uma **pessoa** (RA distinto) |
-| Separador · BOM | `;` · **sim** | `,` · **não** | — |
-| Recorte | um período letivo | uma **janela + uma turma** + um período letivo | uma **sala + uma faixa** + um período letivo |
+| | `GET /agendamentos/exportacao` | `GET /relatorios/listas-de-presenca/pdf` |
+|---|---|---|
+| Quem lê | **Pessoa**, no Excel pt-BR | **Pessoa**, no papel: o fiscal da sala |
+| Responde | "com quem a administração precisa falar" | "quem senta nesta sala" |
+| Base | Todos os vínculos, agendados ou não | Só quem tem prova **confirmada** |
+| Formato | CSV, 14 colunas, `;` + BOM UTF-8 | PDF A4, 5 colunas |
+| Uma linha é | um vínculo | uma **pessoa** (RA distinto) |
+| Recorte | **nenhum** — a prova vigente inteira | uma **sala + uma faixa** + um período letivo |
 
-**O primeiro conta diferente dos outros dois, e não está errado.** Ele lista
+**O primeiro conta diferente do segundo, e não está errado.** Ele lista
 *vínculos*, então o RA de dois cursos aparece duas vezes — é a lista de quem a
-administração precisa cobrar, e são duas provas a cobrar. Os outros dois listam
-*pessoas* e o trazem uma vez só.
+administração precisa cobrar, e são duas provas a cobrar. O segundo lista
+*pessoas* e o traz uma vez só.
 
-Trocar o separador ou o BOM quebra em silêncio nos dois sentidos: com `;` o D2L
-lê a linha inteira como um campo só; com BOM, os três bytes grudam no cabeçalho e
-`Nome de usuário` deixa de casar com a coluna esperada; e o CSV da administração sem
-BOM chega no Excel como "CÃ¢mpus".
+⚠️ **O CSV da administração sai sempre COMPLETO** (17/09/2026). O botão saiu da
+tela de Agendamentos, onde herdava o filtro dela, e foi para Relatórios, onde o
+front chama `exportarCsv({})` — sem filtro nenhum. Quem cobra quer a lista toda,
+e um recorte esquecido produziria uma cobrança pela metade com cara de completa.
+Os filtros continuam existindo na rota (`poloId`, `de`, `ate`…): eles servem a
+quem cola e edita a URL, não à tela.
 
-Por isso `montarCsv()` (`agendamento/service/csv-relatorio.ts`) recebe
+**O BOM não é detalhe.** O CSV da administração sem BOM chega no Excel pt-BR como
+"CÃ¢mpus". Por isso `montarCsv()` (`agendamento/service/csv-relatorio.ts`) recebe
 `{ separador, bom }`, **com default no formato do Excel** — quem não passa nada
-continua produzindo o arquivo da administração. O formato do D2L está declarado num
-lugar só, `relatorio/service/csv-grupos-d2l.ts`.
+continua produzindo o arquivo da administração.
 
-## Grupos do Brightspace: um arquivo por HORÁRIO **e** TURMA
-
-> Desde 14/09/2026 os grupos são **criados e preenchidos pela API** (ver "Grupos
-> no Brightspace pela API", abaixo). Os CSVs continuam de pé para conferência e
-> como plano B — e as regras de recorte desta seção valem para os dois caminhos.
-
-`GET /relatorios/grupos-d2l` lista os grupos do recorte com quantos alunos cada
-um tem; `/:faixaId/:orgUnitId` baixa o CSV de um; `/zip` baixa todos de uma vez.
-É a aba **Relatorios** do painel.
-
-- **O recorte é o PAR (janela, turma).** O grupo não existe solto: ele vive
-  *dentro* de uma disciplina do Brightspace (`orgUnitId`), e é ele que libera o
-  quiz **daquela** disciplina. Um arquivo com o horário inteiro importaria sem
-  erro nenhum e colocaria no grupo de HISTÓRIA quem só cursa NUTRIÇÃO — gente com
-  acesso a uma prova que não faz, descoberto no dia. Por isso o mesmo aluno
-  aparece em vários arquivos: um por disciplina que a prova dele cobre.
-- **Nem a sala nem o POLO entram.** O grupo libera o quiz numa *janela de tempo*;
-  onde a pessoa senta — que cadeira, que campus — não muda o acesso. As salas e
-  os polos daquele dia e horário entram na mesma lista. Ver "A janela, não a
-  faixa", abaixo.
-- **Uma matrícula aparece UMA vez por arquivo.** Um RA com dois vínculos no mesmo
-  formato pode ter dois agendamentos na mesma janela, os dois cobrindo a mesma
-  disciplina — o grupo é por *usuário*, e a linha repetida faria o import
-  reclamar ou duplicar. `totalAlunos` conta matrículas **distintas**, para bater
-  com o número de linhas do arquivo.
-- **De onde sai a turma:** `AgendamentoDisciplina` guarda o `orgUnitId` de cada
-  disciplina coberta pela reserva (gravado junto com o agendamento). O
-  `codigoTurma` legível vem de `TurmaImportada`, encontrada por esse `orgUnitId`
-  — que o CSV de turmas **não traz**: ele é aprendido no launch
-  (`TurmaService.aprenderOrgUnitId`). Enquanto não foi aprendido, ou com
-  `TURMAS_FILTER_ENABLED=false`, o nome cai em `orgUnit <id>`. Nome genérico ali
-  faria duas turmas disputarem o mesmo arquivo.
-- **Nome do arquivo:**
-  `20-08-2026 08h30-11h30 - GSPS0I10227 - HISTORIA E CULTURA.csv` — horário,
-  código da turma e disciplina. `/` e `:` são inválidos em nome de arquivo, daí o
-  `-` e o `h`; **os acentos caem** (só no nome; na tela e no CSV o nome fica
-  inteiro), o que dispensa o `filename*=UTF-8''` do RFC 5987 no
-  `Content-Disposition` e evita negociação de codificação no zip e no sistema de
-  arquivos de quem baixa. Regras em `relatorio/service/nome-de-arquivo.ts`.
-- **O zip é organizado em uma pasta por turma**, com o horário no nome do
-  arquivo. Acompanha o trabalho real: abre-se a turma no Brightspace e importam-se
-  os horários dela, um a um — com faixa × turma o zip passa de dezenas para
-  centenas de arquivos, e achar o certo na raiz seria o gargalo.
-
-  ```
-  GSPS0I10227 - HISTORIA E CULTURA DO CORPO/
-      20-08-2026 08h30-11h30.csv
-      20-08-2026 14h00-17h00.csv
-  ```
-
-- **O sufixo `#<orgUnitId>` é raro e não é sobre polo.** Ele só aparece quando
-  duas disciplinas do mesmo código de turma geram a **mesma pasta** depois do
-  corte de 60 caracteres do `sanear` — aí a segunda sobrescreveria a primeira
-  dentro do zip, em silêncio. Até 17/08/2026 o desempate era `#<faixaId>` e
-  disparava no caso normal (dois campi); ver abaixo.
-- **Horário sem ninguém agendado não aparece.** As linhas nascem dos
-  agendamentos: uma faixa não "tem" disciplinas, são os alunos que as trazem.
-  Ocupação por horário é `GET /agendamentos/resumo`, a tela feita para isso.
-- **A listagem não devolve as matrículas**, só a contagem: mandar dezenas de
-  milhares de RAs para o navegador exibir um número seria desperdício. O CSV é
-  gerado pela rota do arquivo, pelo mesmo caminho de código.
-
-### ⚠️ A JANELA, não a faixa (17/08/2026)
-
-Até esta data o recorte era o par (`faixaId`, `orgUnitId`) — e `Faixa` carrega
-`poloId`. **O polo entrou no recorte de carona**, sem ninguém decidir isso: duas
-faixas do mesmo dia e horário em campi diferentes viravam dois grupos, na mesma
-disciplina, com exatamente o mesmo special access.
-
-O que o Brightspace precisa saber é **quando** a prova abre e em **qual**
-disciplina. Onde a pessoa senta não é uma das duas — é o mesmo argumento que já
-tirava a *sala* do recorte, só que um nível acima. Por isso o grupo passou a ser
-a **janela** (`data + horaInicio + horaFim`) cruzada com a turma, e as faixas de
-todos os polos daquela janela entram no mesmo arquivo.
-
-O que isso conserta, na prática:
-
-| Antes | Agora |
-|---|---|
-| Dois grupos idênticos a criar à mão no D2L, um por campus | Um grupo, um import |
-| `#<faixaId>` no nome, disparando no caso **normal** de operação | Um arquivo só; o `#` vira caso raro (colisão de nome truncado) |
-| RA com dois vínculos em campi diferentes na mesma janela saía em dois arquivos da mesma disciplina | O `Set` de matrículas o traz uma vez |
-
-**A regra que sustenta isso: o filtro `poloId` estreita a LISTAGEM, nunca o
-CONTEÚDO.** `montarGrupos` usa o filtro só para escolher **quais janelas**
-aparecem, e depois relê os alunos daquelas janelas **sem ele**
-(`inscricoesDasJanelas`). Aplicar o polo nas duas pontas produziria um CSV com
-metade da turma e nome de arquivo de turma inteira: o import passaria sem erro
-nenhum, e quem ficou de fora descobriria no dia, com o quiz trancado. Não
-"otimize" as duas consultas numa só — é essa separação que o teste
-`poloId nao trunca o arquivo` protege.
-
-Duas consequências no contrato, ambas testadas:
-
-- **`faixaId` virou um *handle*, não o recorte.** Na listagem é a menor faixa da
-  janela (para não mudar entre carregamentos); na rota
-  `/:faixaId/:orgUnitId` serve só para dizer de que janela se trata. Duas faixas
-  irmãs devolvem **o mesmo arquivo, com o mesmo nome**, de propósito.
-- **`polo: string` virou `polos: string[]`.** É informativo, em ordem
-  alfabética, e quase sempre tem um elemento só. A tela junta com ` · `.
-
-O front usa o `nomeArquivo` que vem do backend: resposta em blob não expõe o
-`Content-Disposition`, e montar o nome no cliente deixaria a regra em dois
-lugares.
+⚠️ **Até 17/09/2026 havia um TERCEIRO documento**: `GET /relatorios/grupos-d2l`,
+um CSV de matrículas por horário e turma, no formato que o *Groups Import* do
+Brightspace aceita (`,` e **sem** BOM). Saiu — front e backend — porque os grupos
+passaram a ser criados e preenchidos pela API do D2L (`src/grupos-d2l/`, a tela
+Grupos), e o arquivo manual só duplicava esse caminho. Com ele foram embora
+`relatorio.service.ts`, `csv-grupos-d2l.ts`, `grupo-exportavel.dto.ts`, o
+`caminhoNoZip`/`nomeDoArquivo` de `nome-de-arquivo.ts` e
+`test/relatorio-grupos.e2e-spec.ts`. **As regras de recorte que ele seguia
+continuam valendo para o caminho pela API** — ver "Grupos no Brightspace pela
+API".
 
 ## Grupos no Brightspace pela API (14/09/2026)
 
 Tela **Grupos** (`GruposBrightspaceView.vue`), módulo `src/grupos-d2l/`.
-Substitui o import manual, turma a turma, dos CSVs de `/relatorios/grupos-d2l` —
-que continuam existindo para conferência e como plano B. Três passos, na ordem da
-operação real, **depois do fim do prazo de agendamento**:
+Substitui o import manual, turma a turma, dos CSVs que `/relatorios/grupos-d2l`
+gerava — rotas removidas em 17/09/2026, quando este caminho passou a ser o único.
+Três passos, na ordem da operação real, **depois do fim do prazo de agendamento**:
 
 1. **Escrever os nomes** dos grupos de cada bloco, uma linha por sessão (dia +
    horário de uma janela + nome). O "+" já traz a próxima sessão; Enter no nome
@@ -1857,10 +1773,10 @@ dita cada decisão abaixo.
   ela é não serve para nada — e as folhas são distribuídas uma a uma.
 - **Nome do arquivo:**
   `Lista de presenca - 11-06-2026 09h00-12h00 - Campus Asa Sul - SALA 1 EAD.pdf`.
-  Aqui **o polo entra**, ao contrário do CSV de grupos: as folhas de dois campi
-  no mesmo dia e horário vão para lugares físicos diferentes, e sala com o mesmo
-  nome em dois polos é comum. Acentos caem pelo mesmo motivo de lá
-  (`relatorio/service/nome-de-arquivo.ts`).
+  **O polo entra no nome** porque as folhas de dois campi no mesmo dia e horário
+  vão para lugares físicos diferentes, e sala com o mesmo nome em dois polos é
+  comum. Os acentos caem para dispensar o `filename*=UTF-8''` do RFC 5987 no
+  `Content-Disposition` (`relatorio/service/nome-de-arquivo.ts`).
 - **O logo é OPCIONAL.** `src/relatorio/assets/logo.png` é lido se existir e
   ignorado se não — basta colocar o arquivo lá, nada mais muda
   (`src/relatorio/assets/LEIA-ME.md`). Fazer o relatório inteiro falhar por causa

@@ -1,28 +1,26 @@
 import {
-  caminhoNoZip,
   horarioDaProva,
-  identificacaoDaTurma,
-  nomeDoArquivo,
+  nomeDaListaDePresenca,
   sanear,
 } from './nome-de-arquivo';
 
 /**
- * O nome do arquivo e a UNICA coisa que diz de que prova e de que turma a lista
- * e: o conteudo e so matriculas. Um nome errado nao da erro em lugar nenhum —
- * alguem importa a lista do horario errado no grupo errado e descobre no dia da
- * prova.
+ * O nome do arquivo e o que diz de que sala, dia e horario e a folha antes de
+ * ela ser aberta. Quem baixa a pilha inteira separa os arquivos por ele, e um
+ * nome errado nao da erro em lugar nenhum — a folha errada chega na mao do
+ * fiscal errado, e a descoberta e no dia da prova.
  */
-describe('nome dos arquivos de grupo', () => {
+describe('nome dos arquivos de lista de presenca', () => {
   const FAIXA = {
     data: new Date('2026-08-20T00:00:00.000Z'),
     horaInicio: '08:30',
     horaFim: '11:30',
   };
 
-  const TURMA = {
-    orgUnitId: '445566',
-    codigoTurma: 'GSPS0I10227',
-    nomeDisciplina: 'HISTÓRIA E CULTURA DO CORPO',
+  const PAGINA = {
+    ...FAIXA,
+    polo: 'Câmpus Asa Sul',
+    sala: 'SALA 1 EAD',
   };
 
   describe('sanear', () => {
@@ -33,11 +31,11 @@ describe('nome dos arquivos de grupo', () => {
     });
 
     it('troca por espaco o que o sistema de arquivos recusa', () => {
-      // `/` viraria diretorio dentro do zip; `:` quebra no Windows.
+      // `/` seria lido como diretorio; `:` quebra no Windows.
       expect(sanear('TURMA 2026/1: A*B?')).toBe('TURMA 2026 1 A B');
     });
 
-    it('corta nome longo demais para caber no caminho do zip', () => {
+    it('corta nome longo demais para caber no caminho', () => {
       const gerado = sanear('X'.repeat(200));
 
       expect(gerado.length).toBeLessThanOrEqual(60);
@@ -61,97 +59,24 @@ describe('nome dos arquivos de grupo', () => {
     });
   });
 
-  describe('identificacaoDaTurma', () => {
-    it('junta codigo da turma e disciplina', () => {
-      expect(identificacaoDaTurma(TURMA)).toBe(
-        'GSPS0I10227 - HISTORIA E CULTURA DO CORPO',
-      );
-    });
-
-    it('cai no orgUnitId quando a turma nao esta no CSV', () => {
-      // Acontece com TURMAS_FILTER_ENABLED=false, ou antes do primeiro launch
-      // ter ensinado o orgUnitId. Um nome generico faria dois grupos diferentes
-      // disputarem o mesmo arquivo.
-      expect(identificacaoDaTurma({ ...TURMA, codigoTurma: null })).toBe(
-        'orgUnit 445566 - HISTORIA E CULTURA DO CORPO',
-      );
-    });
-
-    it('fica so com o codigo quando nao ha nome de disciplina', () => {
-      expect(identificacaoDaTurma({ ...TURMA, nomeDisciplina: null })).toBe(
-        'GSPS0I10227',
-      );
-    });
-  });
-
-  describe('nomeDoArquivo', () => {
-    it('leva horario e turma, e nada mais', () => {
-      expect(nomeDoArquivo(FAIXA, TURMA)).toBe(
-        '20-08-2026 08h30-11h30 - GSPS0I10227 - HISTORIA E CULTURA DO CORPO.csv',
+  describe('nomeDaListaDePresenca', () => {
+    it('leva horario, polo e sala', () => {
+      expect(nomeDaListaDePresenca(PAGINA)).toBe(
+        'Lista de presenca - 20-08-2026 08h30-11h30 - Campus Asa Sul - SALA 1 EAD.pdf',
       );
     });
 
     it('sai em ASCII puro — o Content-Disposition nao precisa do RFC 5987', () => {
-      expect(nomeDoArquivo(FAIXA, TURMA)).toMatch(/^[\x20-\x7e]+$/);
-    });
-  });
-
-  describe('caminhoNoZip', () => {
-    it('poe a turma como pasta e o horario como arquivo', () => {
-      expect(caminhoNoZip({ ...FAIXA, ...TURMA }, new Set())).toBe(
-        'GSPS0I10227 - HISTORIA E CULTURA DO CORPO/20-08-2026 08h30-11h30.csv',
-      );
+      expect(nomeDaListaDePresenca(PAGINA)).toMatch(/^[\x20-\x7e]+$/);
     });
 
-    it('desempata pelo orgUnitId quando duas turmas caem na mesma pasta', () => {
-      // `sanear` corta cada segmento em 60 caracteres: duas disciplinas do mesmo
-      // codigo de turma que so diferem depois do 60o produzem a MESMA pasta, e o
-      // segundo arquivo sobrescreveria o primeiro dentro do zip, em silencio.
-      const longo = 'PRATICAS PROFISSIONAIS SUPERVISIONADAS EM FISIOTERAPIA NO';
-      const usados = new Set<string>();
-
-      const primeiro = caminhoNoZip(
-        { ...FAIXA, ...TURMA, nomeDisciplina: `${longo} AMBITO HOSPITALAR` },
-        usados,
+    it('o polo separa duas salas de mesmo nome em campi diferentes', () => {
+      // Sala com o mesmo nome em dois polos e comum, e as duas folhas vao para
+      // lugares fisicos diferentes: sem o polo no nome, uma sobrescreveria a
+      // outra na pasta de downloads.
+      expect(nomeDaListaDePresenca(PAGINA)).not.toBe(
+        nomeDaListaDePresenca({ ...PAGINA, polo: 'Câmpus Taguatinga' }),
       );
-      const segundo = caminhoNoZip(
-        {
-          ...FAIXA,
-          ...TURMA,
-          orgUnitId: '778899',
-          nomeDisciplina: `${longo} AMBITO AMBULATORIAL`,
-        },
-        usados,
-      );
-
-      expect(segundo).not.toBe(primeiro);
-      expect(segundo).toContain('#778899');
-    });
-
-    it('NAO desempata dois polos — eles sao um grupo so', () => {
-      // O recorte do grupo e a janela (dia + horario), nao a faixa: duas faixas
-      // do mesmo dia e horario em campi diferentes chegam aqui como UMA linha,
-      // e o `#faixaId` que existia ate 17/08/2026 nao tem mais o que desempatar.
-      expect(caminhoNoZip({ ...FAIXA, ...TURMA }, new Set())).not.toContain(
-        '#',
-      );
-    });
-
-    it('mantem os horarios da mesma turma na mesma pasta', () => {
-      const usados = new Set<string>();
-
-      const manha = caminhoNoZip({ ...FAIXA, ...TURMA }, usados);
-      const tarde = caminhoNoZip(
-        {
-          ...FAIXA,
-          ...TURMA,
-          horaInicio: '14:00',
-          horaFim: '17:00',
-        },
-        usados,
-      );
-
-      expect(manha.split('/')[0]).toBe(tarde.split('/')[0]);
     });
   });
 });
