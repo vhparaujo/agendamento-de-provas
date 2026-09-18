@@ -42,6 +42,12 @@ export type EventoSeguranca =
   // mais recente entrega o portal ao anterior, e a mudanca nao aparece em
   // lugar nenhum alem daqui.
   | 'PERIODO_REMOVIDO'
+  // Um corte de data tirou VARIAS faixas do portal de uma vez (a virada de
+  // periodo). Auditavel porque muda, numa tacada, o que TODO aluno enxerga como
+  // horario disponivel — e o estrago de um corte de data errado so aparece pelo
+  // telefone, quando o aluno diz que o horario sumiu. O `detalhe` leva os ids
+  // justamente para dar como desfazer.
+  | 'FAIXAS_DESATIVADAS_EM_LOTE'
   // O criterio de nota da janela mudou DEPOIS de ja haver reserva nela. Nao e
   // bloqueado (a nota nao e fotografia do periodo, e mexer nela so muda quem
   // agenda daqui para a frente), mas e a alteracao que faz um aluno elegivel

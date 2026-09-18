@@ -380,6 +380,7 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `POST /alunos/:id/mesclar` | admin | Funde o vínculo duplicado pela troca de grafia do curso |
 | `GET /turmas` · `/turmas/:id` | admin | Pesquisa as turmas/disciplinas do CSV (só leitura) |
 | `GET /modalidades` · `GET/POST/PATCH/DELETE /polos` · `/salas` · `/faixas` · `/sala-faixas` | admin | Estrutura física e oferta de vagas |
+| `POST /faixas/desativar-em-lote` | admin | A virada de período: desativa de uma vez as faixas até uma data. **Simula por padrão** |
 | `GET /portal/periodo` · `/portal/disciplinas` · `/portal/faixas` | aluno | O que ele pode escolher |
 | `GET/POST /portal/agendamentos` | aluno | Confirmar a prova e consultar o que já marcou |
 | `GET/POST /periodos` · `GET/PATCH/DELETE /periodos/:id` | admin | Abrir/fechar a janela de agendamento |
@@ -1101,6 +1102,63 @@ conseguir nem tirar do ar a faixa problemática.
 **Não impede dado antigo.** A regra vale na escrita; sobreposição já gravada
 continua no banco. Para auditar, cruze `sala_faixa` consigo mesma por
 `faixa.data` comparando as janelas.
+
+### A virada de período: `POST /faixas/desativar-em-lote` (18/09/2026)
+
+⚠️ **`Faixa` NÃO tem `periodoAgendamentoId`, e isso é decisão, não esquecimento.**
+Ela é polo + data + hora; o que a tira da frente do aluno é a data ter passado
+(`data >= hoje`, o mesmo corte em `listarFaixas` e em `faixasPorPolo`). Abrir um
+período novo com outras datas é **cadastrar as faixas novas e não mexer em nada**
+— as antigas somem sozinhas e continuam na tela do admin, que é o histórico, e é
+para isso que aquela tela tem filtro De/Até.
+
+Isso deixa de bastar quando as datas de dois períodos **se cruzam** (a SUB
+abrindo antes de a última data da N2 chegar): o aluno da rodada nova vê as
+faixas da anterior junto com as novas, e nada no modelo sabe distingui-las. Este
+lote é o corte explícito.
+
+| Decisão | Por quê |
+|---|---|
+| **Desativa** (`ativo = false`), não apaga | `remover` recusa faixa com agendamento, inclusive CANCELADO — o registro de quem tinha prova ali não pode sumir |
+| **Nenhum agendamento é tocado** | Lista de presença, relatórios e special access **não filtram por `ativo`** (só o portal e o compulsório filtram). Quem já tem prova continua com ela; o que a desativação impede é alguém **entrar** ali daqui para a frente |
+| `simulacao: true` é o **PADRÃO** | O mesmo do compulsório e pelo mesmo motivo: um corte de data errado tira o período em andamento da frente de todos os alunos de uma vez, e desfazer é reativar faixa por faixa |
+| O `lte` **inclui** o dia informado | "Desative tudo até 31/08" tem de pegar as provas do dia 31 — é a leitura natural da frase |
+| A escrita usa os **IDS contados**, não o filtro de data outra vez | Entre a conferência e o clique alguém pode cadastrar uma faixa dentro do corte, e ela seria desativada sem aparecer no relatório que o admin aprovou |
+| Faixa já inativa entra no relatório (`jaInativa`), mas não conta | Somar os agendamentos dela em `agendamentosMantidos` anunciaria um impacto que ESTA execução não tem |
+| `futuras` sai separado | São as únicas em que desativar muda o que o aluno vê hoje; as passadas já tinham sumido sozinhas |
+
+Auditado como `FAIXAS_DESATIVADAS_EM_LOTE`, **com os ids no `detalhe`** — eles
+são o único caminho de volta se o corte pegar demais.
+
+#### ⚠️ Por que `Faixa` NÃO foi amarrada a `PeriodoAgendamento`
+
+Avaliado em 18/09/2026 e recusado. Quem for "consertar" isso vai recriar os
+cinco problemas abaixo:
+
+1. **A FK não validaria nada.** `PeriodoAgendamento` guarda o prazo de
+   *agendamento* (`dataAbertura`/`dataFechamento`), **nunca as datas das
+   provas** — que vivem nas faixas. Não há invariante a conferir, e o erro só
+   muda de lugar: de data errada (visível na lista, ordenada por data) para id
+   errado numa coluna invisível.
+2. **Seria uma segunda fonte de verdade sobre a rodada.** Hoje há uma só, e é a
+   fotografia congelada em `Agendamento.periodoLetivoId + rodada`. Uma faixa do
+   período A segurando reserva carimbada com B é possível, e nada reconcilia.
+3. **O vigente é implícito** (`findFirst orderBy createdAt desc`, sem flag no
+   banco, de propósito). Com a FK + filtro pelo vigente, cadastrar o próximo
+   período com antecedência derrubaria do portal **todas** as faixas do período
+   em curso, no meio do prazo. Evitar isso exigiria justamente o flag "ativo"
+   que foi deliberadamente não criado.
+4. **Dois períodos num mesmo dia de prova ficariam impossíveis.**
+   `exigirSalaLivreNoHorario` recusa duas faixas com a mesma sala em horários que
+   se cruzam no mesmo dia, e **não olha período** — é a trava contra reservar a
+   mesma porta duas vezes. Faixa por período exigiria a linha duplicada que ela
+   recusa, corretamente.
+5. **A regra 4b é chaveada em `faixaId`**, e o comentário em `lock-de-vagas.ts`
+   diz que é a faixa, não a sobreposição de horário. Duas linhas para o mesmo
+   08:30 (consequência do item 4) devolveriam o bug morto em 14/08/2026: o RA
+   com dois cursos marcando as duas provas no mesmo instante.
+
+O corte manual custa um botão e não cria acoplamento nenhum.
 
 **Campos deliberadamente imutáveis** — mudá-los quebraria dado já gravado:
 `Polo.nome` (chave de casamento com o CSV), `Sala.poloId` (sala não se muda de

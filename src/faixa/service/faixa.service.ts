@@ -5,8 +5,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { duracaoEmMinutos } from '../../components/horario.util';
+import { hojeUtc } from '../../components/utc.util';
 import { PrismaService } from '../../database/prisma.service';
 import { Prisma, StatusAgendamento } from '../../generated/prisma/client';
+import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 import {
   exigirEncontrado,
   exigirSalaLivreNoHorario,
@@ -53,9 +55,45 @@ export interface SalaDaFaixaEntrada {
   ordem?: number;
 }
 
+/** Uma faixa dentro do corte da desativacao em lote. */
+export interface FaixaDoLote {
+  id: number;
+  data: Date;
+  horaInicio: string;
+  horaFim: string;
+  polo: { id: number; nome: string };
+  /** Agendamentos CONFIRMADOS nela. Desativar nao mexe em nenhum deles. */
+  confirmados: number;
+  /** Ja estava inativa: entra no relatorio, mas nao conta como desativada. */
+  jaInativa: boolean;
+  /** Data ainda por vir — e aqui que desativar muda o que o aluno ve hoje. */
+  futura: boolean;
+}
+
+export interface ResultadoDesativacaoEmLote {
+  simulacao: boolean;
+  /** O corte aplicado, ecoado para a tela poder repeti-lo na confirmacao. */
+  ate: Date;
+  poloId?: number;
+  /** Quantas mudaram (ou mudariam) de ativa para inativa. */
+  desativadas: number;
+  /** Quantas o corte pegou mas ja estavam inativas. */
+  jaInativas: number;
+  /** Faixas do corte que ainda nao aconteceram. */
+  futuras: number;
+  /** Agendamentos confirmados nas faixas do corte. Todos PERMANECEM. */
+  agendamentosMantidos: number;
+  /** O corte inteiro, em ordem de data, para a tela conferir antes de aplicar. */
+  faixas: FaixaDoLote[];
+  mensagem: string;
+}
+
 @Injectable()
 export class FaixaService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditoria: AuditoriaService,
+  ) {}
 
   /**
    * Cria a faixa e a oferta de vagas de uma vez, numa transacao: uma faixa sem
@@ -253,6 +291,135 @@ export class FaixaService {
     });
 
     return this.buscar(id);
+  }
+
+  /**
+   * ==========================================================================
+   * DESATIVA EM LOTE AS FAIXAS ATE UMA DATA — A VIRADA DE PERIODO
+   * ==========================================================================
+   * A faixa NAO pertence a periodo nenhum: ela e polo + data + hora, e o que a
+   * tira da frente do aluno e a data ter passado (`data >= hoje`, o mesmo corte
+   * em `listarFaixas` e no compulsorio). Enquanto as datas de dois periodos nao
+   * se cruzam, isso basta e nao ha nada a fazer na virada.
+   *
+   * Quando se cruzam — a SUB abrindo antes de a ultima data da N2 chegar — o
+   * aluno da rodada nova ve as faixas da anterior misturadas com as novas, e
+   * nada no modelo sabe distinguir umas das outras. Este lote e o corte
+   * explicito que resolve: "o que era do periodo passado sai da lista".
+   *
+   * POR QUE `ativo = false`, E NAO APAGAR: apagar e recusado quando ha
+   * agendamento, inclusive cancelado (ver `remover`) — o registro de quem tinha
+   * prova naquele dia nao pode sumir. Desativar tira a faixa do portal e do
+   * compulsorio e preserva tudo.
+   *
+   * NENHUM AGENDAMENTO E TOCADO. Quem ja tem prova numa faixa desativada
+   * continua com ela: sai na lista de presenca, no relatorio e no special
+   * access, porque nenhum deles filtra por `ativo`. O que a desativacao impede
+   * e alguem ENTRAR ali daqui para a frente — que e exatamente o objetivo.
+   *
+   * `simulacao: true` e o padrao, como no compulsorio e pelo mesmo motivo: um
+   * corte de data errado tira o periodo inteiro da frente dos alunos, e desfazer
+   * significa reativar faixa por faixa.
+   */
+  async desativarEmLote(
+    dados: { ate: string; poloId?: number; simulacao?: boolean },
+    porAdmin?: string,
+  ): Promise<ResultadoDesativacaoEmLote> {
+    const simulacao = dados.simulacao ?? true;
+    const ate = paraData(dados.ate);
+    const hoje = hojeUtc();
+
+    if (dados.poloId !== undefined) {
+      exigirEncontrado(
+        await this.prisma.polo.findUnique({ where: { id: dados.poloId } }),
+        'Polo não encontrado. Ele pode ter sido apagado; atualize a página.',
+      );
+    }
+
+    // `lte`: o corte INCLUI o dia informado. "Desative tudo ate 31/08" tem que
+    // pegar as provas do proprio dia 31 — e a leitura natural da frase.
+    const encontradas = await this.prisma.faixa.findMany({
+      where: { data: { lte: ate }, poloId: dados.poloId },
+      orderBy: [{ data: 'asc' }, { horaInicio: 'asc' }],
+      select: {
+        id: true,
+        data: true,
+        horaInicio: true,
+        horaFim: true,
+        ativo: true,
+        polo: { select: { id: true, nome: true } },
+        // A contagem vem das SalaFaixa porque e para ELAS que o agendamento
+        // aponta; a faixa nao tem agendamento direto.
+        salaFaixas: {
+          select: {
+            _count: {
+              select: {
+                agendamentos: {
+                  where: { status: StatusAgendamento.CONFIRMADO },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const faixas: FaixaDoLote[] = encontradas.map((f) => ({
+      id: f.id,
+      data: f.data,
+      horaInicio: f.horaInicio,
+      horaFim: f.horaFim,
+      polo: f.polo,
+      confirmados: f.salaFaixas.reduce(
+        (total, sf) => total + sf._count.agendamentos,
+        0,
+      ),
+      jaInativa: !f.ativo,
+      futura: f.data >= hoje,
+    }));
+
+    // Os numeros de baixo olham so as faixas que MUDAM. Uma faixa que ja estava
+    // inativa entra no relatorio para o admin entender o corte, mas somar os
+    // agendamentos dela em "mantidos" faria a tela anunciar um impacto que esta
+    // execucao nao tem.
+    const mudam = faixas.filter((f) => !f.jaInativa);
+
+    const resultado: ResultadoDesativacaoEmLote = {
+      simulacao,
+      ate,
+      poloId: dados.poloId,
+      desativadas: mudam.length,
+      jaInativas: faixas.length - mudam.length,
+      futuras: mudam.filter((f) => f.futura).length,
+      agendamentosMantidos: mudam.reduce((t, f) => t + f.confirmados, 0),
+      faixas,
+      mensagem: '',
+    };
+
+    if (!simulacao && mudam.length > 0) {
+      // Pelos IDS que acabaram de ser contados, e nao repetindo o filtro de
+      // data: entre a leitura e a escrita alguem pode ter cadastrado uma faixa
+      // dentro do corte, e ela seria desativada sem aparecer no relatorio que o
+      // admin confirmou.
+      await this.prisma.faixa.updateMany({
+        where: { id: { in: mudam.map((f) => f.id) } },
+        data: { ativo: false },
+      });
+
+      this.auditoria.registrar('FAIXAS_DESATIVADAS_EM_LOTE', {
+        ator: porAdmin,
+        detalhe:
+          `${mudam.length} faixa(s) desativadas ate ${dataBr(ate)}` +
+          `${dados.poloId ? ` no polo ${dados.poloId}` : ' (todos os polos)'}; ` +
+          `${resultado.futuras} ainda por acontecer, ` +
+          `${resultado.agendamentosMantidos} agendamento(s) confirmado(s) preservado(s); ` +
+          `ids: ${mudam.map((f) => f.id).join(',')}`,
+      });
+    }
+
+    resultado.mensagem = mensagemDoLote(resultado, dataBr(ate));
+
+    return resultado;
   }
 
   /** Adiciona uma sala a uma faixa ja existente. */
@@ -558,6 +725,39 @@ function montarDetalhe(faixa: FaixaComRelacoes): FaixaDetalhe {
       disponiveis: Math.max(0, sf.vagas - sf._count.agendamentos),
     })),
   };
+}
+
+/** A data como o admin a le — a coluna e @db.Date, entao o fuso e UTC. */
+function dataBr(quando: Date): string {
+  return quando.toLocaleDateString('pt-BR', { timeZone: 'UTC' });
+}
+
+/**
+ * O resumo em uma frase. Fica separado porque e o texto que o admin le antes de
+ * confirmar um corte que nao tem botao de desfazer: ele precisa dizer o que vai
+ * acontecer E o que NAO vai (ninguem perde prova marcada).
+ */
+function mensagemDoLote(r: ResultadoDesativacaoEmLote, ate: string): string {
+  const onde = r.poloId ? 'neste polo' : 'em todos os polos';
+
+  if (r.desativadas === 0) {
+    return r.jaInativas > 0
+      ? `Nenhuma faixa a desativar até ${ate} ${onde}: as ${r.jaInativas} do corte já estão inativas.`
+      : `Nenhuma faixa até ${ate} ${onde}.`;
+  }
+
+  const impacto =
+    r.agendamentosMantidos > 0
+      ? ` ${r.agendamentosMantidos} agendamento(s) confirmado(s) continuam de pé — desativar não desmarca a prova de ninguém.`
+      : '';
+
+  const futuras = r.futuras
+    ? ` ${r.futuras} ainda não aconteceram: é nelas que o aluno deixa de poder marcar ou trocar.`
+    : '';
+
+  return r.simulacao
+    ? `Simulação: ${r.desativadas} faixa(s) seriam desativadas até ${ate} ${onde}.${futuras}${impacto} Nada foi gravado.`
+    : `${r.desativadas} faixa(s) desativadas até ${ate} ${onde}.${futuras}${impacto}`;
 }
 
 /**

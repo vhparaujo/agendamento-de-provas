@@ -14,7 +14,12 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { PADRAO_HORA } from '../../components/horario.util';
-import type { FaixaDetalhe, OfertaResumo } from '../service/faixa.service';
+import type {
+  FaixaDetalhe,
+  FaixaDoLote,
+  OfertaResumo,
+  ResultadoDesativacaoEmLote,
+} from '../service/faixa.service';
 
 const MSG_HORA = 'Use o formato HH:MM, de 00:00 a 23:59 (ex.: 08:30)';
 
@@ -282,6 +287,129 @@ export class OfertaDetalheDto {
 
   @ApiProperty({ example: 28 })
   disponiveis!: number;
+}
+
+export class DesativarFaixasEmLoteDto {
+  @ApiProperty({
+    example: '2026-08-31',
+    format: 'date',
+    description:
+      'Desativa as faixas ate esta data, INCLUSIVE. E a ultima data de prova do ' +
+      'periodo que esta saindo de cartaz.',
+  })
+  @IsISO8601({ strict: true }, { message: 'Informe uma data válida.' })
+  ate!: string;
+
+  @ApiPropertyOptional({
+    example: 6,
+    description:
+      'Restringe o corte a um polo. Omitido, vale para todos — que e o caso ' +
+      'normal da virada de periodo.',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  poloId?: number;
+
+  @ApiPropertyOptional({
+    example: false,
+    default: true,
+    description:
+      '`true` (o PADRAO) nao grava nada: devolve o corte inteiro para conferir. ' +
+      'Mande `false` para aplicar.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  simulacao?: boolean;
+}
+
+export class FaixaDoLoteDto implements FaixaDoLote {
+  @ApiProperty({ example: 2317 })
+  id!: number;
+
+  @ApiProperty({ type: String, format: 'date', example: '2026-08-17' })
+  data!: Date;
+
+  @ApiProperty({ example: '08:30' })
+  horaInicio!: string;
+
+  @ApiProperty({ example: '10:00' })
+  horaFim!: string;
+
+  @ApiProperty({ type: PoloResumoDto })
+  polo!: PoloResumoDto;
+
+  @ApiProperty({
+    example: 44,
+    description:
+      'Agendamentos confirmados nesta faixa. Desativar nao mexe em nenhum deles.',
+  })
+  confirmados!: number;
+
+  @ApiProperty({
+    example: false,
+    description:
+      'Ja estava inativa: aparece no corte, mas nao conta como desativada.',
+  })
+  jaInativa!: boolean;
+
+  @ApiProperty({
+    example: true,
+    description:
+      'Data ainda por vir. E nestas que desativar muda o que o aluno ve hoje — ' +
+      'as passadas ja tinham sumido do portal sozinhas.',
+  })
+  futura!: boolean;
+}
+
+export class DesativacaoEmLoteDto implements ResultadoDesativacaoEmLote {
+  @ApiProperty({ example: true })
+  simulacao!: boolean;
+
+  @ApiProperty({ type: String, format: 'date', example: '2026-08-31' })
+  ate!: Date;
+
+  @ApiPropertyOptional({ example: 6 })
+  poloId?: number;
+
+  @ApiProperty({
+    example: 12,
+    description: 'Quantas mudaram (ou mudariam) para inativa.',
+  })
+  desativadas!: number;
+
+  @ApiProperty({
+    example: 3,
+    description: 'Pegas pelo corte, mas ja inativas.',
+  })
+  jaInativas!: number;
+
+  @ApiProperty({
+    example: 4,
+    description: 'Das desativadas, quantas ainda nao aconteceram.',
+  })
+  futuras!: number;
+
+  @ApiProperty({
+    example: 512,
+    description:
+      'Agendamentos confirmados nas faixas desativadas. TODOS permanecem — ' +
+      'o numero esta aqui para dimensionar o impacto, nao para avisar de perda.',
+  })
+  agendamentosMantidos!: number;
+
+  @ApiProperty({
+    type: [FaixaDoLoteDto],
+    description:
+      'O corte inteiro, em ordem de data, para conferir antes de aplicar.',
+  })
+  faixas!: FaixaDoLoteDto[];
+
+  @ApiProperty({
+    example:
+      'Simulação: 12 faixa(s) seriam desativadas até 31/08/2026 em todos os polos. Nada foi gravado.',
+  })
+  mensagem!: string;
 }
 
 export class RemocaoFaixaDto {

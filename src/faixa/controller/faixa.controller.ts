@@ -21,11 +21,14 @@ import {
   ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
-import { SomenteAdmin } from '../../auth/roles.decorator';
+import type { AdminJwtPayload } from '../../auth/jwt/jwt.types';
+import { AdminLogado, SomenteAdmin } from '../../auth/roles.decorator';
 import { TAGS } from '../../config/swagger';
 import {
   AtualizarFaixaDto,
   CriarFaixaDto,
+  DesativacaoEmLoteDto,
+  DesativarFaixasEmLoteDto,
   FaixaDetalheDto,
   RemocaoFaixaDto,
   SalaDaFaixaDto,
@@ -155,6 +158,36 @@ export class FaixaController {
     @Body() dto: AtualizarFaixaDto,
   ) {
     return this.faixaService.atualizar(id, dto);
+  }
+
+  @Post('desativar-em-lote')
+  @ApiOperation({
+    summary: 'Desativa de uma vez as faixas ate uma data (a virada de periodo)',
+    description:
+      'A faixa nao pertence a periodo nenhum: o que a tira da lista do aluno e a ' +
+      'data ter passado. Enquanto as datas de dois periodos nao se cruzam isso ' +
+      'basta. Quando se cruzam — a substitutiva abrindo antes de a ultima data da ' +
+      'regular chegar — o aluno da rodada nova ve as faixas da anterior junto com ' +
+      'as novas, e este corte e o que as tira da frente dele.\n\n' +
+      '**`simulacao: true` e o PADRAO e nao grava nada.** Ela devolve o corte ' +
+      'inteiro (`faixas[]`) para conferir antes de aplicar, como no compulsorio: ' +
+      'uma data errada tira o periodo em andamento da frente de todos os alunos, ' +
+      'e desfazer significa reativar faixa por faixa.\n\n' +
+      '**Nenhum agendamento e cancelado.** Quem ja tem prova numa faixa desativada ' +
+      'continua com ela e segue saindo na lista de presenca e nos relatorios — ' +
+      'nada disso olha se a faixa esta ativa. O que a desativacao impede e alguem ' +
+      'marcar ou trocar para ali daqui para a frente.\n\n' +
+      'Faixa ja inativa entra no relatorio (`jaInativa: true`) e nao conta como ' +
+      'desativada.',
+  })
+  @ApiOkResponse({ type: DesativacaoEmLoteDto })
+  @ApiBadRequestResponse({ description: 'Data invalida' })
+  @ApiNotFoundResponse({ description: 'Polo nao encontrado' })
+  desativarEmLote(
+    @Body() dto: DesativarFaixasEmLoteDto,
+    @AdminLogado() admin: AdminJwtPayload,
+  ) {
+    return this.faixaService.desativarEmLote(dto, admin.email);
   }
 
   @Post(':id/salas')
