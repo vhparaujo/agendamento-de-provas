@@ -141,6 +141,8 @@ export type OrigemDaReserva = 'ALUNO' | 'COMPULSORIO' | 'ADMIN';
 
 export interface AdesaoDaModalidade {
   modalidadeId: number;
+  /** A chave estavel do formato (EAD, SEMI, MODULAR...): a tela pinta por ela. */
+  codigo: string;
   modalidade: string;
   /** Vinculos ativos deste formato. */
   total: number;
@@ -168,17 +170,19 @@ export interface EstatisticasDaJanela {
    * do periodo.
    */
   agendadosInativos: number;
-  /** Reservas confirmadas por dia de CRIACAO (fuso da operacao), por origem. */
+  /** Reservas confirmadas por dia de CRIACAO (fuso da operacao), por formato. */
   porDia: AgendamentosDoDia[];
 }
 
 export interface AgendamentosDoDia {
   /** AAAA-MM-DD, no fuso da operacao. */
   dia: string;
-  aluno: number;
-  compulsorio: number;
-  admin: number;
-  semRegistro: number;
+  /**
+   * `modalidadeId` -> reservas criadas nesse dia. Formato sem reserva no dia
+   * fica de fora: o mapa e esparso, e quem le preenche o zero. O nome de cada
+   * formato vem de `porModalidade`, para nao repetir o rotulo em cada dia.
+   */
+  porModalidade: Record<number, number>;
 }
 
 const PADRAO_POR_PAGINA = 50;
@@ -1036,7 +1040,7 @@ export class AgendamentoAdminService {
     const [modalidades, vinculos] = await Promise.all([
       this.prisma.modalidade.findMany({
         orderBy: { id: 'asc' },
-        select: { id: true, nome: true },
+        select: { id: true, codigo: true, nome: true },
       }),
       this.prisma.alunoImportado.groupBy({
         by: ['modalidadeId'],
@@ -1074,7 +1078,7 @@ export class AgendamentoAdminService {
 
     const agendadosPorModalidade = new Map<number, number>();
     const porOrigem = { aluno: 0, compulsorio: 0, admin: 0, semRegistro: 0 };
-    const porDia = new Map<string, AgendamentosDoDia>();
+    const porDia = new Map<string, Map<number, number>>();
     let agendadosInativos = 0;
 
     for (const reserva of porVinculo.values()) {
@@ -1092,15 +1096,11 @@ export class AgendamentoAdminService {
 
       porOrigem[campo]++;
 
+      // O ritmo da janela lido por FORMATO: e o formato que decide sala e
+      // duracao, entao e por ele que a operacao cobra quem ainda falta.
       const dia = diaDaOperacao(reserva.createdAt);
-      const doDia = porDia.get(dia) ?? {
-        dia,
-        aluno: 0,
-        compulsorio: 0,
-        admin: 0,
-        semRegistro: 0,
-      };
-      doDia[campo]++;
+      const doDia = porDia.get(dia) ?? new Map<number, number>();
+      somar(doDia, reserva.aluno.modalidadeId, 1);
       porDia.set(dia, doDia);
     }
 
@@ -1111,6 +1111,7 @@ export class AgendamentoAdminService {
     const porModalidade = modalidades
       .map((m) => ({
         modalidadeId: m.id,
+        codigo: m.codigo,
         modalidade: m.nome,
         total: totalPorModalidade.get(m.id) ?? 0,
         agendados: agendadosPorModalidade.get(m.id) ?? 0,
@@ -1125,7 +1126,12 @@ export class AgendamentoAdminService {
       porModalidade,
       porOrigem,
       agendadosInativos,
-      porDia: [...porDia.values()].sort((a, b) => a.dia.localeCompare(b.dia)),
+      porDia: [...porDia]
+        .map(([dia, formatos]) => ({
+          dia,
+          porModalidade: Object.fromEntries(formatos) as Record<number, number>,
+        }))
+        .sort((a, b) => a.dia.localeCompare(b.dia)),
     };
   }
 

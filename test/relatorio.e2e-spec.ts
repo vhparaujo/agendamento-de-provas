@@ -430,18 +430,13 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
       });
     });
 
-    it('conta as reservas por dia de criacao, separadas por origem', async () => {
+    it('conta as reservas por dia de criacao, separadas por formato', async () => {
       const res = await comoAdmin(
         api().get(`/api/agendamentos/estatisticas?poloId=${poloId}`),
       ).expect(200);
 
       expect(res.body.porDia).toHaveLength(1);
-      expect(res.body.porDia[0]).toMatchObject({
-        aluno: 1,
-        compulsorio: 0,
-        admin: 0,
-        semRegistro: 0,
-      });
+      expect(res.body.porDia[0].porModalidade).toEqual({ [ead.id]: 1 });
       expect(res.body.porDia[0].dia).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     });
 

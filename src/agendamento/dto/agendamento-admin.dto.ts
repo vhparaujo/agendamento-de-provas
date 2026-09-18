@@ -153,6 +153,12 @@ class AdesaoDaModalidadeDto implements AdesaoDaModalidade {
   @ApiProperty({ example: 1 })
   modalidadeId!: number;
 
+  @ApiProperty({
+    example: 'EAD',
+    description: 'Chave estavel do formato — e por ela que a tela escolhe a cor.',
+  })
+  codigo!: string;
+
   @ApiProperty({ example: 'EaD' })
   modalidade!: string;
 
@@ -211,7 +217,7 @@ export class EstatisticasDaJanelaDto implements EstatisticasDaJanela {
   @ApiProperty({
     type: () => [AgendamentosDoDiaDto],
     description:
-      'Reservas confirmadas por dia de criacao (fuso da operacao), por origem. ' +
+      'Reservas confirmadas por dia de criacao (fuso da operacao), por formato. ' +
       'So os dias com alguma reserva.',
   })
   porDia!: AgendamentosDoDiaDto[];
@@ -221,17 +227,15 @@ class AgendamentosDoDiaDto implements AgendamentosDoDia {
   @ApiProperty({ example: '2026-08-21', format: 'date' })
   dia!: string;
 
-  @ApiProperty({ example: 412 })
-  aluno!: number;
-
-  @ApiProperty({ example: 0 })
-  compulsorio!: number;
-
-  @ApiProperty({ example: 3 })
-  admin!: number;
-
-  @ApiProperty({ example: 0 })
-  semRegistro!: number;
+  @ApiProperty({
+    type: 'object',
+    additionalProperties: { type: 'integer' },
+    example: { '1': 412, '3': 27 },
+    description:
+      'modalidadeId -> reservas criadas no dia. Formato sem reserva no dia ' +
+      'fica de fora; o nome de cada formato vem de `porModalidade`.',
+  })
+  porModalidade!: Record<number, number>;
 }
 
 export class RemanejarDto {
