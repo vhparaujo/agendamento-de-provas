@@ -65,12 +65,31 @@ import { rotuloDoTurno } from './turno';
  * ============================================================================
  * O LOTE QUE TROCA A SENHA DAS PROVAS
  * ============================================================================
- * Uma execucao = UMA celula da grade (dia + turno). Aplica a senha daquela
- * celula em TODAS as turmas do CSV que pertencem ao periodo letivo vigente.
+ * Uma execucao = UMA celula da grade (dia + SESSAO). Aplica a senha daquela
+ * celula nas turmas do CSV **daquele formato**, no periodo letivo vigente.
  *
- * **Sobrescrever a senha de um turno anterior e a FUNCIONALIDADE, nao um
- * conflito.** A senha vale um turno; trocar a cada turno e o que impede o aluno
- * da manha de repassar a dele para o da tarde. Nao invente deduplicacao aqui.
+ * ⚠️ **As duas metades desta frase mudaram em 21/09/2026.** Antes era "dia +
+ * turno" em TODAS as turmas do CSV, tres vezes por dia. Duas consequencias do
+ * novo desenho, e as duas sao deliberadas:
+ *
+ *  - **o recorte por formato passou a valer tambem aqui.** Nao ha alternativa:
+ *    as 12:01 o EaD troca de senha e o Semi tambem, com senhas diferentes.
+ *    Aplicar a do EaD em todas as turmas apagaria a do Semi um minuto antes da
+ *    prova dele. O preco e o mesmo do lote de datas — turma sem formato
+ *    derivado fica de fora e vira linha de relatorio —, e ele ja estava pago:
+ *    essa turma tambem nao recebe a data nova, e sem a data a prova nem abre.
+ *  - **o cron nao dispara mais este lote no calendario normal.** Quem troca a
+ *    senha e o lote de DATAS, que ja a grava por obrigacao (ver
+ *    `montarCorpoDoQuiz`) e roda na mesma sessao, no mesmo minuto. Este lote
+ *    continua vivo para o disparo MANUAL e para o modo em que o special access
+ *    substitui as janelas — ali a data nao e aplicada e a senha continua
+ *    trocando.
+ *
+ * **Sobrescrever a senha da sessao anterior e a FUNCIONALIDADE, nao um
+ * conflito.** A senha vale uma sessao; trocar a cada sessao e o que impede o
+ * aluno das 08:30 de repassar a dele para o das 10:30 — e e exatamente isso que
+ * a grade por turno NAO conseguia impedir, porque as duas sessoes dividiam a
+ * mesma celula. Nao invente deduplicacao aqui.
  *
  * **Aqui nunca preservamos e nunca removemos senha — sempre DEFINIMOS.** O CLI
  * de origem tinha tres acoes porque o config podia omitir a chave; aqui a celula
@@ -130,11 +149,19 @@ interface AlvoNaTurma {
   nomePorId: ReadonlyMap<number, string>;
 }
 
-/** O lote de senhas: uma celula da grade, em TODAS as turmas do CSV. */
+/**
+ * O lote de senhas: a celula de UMA sessao, nas turmas de UM formato.
+ *
+ * Mesma forma de `OpcoesDeData`, e nao por simetria: desde 21/09/2026 os dois
+ * partem da mesma janela e tocam o mesmo conjunto de turmas. O que os separa e
+ * o que cada um GRAVA — este so o `Password`, aquele tambem as datas e o grupo.
+ */
 export interface OpcoesDeSenha {
   tipo?: typeof TipoExecucaoQuiz.SENHA;
+  /** A sessao cuja senha sera aplicada. Ela ja carrega o formato do recorte. */
+  janelaId: number;
+  /** O dia da PROVA — ja com o `diaSeguinte` resolvido pelo chamador. */
   data: string;
-  turno: Turno;
   simulacao: boolean;
   forcar: boolean;
 }
@@ -168,8 +195,18 @@ export interface OpcoesDeData {
  */
 export interface OpcoesDePreparo {
   tipo: typeof TipoExecucaoQuiz.PREPARO;
+  /**
+   * De qual celula sai a senha que vai junto no PUT.
+   *
+   * ⚠️ O preparo alcanca TODAS as turmas do CSV (nao so as de um formato), e
+   * mesmo assim precisa de uma senha — o PUT substitui o questionario inteiro e
+   * nao pode preservar a que o GET devolveu. A senha gravada aqui e
+   * PROVISORIA: no dia, o disparo da sessao de cada turma poe a senha do
+   * formato dela por cima. Escolher a celula e do admin de propósito — e ele
+   * quem sabe qual sessao esta preparando.
+   */
+  janelaId: number;
   data: string;
-  turno: Turno;
   simulacao: boolean;
   /** Ignorado: o preparo nao tem trava de "ja aplicado". */
   forcar: boolean;
@@ -306,30 +343,33 @@ export class SenhaQuizService {
       matchQuiz: configurado.matchQuiz,
     };
 
-    // A janela, quando houver. Lida ANTES do lock para que um id inexistente
-    // devolva 404 na hora, em vez de derrubar o lote depois de ele comecar.
-    const janela =
-      tipo === TipoExecucaoQuiz.DATA
-        ? await this.janelaDoLote((opcoes as OpcoesDeData).janelaId)
-        : null;
+    // A janela. Lida ANTES do lock para que um id inexistente devolva 404 na
+    // hora, em vez de derrubar o lote depois de ele comecar.
+    //
+    // ⚠️ **Os TRES tipos passam por aqui desde 21/09/2026.** A celula da grade
+    // pertence a uma sessao, entao ate o preparo — que nao recorta turma por
+    // formato — precisa dizer de qual sessao tira a senha.
+    const janela = await this.janelaDoLote(opcoes.janelaId);
 
     const dataAlvo = dataUtcDeIso(opcoes.data);
+
+    // Do lote de DATAS, e so dele: a janela que o questionario passa a ter e o
+    // grupo que a libera. No de senhas ela serve so para achar a celula e o
+    // formato — gravar as horas ali moveria a prova num disparo que existe
+    // para nao move-la.
+    const aplicaJanela = tipo === TipoExecucaoQuiz.DATA;
 
     // O grupo do DIA, e nao mais so o da janela (14/09/2026): celula da grade de
     // grupos, ou o nome fixo como padrao. Lido ANTES da idempotencia porque a
     // celula entra na chave dela — ver `recusarSeJaAplicadaAJanela`.
-    const grupoDoDia = janela
+    const grupoDoDia = aplicaJanela
       ? await this.gradeGrupos.doDia(janela, dataAlvo)
       : null;
 
-    // O turno de onde sai a senha: da propria opcao, no lote de senhas; da
-    // janela, no de datas.
-    const turnoDaSenha = janela
-      ? janela.turno
-      : (opcoes as OpcoesDeSenha | OpcoesDePreparo).turno;
-
     const celula = await this.prisma.senhaDeProva.findUnique({
-      where: { data_turno: { data: dataAlvo, turno: turnoDaSenha } },
+      where: {
+        data_janelaDeProvaId: { data: dataAlvo, janelaDeProvaId: janela.id },
+      },
     });
 
     // ⚠️ A celula e obrigatoria NOS DOIS LOTES, e no de datas por um motivo mais
@@ -341,9 +381,10 @@ export class SenhaQuizService {
     // unica fonte autoritativa em texto claro. Ver `quiz-body.ts`.
     if (!celula) {
       throw new BadRequestException(
-        `Não há senha cadastrada para ${opcoes.data.split('-').reverse().join('/')} (${rotuloDoTurno(turnoDaSenha)}). ` +
-          'Preencha a célula na grade antes de aplicar — o questionário precisa ' +
-          'receber a senha junto com a janela, senão ela seria apagada.',
+        `Não há senha cadastrada para ${opcoes.data.split('-').reverse().join('/')} ` +
+          `na sessão de ${janela.horaInicio}–${janela.horaFim}. ` +
+          'Gere as senhas do período na grade antes de aplicar — o questionário ' +
+          'precisa receber a senha junto com a janela, senão ela seria apagada.',
       );
     }
 
@@ -352,13 +393,14 @@ export class SenhaQuizService {
     // O preparo nao tem trava de "ja aplicado": repeti-lo produz o mesmo estado,
     // e numa turma so ele e o teste que se repete ate dar certo.
     if (!preparo && !opcoes.simulacao && !opcoes.forcar) {
-      if (janela) {
+      if (aplicaJanela) {
         await this.recusarSeJaAplicadaAJanela(
           janela.id,
           dataAlvo,
           janela.versao,
           grupoDoDia?.celulaId ?? null,
           grupoDoDia?.versao ?? null,
+          celula.versao,
         );
       } else {
         await this.recusarSeJaAplicada(celula.id, celula.versao);
@@ -367,22 +409,28 @@ export class SenhaQuizService {
 
     const resolvidas = await this.resolucao.resolver(periodoLetivoIds);
 
-    // No lote de datas o conjunto encolhe: so as turmas DO FORMATO da janela.
-    // As demais nao sao erro — cada uma tem a sua janela, no horario dela.
-    const recorte = janela
-      ? await this.recortarPelaModalidade(
-          resolvidas,
-          janela.modalidadeId,
-          periodoLetivoIds,
-          rodada,
-        )
-      : {
+    // O conjunto encolhe para as turmas DO FORMATO da janela — no lote de datas
+    // e, desde 21/09/2026, tambem no de SENHAS. As demais nao sao erro: cada uma
+    // tem a sua sessao, com a senha dela, no horario dela.
+    //
+    // O PREPARO e a excecao, e por um motivo proprio: ele nao aplica calendario
+    // nenhum, ele TRANCA o questionario para o special access. Toda turma do CSV
+    // precisa ser trancada, inclusive as que nunca resolveram formato — deixa-las
+    // abertas seria pior que lhes dar a senha de outro formato.
+    const recorte = preparo
+      ? {
           turmas: resolvidas.resolvidas,
           foraDaModalidade: [] as ItemParaGravar[],
           semModalidade: 0,
           modalidadeAmbigua: 0,
           codigoDaModalidade: null as string | null,
-        };
+        }
+      : await this.recortarPelaModalidade(
+          resolvidas,
+          janela.modalidadeId,
+          periodoLetivoIds,
+          rodada,
+        );
 
     // O preparo aceita UMA turma: o primeiro uso real nao pode trancar a prova de
     // toda a instituicao de uma vez. Numa turma so, as nao resolvidas do CSV
@@ -421,17 +469,30 @@ export class SenhaQuizService {
         // execucoes por celula, e um preparo nao pode passar por troca de senha.
         senhaDeProvaId: preparo ? null : celula.id,
         data: dataAlvo,
-        // Nulo no lote de datas: turno e a chave da GRADE, e uma execucao de
-        // datas nao "pertence" a um turno — ela pertence a uma janela.
-        turno: janela ? null : celula.turno,
-        janelaDeProvaId: janela?.id ?? null,
-        horaInicioAplicada: janela?.horaInicio ?? null,
-        horaFimAplicada: janela?.horaFim ?? null,
+        // O turno da SESSAO, como rotulo do relatorio e do log. Ele deixou de
+        // ser a chave da grade em 21/09/2026, e por isso nao e mais nulo nas
+        // execucoes de data: a execucao pertence a uma janela, e a janela
+        // acontece num turno.
+        turno: janela.turno,
+        janelaDeProvaId: janela.id,
+        // Só o lote de DATAS move o calendario do questionario. No de senhas as
+        // horas ficam nulas de propósito: gravá-las diria que a prova foi
+        // movida num disparo que nao a moveu.
+        horaInicioAplicada: aplicaJanela ? janela.horaInicio : null,
+        horaFimAplicada: aplicaJanela ? janela.horaFim : null,
         periodoLetivoId,
         // A versao do que foi REALMENTE aplicado: da celula no lote de senhas, da
         // janela no de datas. E ela que faz a idempotencia liberar um novo
-        // disparo quando o admin corrige o horario ou a senha.
-        versaoAplicada: preparo ? null : janela ? janela.versao : celula.versao,
+        // disparo quando o admin corrige o horario.
+        versaoAplicada: preparo
+          ? null
+          : aplicaJanela
+            ? janela.versao
+            : celula.versao,
+        // A versao da CELULA, sempre — e o que a grade compara para dizer se o
+        // Brightspace esta com a senha que o admin esta vendo. Em `SENHA` ela
+        // repete `versaoAplicada`; em `DATA` e a unica que fala de senha.
+        versaoSenhaAplicada: preparo ? null : celula.versao,
         // A celula da grade de grupos e a versao dela, pelo mesmo motivo da
         // linha acima: corrigir o grupo de hoje precisa liberar um novo disparo.
         // Nulas quando o grupo veio do nome fixo da janela, ou nao houve grupo.
@@ -451,18 +512,21 @@ export class SenhaQuizService {
       select: { id: true },
     });
 
-    const descricao = janela
-      ? `janela ${janela.horaInicio}-${janela.horaFim} de ${recorte.codigoDaModalidade ?? janela.modalidadeId} em ${opcoes.data}` +
+    const sessao =
+      `${janela.horaInicio}-${janela.horaFim} ` +
+      `(${recorte.codigoDaModalidade ?? janela.modalidadeId}, ${rotuloDoTurno(janela.turno)})`;
+
+    const descricao = aplicaJanela
+      ? `janela ${sessao} em ${opcoes.data}` +
         // De ONDE veio o grupo entra no log: "por que a prova abriu para o
         // grupo de ontem?" so tem resposta sabendo se foi a grade ou o padrao.
         `; grupo ${grupoDoDia?.nome ? `"${grupoDoDia.nome}" (${grupoDoDia.origem === 'GRADE' ? 'grade do dia' : 'padrao da janela'})` : grupoDoDia?.origem === 'SEM_GRUPO_NO_DIA' ? 'AUSENTE na grade do dia' : 'nao troca'}`
       : preparo
-        ? `preparo para special access com a senha de ${opcoes.data} ` +
-          `(${rotuloDoTurno(celula.turno)})` +
+        ? `preparo para special access com a senha de ${opcoes.data}, sessao ${sessao}` +
           (escolhidas.size > 0
             ? `, so ${escolhidas.size} turma(s): ${[...escolhidas].join(', ')}`
             : '')
-        : `celula ${opcoes.data} ${rotuloDoTurno(celula.turno)}`;
+        : `senha de ${opcoes.data}, sessao ${sessao}`;
 
     this.auditoria.registrar(eventoDoLote(tipo, 'INICIADA'), {
       ator: iniciadoPor,
@@ -497,7 +561,10 @@ export class SenhaQuizService {
       foraDaModalidade: recorte.foraDaModalidade,
       senha: celula.senha,
       alvo,
-      janela: janela
+      // `null` aqui significa "nao mexa no calendario do questionario", e nao
+      // "nao ha janela": o lote de senhas TEM janela (e dela que saiu a celula e
+      // o recorte), e mesmo assim nao move data nenhuma.
+      janela: aplicaJanela
         ? {
             inicio: instanteUtcDe(dataAlvo, janela.horaInicio),
             fim: instanteUtcDe(dataAlvo, janela.horaFim),
@@ -890,6 +957,13 @@ export class SenhaQuizService {
   ): Promise<void> {
     const ja = await this.prisma.execucaoSenhaQuiz.findFirst({
       where: {
+        // ⚠️ **O `tipo` entrou em 21/09/2026.** O lote de DATAS aponta para a
+        // MESMA celula (ele grava a senha por obrigacao), e o `versaoAplicada`
+        // dele e a versao da JANELA. Sem este filtro, um disparo de datas cuja
+        // janela estivesse por acaso na mesma versao da celula faria este lote
+        // recusar dizendo "ja aplicada" — com a senha nunca tendo sido aplicada
+        // por ele.
+        tipo: TipoExecucaoQuiz.SENHA,
         senhaDeProvaId,
         simulacao: false,
         status: StatusExecucao.CONCLUIDA,
@@ -1048,9 +1122,14 @@ export class SenhaQuizService {
     versao: number,
     grupoDaJanelaId: number | null,
     versaoGrupo: number | null,
+    versaoSenha: number,
   ): Promise<void> {
     const ja = await this.prisma.execucaoSenhaQuiz.findFirst({
       where: {
+        // ⚠️ Desde 21/09/2026 o lote de SENHAS tambem grava `janelaDeProvaId`.
+        // Sem o tipo aqui, a troca de senha das 12:01 faria a troca de DATA das
+        // 12:01 parecer ja aplicada — e a prova ficaria com o horario anterior.
+        tipo: TipoExecucaoQuiz.DATA,
         janelaDeProvaId,
         data,
         // ⚠️ A VERSAO entra na chave. Sem ela, corrigir o horario de uma janela
@@ -1062,6 +1141,10 @@ export class SenhaQuizService {
         // JANELA. O cron usa a mesma chave em `motivoParaNaoDisparar`.
         grupoDaJanelaId,
         versaoGrupoAplicada: versaoGrupo,
+        // E a SENHA, pelo mesmo motivo (21/09/2026): o disparo grava as tres
+        // coisas, e gerar a senha de novo as 12:43 deixa o questionario com a
+        // anterior. Sem isto na chave, a correcao so valeria no dia seguinte.
+        versaoSenhaAplicada: versaoSenha,
         simulacao: false,
         status: StatusExecucao.CONCLUIDA,
       },

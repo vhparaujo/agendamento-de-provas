@@ -155,7 +155,8 @@ class AdesaoDaModalidadeDto implements AdesaoDaModalidade {
 
   @ApiProperty({
     example: 'EAD',
-    description: 'Chave estavel do formato — e por ela que a tela escolhe a cor.',
+    description:
+      'Chave estavel do formato — e por ela que a tela escolhe a cor.',
   })
   codigo!: string;
 

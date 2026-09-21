@@ -4,34 +4,54 @@ import { PrismaService } from '../../database/prisma.service';
 import { StatusExecucao, Turno } from '../../generated/prisma/client';
 import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 import { GradeGruposService } from './grade-grupos.service';
-import { GradeSenhasService } from './grade-senhas.service';
 import { SenhaQuizCron } from './senha-quiz.cron';
 import { SenhaQuizService } from './senha-quiz.service';
 
 /**
- * As saidas antecipadas do tick, mais a idempotencia. O miolo da decisao
- * de horario tem teste proprio em `turno.spec.ts`; aqui o que importa e que
+ * As saidas antecipadas do tick, mais a idempotencia. O miolo da decisao de
+ * horario tem teste proprio em `janela.spec.ts`; aqui o que importa e que
  * nenhuma dessas saidas dispare o lote — e que nenhuma derrube o tick.
+ *
+ * ⚠️ **Desde 21/09/2026 ha UM calendario.** Os horarios de turno sairam do
+ * banco junto com o cron de senhas proprio: quem dispara e a
+ * `janela_de_prova` de cada formato, e o lote de DATAS ja grava a senha da
+ * sessao. O caminho so-senha sobrou para o modo em que o special access
+ * substitui as janelas, e e assim que ele e exercitado aqui.
  */
 describe('SenhaQuizCron', () => {
-  /**
-   * So o que e do SERVIDOR continua no .env. Os horarios saem do BANCO desde
-   * 19/08/2026 — ver `HORARIOS` abaixo.
-   */
+  /** So o que e do SERVIDOR mora no .env. O calendario esta no banco. */
   const ENV_LIGADO = {
     SENHA_QUIZ_CRON_HABILITADO: 'true',
     SENHA_QUIZ_CRON_TOLERANCIA_MIN: '30',
     SENHA_QUIZ_CRON_MAX_TENTATIVAS: '3',
   };
 
-  const HORARIOS = {
-    [Turno.MANHA]: '07:30',
-    [Turno.TARDE]: null,
-    [Turno.NOITE]: null,
-  };
-
   /** 16/09/2026 07:30 em Sao Paulo = 10:30 UTC. */
   const NA_HORA = new Date('2026-09-16T10:30:00.000Z');
+
+  /**
+   * Uma janela EaD que dispara exatamente as 07:30 — o horario dos testes.
+   *
+   * Ela e o calendario PADRAO deste arquivo: sem janela ativa nao ha disparo
+   * nenhum desde 21/09/2026, nem de data nem de senha.
+   */
+  const JANELA_AS_0730 = {
+    id: 31,
+    modalidadeId: 1,
+    horaDisparo: '07:30',
+    horaInicio: '09:00',
+    horaFim: '12:00',
+    turno: Turno.MANHA,
+    diaSeguinte: false,
+    ativo: true,
+    versao: 1,
+    nomeGrupo: null,
+    categoriaGrupo: null,
+    modalidade: { codigo: 'EAD' },
+  };
+
+  /** O modo em que so a senha troca — e onde o lote `SENHA` ainda dispara. */
+  const SO_SENHA = { substituiJanelas: true };
 
   /**
    * Os timestamps das execucoes precisam ser ANCORADOS em `NA_HORA`, nunca em
@@ -47,10 +67,10 @@ describe('SenhaQuizCron', () => {
   /**
    * So os avisos do lote de SENHAS.
    *
-   * Sem janela ativa no mock, o tick tambem emite `DATA_QUIZ_CRON_SEM_JANELA` —
-   * comportamento correto e testado a parte. Filtrar aqui mantem cada teste
-   * falando do caminho que ele exercita, em vez de casar a lista inteira e
-   * quebrar toda vez que um aviso novo nascer do outro lado.
+   * O caminho so-senha tambem emite `DATA_QUIZ_CRON_SUBSTITUIDO` a cada dia,
+   * porque e o modo do special access que o leva ali. Filtrar mantem cada teste
+   * falando do que ele exercita, em vez de casar a lista inteira e quebrar toda
+   * vez que um aviso novo nascer do outro lado.
    */
   const eventosDeSenha = () => eventos.filter((e) => e.startsWith('SENHA_'));
 
@@ -60,8 +80,10 @@ describe('SenhaQuizCron', () => {
     celula?: Record<string, unknown> | null;
     habilitado?: boolean;
     execucoes?: Record<string, unknown>[];
-    horarios?: Record<Turno, string | null>;
-    /** As janelas ATIVAS no banco. Vazio = o tick de datas nao dispara nada. */
+    /**
+     * As janelas ATIVAS no banco. O padrao e a de 07:30 — sem nenhuma, o tick
+     * nao dispara nada, nem data nem senha.
+     */
     janelas?: Record<string, unknown>[];
     /** A celula da grade de GRUPOS do dia alvo. Ausente = sem celula. */
     celulaDeGrupo?: Record<string, unknown> | null;
@@ -84,10 +106,10 @@ describe('SenhaQuizCron', () => {
       execucaoSenhaQuiz: {
         findMany: jest.fn().mockResolvedValue(opcoes.execucoes ?? []),
       },
-      // Sem janela ativa, `decidirDatas` sai cedo e o tick segue para a senha —
-      // que e o caminho que a maioria dos testes deste arquivo exercita.
       janelaDeProva: {
-        findMany: jest.fn().mockResolvedValue(opcoes.janelas ?? []),
+        findMany: jest
+          .fn()
+          .mockResolvedValue(opcoes.janelas ?? [JANELA_AS_0730]),
       },
       grupoDaJanela: {
         findUnique: jest.fn().mockResolvedValue(opcoes.celulaDeGrupo ?? null),
@@ -106,16 +128,11 @@ describe('SenhaQuizCron', () => {
       registrar: jest.fn().mockImplementation((e: string) => eventos.push(e)),
     } as unknown as AuditoriaService;
 
-    const grade = {
-      horariosDoCron: jest.fn().mockResolvedValue(opcoes.horarios ?? HORARIOS),
-    } as unknown as GradeSenhasService;
-
     return new SenhaQuizCron(
       new ConfigService({ ...ENV_LIGADO, ...opcoes.env }),
       prisma,
       quizzes,
       { iniciar } as unknown as SenhaQuizService,
-      grade,
       auditoria,
       new GradeGruposService(prisma, auditoria),
     );
@@ -124,58 +141,44 @@ describe('SenhaQuizCron', () => {
   afterEach(() => jest.useRealTimers());
 
   describe('special access substituindo as janelas (15/09/2026)', () => {
-    /** Uma janela EaD que dispara exatamente as 07:30 — o horario do teste. */
-    const JANELA_AS_0730 = {
-      id: 31,
-      modalidadeId: 1,
-      horaDisparo: '07:30',
-      horaInicio: '09:00',
-      horaFim: '12:00',
-      turno: Turno.MANHA,
-      diaSeguinte: false,
-      ativo: true,
-      versao: 1,
-      nomeGrupo: null,
-      categoriaGrupo: null,
-      modalidade: { codigo: 'EAD' },
-    };
-
     it('sem a opcao, a janela do horario dispara as datas', async () => {
-      const cron = montar({ janelas: [JANELA_AS_0730] });
+      const cron = montar({});
 
       await cron.tick();
 
       expect(iniciar).toHaveBeenCalledTimes(1);
-      expect(iniciar.mock.calls[0][0]).toMatchObject({ janelaId: 31 });
+      expect(iniciar.mock.calls[0][0]).toMatchObject({
+        tipo: 'DATA',
+        janelaId: 31,
+      });
     });
 
     /**
      * O questionario preparado nao tem data. Uma janela aplicada pelo cron o
      * abriria no horario de UM formato para todos — e a senha precisa
-     * continuar trocando, porque ela nao mexe na data.
+     * continuar trocando, porque ela e o unico fator que resta.
      */
-    it('com a opcao, nao aplica a janela e segue para a senha', async () => {
-      const cron = montar({
-        janelas: [JANELA_AS_0730],
-        specialAccess: { substituiJanelas: true },
-      });
+    it('com a opcao, nao aplica a janela e troca SO a senha', async () => {
+      const cron = montar({ specialAccess: SO_SENHA });
 
       await cron.tick();
 
       expect(eventos).toContain('DATA_QUIZ_CRON_SUBSTITUIDO');
       expect(iniciar).toHaveBeenCalledTimes(1);
-      expect(iniciar.mock.calls[0][0]).toMatchObject({ turno: Turno.MANHA });
-      expect(iniciar.mock.calls[0][0]).not.toHaveProperty('janelaId');
+      // Mesma janela, e por isso mesmo recorte e mesma celula — o que muda e o
+      // tipo do lote, que aqui nao carrega `tipo` (o default e SENHA).
+      expect(iniciar.mock.calls[0][0]).toMatchObject({ janelaId: 31 });
+      expect(iniciar.mock.calls[0][0]).not.toHaveProperty('tipo');
     });
   });
 
   it('dispara no horario, SEM simulacao e com origem CRON', async () => {
-    await montar({}).tick();
+    await montar({ specialAccess: SO_SENHA }).tick();
 
     expect(iniciar).toHaveBeenCalledWith(
       {
         data: '2026-09-16',
-        turno: Turno.MANHA,
+        janelaId: 31,
         simulacao: false,
         forcar: false,
       },
@@ -190,44 +193,36 @@ describe('SenhaQuizCron', () => {
   });
 
   /**
-   * Cron ligado no servidor e nenhum horario cadastrado na tela: ele nunca vai
+   * Cron ligado no servidor e nenhuma janela ativa cadastrada: ele nunca vai
    * disparar. Calar aqui entregaria um cron que PARECE armado e nao esta — e
    * ninguem descobriria antes do dia da prova.
+   *
+   * Desde 21/09/2026 este aviso vale pelos TRES calendarios de uma vez: sem
+   * janela nao ha data, nem grupo, nem senha.
    */
-  it('(2a) sem nenhum horario cadastrado, avisa UMA vez e nao dispara', async () => {
-    const cron = montar({
-      horarios: {
-        [Turno.MANHA]: null,
-        [Turno.TARDE]: null,
-        [Turno.NOITE]: null,
-      },
-    });
+  it('(2a) sem nenhuma janela ativa, avisa UMA vez e nao dispara', async () => {
+    const cron = montar({ janelas: [] });
 
     await cron.tick();
     await cron.tick();
 
     expect(iniciar).not.toHaveBeenCalled();
-    expect(eventosDeSenha()).toEqual(['SENHA_QUIZ_CRON_SEM_HORARIO']);
+    expect(eventos).toEqual(['DATA_QUIZ_CRON_SEM_JANELA']);
   });
 
   /**
-   * Horario mal digitado nao pode passar por "turno desligado" sem barulho: o
-   * `PUT /horarios` recusa o formato, mas se algo escapar para o banco, o
-   * aviso de "nenhum horario" e o que sobra.
+   * Horario mal digitado nao pode passar por "sessao desligada" sem barulho: o
+   * `PUT /janelas` recusa o formato, mas se algo escapar para o banco a janela
+   * simplesmente nao casa nenhum minuto — e nenhum disparo sai dela.
    */
-  it('(2a) horario mal digitado no banco cai no mesmo aviso', async () => {
+  it('(2a) horario mal digitado no banco nao dispara', async () => {
     const cron = montar({
-      horarios: {
-        [Turno.MANHA]: '7:30',
-        [Turno.TARDE]: '',
-        [Turno.NOITE]: null,
-      },
+      janelas: [{ ...JANELA_AS_0730, horaDisparo: '7:30' }],
     });
 
     await cron.tick();
 
     expect(iniciar).not.toHaveBeenCalled();
-    expect(eventosDeSenha()).toEqual(['SENHA_QUIZ_CRON_SEM_HORARIO']);
   });
 
   it('(3) nao faz nada fora da janela', async () => {
@@ -236,21 +231,17 @@ describe('SenhaQuizCron', () => {
   });
 
   /**
-   * O ponto de mover os horarios para o banco: o admin corrige o horario pela
-   * tela e o tick seguinte ja usa o valor novo, sem reiniciar o servidor.
+   * O ponto de o calendario estar no banco: o admin corrige o horario pela tela
+   * e o tick seguinte ja usa o valor novo, sem reiniciar o servidor.
    */
   it('usa o horario do BANCO, nao do .env', async () => {
     await montar({
       agora: new Date('2026-09-16T13:00:00.000Z'), // 10:00 em Sao Paulo
-      horarios: {
-        [Turno.MANHA]: '10:00',
-        [Turno.TARDE]: null,
-        [Turno.NOITE]: null,
-      },
+      janelas: [{ ...JANELA_AS_0730, horaDisparo: '10:00' }],
     }).tick();
 
     expect(iniciar).toHaveBeenCalledWith(
-      expect.objectContaining({ turno: Turno.MANHA }),
+      expect.objectContaining({ janelaId: 31 }),
       'cron',
       'CRON',
     );
@@ -258,10 +249,25 @@ describe('SenhaQuizCron', () => {
 
   /**
    * Sabado a noite nao tem prova, e a grade do cliente reflete isso. O aviso e o
-   * valor: o horario chegou e ninguem preencheu.
+   * valor: o horario chegou e ninguem gerou a senha daquela sessao.
+   *
+   * ⚠️ Sem a celula, a JANELA tambem nao e aplicada — o PUT substitui o
+   * questionario inteiro e nao pode preservar a senha lida. Por isso o caminho
+   * normal avisa com `DATA_QUIZ_CRON_SEM_GRADE`, e nao so o so-senha.
    */
   it('(4) sem celula na grade, avisa UMA vez e nao dispara', async () => {
     const cron = montar({ celula: null });
+
+    await cron.tick();
+    await cron.tick();
+    await cron.tick();
+
+    expect(iniciar).not.toHaveBeenCalled();
+    expect(eventos).toEqual(['DATA_QUIZ_CRON_SEM_GRADE']);
+  });
+
+  it('(4) o mesmo vale no modo so-senha', async () => {
+    const cron = montar({ celula: null, specialAccess: SO_SENHA });
 
     await cron.tick();
     await cron.tick();
@@ -272,7 +278,7 @@ describe('SenhaQuizCron', () => {
   });
 
   it('(5) integracao desligada avisa uma vez e nao derruba o tick', async () => {
-    const cron = montar({ habilitado: false });
+    const cron = montar({ habilitado: false, specialAccess: SO_SENHA });
 
     await cron.tick();
     await cron.tick();
@@ -381,11 +387,6 @@ describe('SenhaQuizCron', () => {
       await montar({
         agora: AS_1201,
         janelas: [janela()],
-        horarios: {
-          [Turno.MANHA]: null,
-          [Turno.TARDE]: null,
-          [Turno.NOITE]: null,
-        },
       }).tick();
 
       expect(iniciar).toHaveBeenCalledWith(
@@ -528,11 +529,6 @@ describe('SenhaQuizCron', () => {
       await montar({
         agora: new Date('2026-09-16T12:00:00.000Z'),
         janelas: [janela()],
-        horarios: {
-          [Turno.MANHA]: null,
-          [Turno.TARDE]: null,
-          [Turno.NOITE]: null,
-        },
       }).tick();
 
       expect(iniciar).not.toHaveBeenCalled();

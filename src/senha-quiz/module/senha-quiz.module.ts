@@ -16,11 +16,19 @@ import { SenhaQuizService } from '../service/senha-quiz.service';
  * Escrita em massa nos questionarios de prova no Brightspace: a SENHA e a JANELA
  * de horario.
  *
- * `tipo: SENHA` — uma celula da grade (dia + turno), aplicada em todas as turmas
- * do CSV que pertencem ao periodo letivo vigente.
+ * ⚠️ **Desde 21/09/2026 ha um calendario so**: a `janela_de_prova` de cada
+ * formato. Os dois lotes partem dela e tocam as mesmas turmas — as do formato
+ * daquela janela —, e o que os separa e o que cada um grava.
  *
- * `tipo: DATA` — uma janela (`StartDate`/`EndDate`), aplicada nas turmas de UM
- * formato. O formato da turma nao existe no cadastro: e derivado dos
+ * `tipo: SENHA` — so o `Password` da sessao. Antes era uma celula `dia + turno`
+ * aplicada em TODAS as turmas do CSV; nao da mais para ser assim, porque as
+ * 12:01 o EaD e o Semi trocam de senha ao mesmo tempo com senhas diferentes, e
+ * a do EaD apagaria a do Semi. No calendario normal o cron nem dispara este
+ * lote: ele sobrou para o disparo manual e para o modo em que o special access
+ * substitui as janelas.
+ *
+ * `tipo: DATA` — a janela (`StartDate`/`EndDate`), o grupo e a senha, na mesma
+ * execucao. O formato da turma nao existe no cadastro: e derivado dos
  * agendamentos confirmados (`ModalidadeDaTurmaService`).
  *
  * Desde 26/08/2026 o lote `DATA` faz uma terceira coisa no MESMO disparo: troca

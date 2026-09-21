@@ -394,8 +394,9 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `GET /portal/agendamentos/:id/declaracao` | aluno | Declaração de agendamento em PDF — **só depois de o prazo encerrar** |
 | `GET /agendamentos/:id/historico` | admin | Quem alterou: aluno ou administrador |
 | `GET /integracao/alunos/:matricula/agendamentos` | **API key** | Dados da prova por RA para o emissor da declaração assinada. `?periodo=atual` = só a janela vigente |
-| `GET/PUT /senhas-de-prova` · `GET /:id/revelar` · `DELETE /:id` | admin | A grade dia × turno das senhas das provas. **A listagem nunca devolve o valor** |
-| `GET/PUT /senhas-de-prova/alvo` · `/horarios` · `GET /senhas-de-prova/turmas` | admin | Questionário-alvo, horários do cron, e quais turmas o lote vai tocar |
+| `GET/PUT /senhas-de-prova` · `GET /:id/revelar` · `DELETE /:id` | admin | A grade **dia × sessão** das senhas das provas. **A listagem nunca devolve o valor** |
+| `POST /senhas-de-prova/gerar` · `GET /senhas-de-prova/revelar` | admin | Sorteia as senhas do período (6 dígitos, nenhum repetido >3×, únicas no dia), e o "Mostrar senhas" da tela — auditado numa linha por intervalo |
+| `GET/PUT /senhas-de-prova/alvo` · `GET /senhas-de-prova/turmas` | admin | Questionário-alvo e quais turmas o lote vai tocar |
 | `PUT/DELETE /senhas-de-prova/turmas/:turmaId/modalidade` | admin | Desempata a turma **ambígua** (alunos de dois formatos). Só nesse caso |
 | `GET/PUT /senhas-de-prova/janelas` | admin | O calendário de abertura/fechamento do questionário, por formato |
 | `GET/PUT /senhas-de-prova/grupos` | admin | A grade **dia × janela** do grupo que libera a prova. PUT em lote; nome vazio apaga a célula |
@@ -851,10 +852,11 @@ src/
                questionários (d2l-quizzes) · condições de liberação e grupos
                (d2l-condicoes, LP ≥ 1.49) · special access (d2l-quizzes:
                listar, gravar e remover o acesso de um aluno).
-  senha-quiz/  ✅ a grade dia × turno (grade-senhas.service) · a grade dia ×
-               janela dos grupos (grade-grupos.service + grupo-do-dia.ts) · o lote
-               (senha-quiz.service) · o cron (senha-quiz.cron) · puras:
-               quiz-body.ts, condicoes.ts, grupo.ts, senha.ts, turno.ts,
+  senha-quiz/  ✅ a grade dia × sessão das senhas (grade-senhas.service) · a
+               grade dia × janela dos grupos (grade-grupos.service +
+               grupo-do-dia.ts) · o lote (senha-quiz.service) · o cron
+               (senha-quiz.cron) · puras: quiz-body.ts, condicoes.ts, grupo.ts,
+               senha.ts, senha-aleatoria.ts (o sorteio), janela.ts, turno.ts,
                relogio.ts · resolucao-orgunit.service.ts (CSV ∩ ofertas do
                semestre) · resolucao-grupo.service.ts (nome de grupo → GroupId,
                turma a turma)
@@ -2272,33 +2274,126 @@ O que o cliente fazia num CLI separado (`../brightspace-change-passwords`), agor
 dentro do portal: trocar o campo `Password` do questionário da prova, em massa,
 no Brightspace.
 
-**A operação é uma grade dia × turno.** Manhã/tarde/noite, seis dias de prova,
-uma senha de 6 dígitos por célula — a mesma planilha que a administração já usava.
-A senha de um turno vale para **todas as provas de todas as turmas**.
+**A operação é uma grade dia × SESSÃO** (`senha_de_prova`, chave
+`data + janelaDeProvaId`), e as senhas são **sorteadas pelo sistema**. Ver "A
+senha passou a ser por sessão", abaixo, para o que mudou em 21/09/2026 e por quê
+— o resto desta seção já descreve o desenho novo.
 
-**Sobrescrever a senha do turno anterior é o OBJETIVO, não efeito colateral.** É
-o que impede o aluno da manhã de repassar a senha ao da tarde. Só que isso torna
-o lote **frágil quanto à ordem**: rodar a tarde e depois reprocessar a manhã põe
-a senha da manhã de volta em toda a instituição. Por isso `forcar` existe e pede
-confirmação.
+**Sobrescrever a senha da sessão anterior é o OBJETIVO, não efeito colateral.** É
+o que impede o aluno das 08:30 de repassar a senha ao das 10:30. Só que isso
+torna o lote **frágil quanto à ordem**: rodar a sessão da tarde e depois
+reprocessar a da manhã põe a senha da manhã de volta naquele formato inteiro.
+Por isso `forcar` existe e pede confirmação.
 
 ### O que é configuração e o que é `.env`
 
-Duas coisas moram em `configuracao_senha_quiz` (linha única, `id=1`) e são
-editadas na tela: **o questionário-alvo** e **os horários de cada turno**. As
-duas mudam por semestre, e quem as conhece é a administração — deixar qualquer uma
-no `.env` significava que trocar o horário de um turno exigia deploy.
+**O questionário-alvo** mora em `configuracao_senha_quiz` (linha única, `id=1`) e
+é editado na tela. **Os horários de disparo** são os das janelas de cada formato
+(`janela_de_prova`) — um calendário só para data, grupo e senha desde
+21/09/2026. Os dois mudam por semestre, e quem os conhece é a administração —
+deixar qualquer um no `.env` significava que trocar um horário exigia deploy.
 
-**Nenhuma das duas tem valor padrão.** Sem alvo escolhido, `iniciar()` recusa com
-400; sem horário, o turno simplesmente não dispara. Um default plausível
-("Prova", `07:30`) seria pior que a ausência: rodaria, casaria com o que
-estivesse por perto e ninguém saberia até o dia. Foi por isso que
+**O alvo não tem valor padrão.** Sem alvo escolhido, `iniciar()` recusa com 400.
+Um default plausível ("Prova") seria pior que a ausência: rodaria, casaria com o
+que estivesse por perto e ninguém saberia até o dia. Foi por isso que
 `SENHA_QUIZ_NOME`/`_MATCH` e `SENHA_QUIZ_CRON_MANHA/_TARDE/_NOITE` saíram do
-`.env` em 19/08/2026 sem virar constante no código.
+`.env` em 19/08/2026 sem virar constante no código; as três últimas deixaram de
+existir em 21/09/2026, junto com as colunas
+`configuracao_senha_quiz.horaManha/_Tarde/_Noite`.
 
 Continua no `.env` só o que é **da instância**: `SENHA_QUIZ_CRON_HABILITADO`
 (esta réplica dispara?), a tolerância, o teto de tentativas e o ritmo contra a
 Valence.
+
+### A senha passou a ser por SESSÃO, e nasce sorteada (21/09/2026)
+
+Duas mudanças pedidas pelo cliente, e a segunda é consequência da primeira.
+
+**1. A grade virou dia × sessão.** Antes era dia × turno, com um calendário
+próprio de três horários (`turnoParaDisparar`). O comentário do seed de janelas
+registrava o preço disso desde 25/08/2026, e dizia onde consertar: *"em
+Semi/Modular duas janelas seguidas do mesmo turno dividem a mesma senha… se isso
+deixar de bastar, o lugar de mudar é a grade de senhas (para `data × modalidade ×
+janela`)"*. É exatamente o que se fez. Agora cada sessão troca a sua senha no
+**próprio disparo**, o mesmo que já movia a data e o grupo.
+
+**2. As senhas são sorteadas** (`senha-aleatoria.ts`, pura e testada): 6 dígitos,
+nenhum repetido mais de 3 vezes, únicas **dentro do dia**. São ~20 células por
+dia (3 EaD + 6 Semi + 6 Modular + 5 Presencial) contra as 3 de antes: digitar
+deixou de ser viável, e o que se digita à mão tende a "123456".
+
+| | Antes | Depois |
+|---|---|---|
+| Chave da célula | `data + turno` | `data + janelaDeProvaId` |
+| Células por dia | 3 | ~20 |
+| Quem escreve a senha | o admin | o sorteio (`POST /senhas-de-prova/gerar`) |
+| Quem dispara | cron próprio, 3 horários | o disparo da janela, junto com data e grupo |
+| Turmas alcançadas | **todas** as do CSV | só as do **formato** da janela |
+
+⚠️ **O recorte por formato chegou ao lote de senhas, e não havia alternativa.**
+Às 12:01 o EaD troca de senha e o Semi também, com senhas diferentes; aplicar a
+do EaD em todas as turmas apagaria a do Semi um minuto antes da prova dele. O
+preço é o mesmo que o lote de datas já paga — turma sem formato derivado fica de
+fora e vira linha de relatório —, e ele **já estava pago**: aquela turma também
+não recebe a data nova, e sem a data a prova nem abre. Decisão do cliente,
+21/09/2026.
+
+⚠️ **`crypto.randomInt`, nunca `Math.random`.** O universo é de um milhão de
+senhas e elas valem uma sessão inteira, com as saídas observáveis — um aluno vê a
+senha da sessão dele. Com o gerador do V8, prever as próximas deixa de ser
+teórico. E o sorteio é por **rejeição**, não correção: "consertar" o quarto
+dígito repetido concentraria o resultado num subconjunto, tornando a senha mais
+adivinhável justamente no padrão que a regra existe para tratar.
+
+**Gerar é explícito, e regerar mais ainda.** `substituir: false` é o padrão e
+preenche só as células vazias. Regerar um dia cuja folha já está na mão dos
+fiscais troca a senha da prova **sem ninguém na sala saber** — a tela confirma, e
+a auditoria (`SENHA_QUIZ_GRADE_GERADA`) diz qual das duas variantes foi. Há teto
+de 31 dias por geração: "gerar o semestre" seriam milhares de segredos em claro
+nascendo de um clique, quase todos para dias que ainda vão mudar de calendário.
+
+**Digitar à mão continua possível** (`PUT /senhas-de-prova`), como saída de
+emergência: repor a senha que um fiscal já anunciou na sala, ou casar com uma
+folha que não dá para reimprimir. Ela aceita qualquer valor que o AVA aceite, e
+não só seis dígitos — a regra do sorteio é sobre o que o sistema **produz**, e
+impô-la ali impediria exatamente o conserto que a rota existe para permitir.
+
+**O cron ficou mais simples, não mais complexo.** Ele tinha de escolher entre
+dois calendários e decidir quem vinha primeiro; agora aplica a sessão do minuto,
+e o lote de DATAS grava as três coisas. O lote `SENHA` sozinho dispara num caso
+só: quando o special access **substitui as janelas** — ali o questionário não tem
+data, a senha é o único fator que resta, e sem esse caminho ligar aquele modo
+congelaria a senha da instituição inteira.
+
+#### Três armadilhas que a mudança criou, e como estão fechadas
+
+- ⚠️ **`janelaDeProvaId` agora está nos DOIS tipos de execução**, e as consultas
+  de idempotência precisam filtrar por `tipo`. Sem isso, a troca de senha das
+  12:01 faria a troca de **data** das 12:01 parecer já aplicada, e a prova
+  ficaria com o horário da sessão anterior — calada, que é o pior estado
+  possível. Vale para `recusarSeJaAplicada`, `recusarSeJaAplicadaAJanela`,
+  `motivoParaNaoDisparar` e `podeDisparar`.
+- ⚠️ **`versaoAplicada` guarda coisas diferentes por tipo** (a da célula em
+  `SENHA`, a da JANELA em `DATA`), então a grade não pode compará-la com a versão
+  da célula. Nasceu `ExecucaoSenhaQuiz.versaoSenhaAplicada`, que é **sempre** a da
+  célula. Ela também entrou na chave de idempotência do lote de datas: gerar a
+  senha de novo às 12:43, depois do disparo das 12:01, precisa liberar um novo
+  disparo HOJE — é o bug de 25/08/2026 aplicado ao terceiro campo que o disparo
+  grava.
+- ⚠️ **A listagem da grade parou de filtrar `tipo: SENHA`.** Aquele filtro existia
+  porque o lote de datas apontava para a mesma célula sem ser "a troca daquele
+  turno". Agora é justamente ele que grava a senha no calendário normal: manter o
+  filtro faria toda célula aplicada parecer nunca aplicada. O `PREPARO` continua
+  de fora sem filtro nenhum — ele grava `senhaDeProvaId: null` de propósito.
+
+#### A migration não apaga nada
+
+`senha_de_prova` ganhou `janelaDeProvaId` (nulo) e teve `turno` afrouxado para
+nulo; as duas chaves únicas convivem porque o MySQL não conflita NULLs. Linha
+antiga tem turno e não tem janela, linha nova o inverso, e a grade só devolve as
+novas. Nenhuma execução histórica perde a FK. O que **foi** dropado são as três
+colunas de horário de `configuracao_senha_quiz`: duas fontes para "a que horas a
+senha troca" é uma armadilha, e a tela não tem mais onde mostrá-las.
 
 ### O conjunto de turmas
 
@@ -2344,10 +2439,16 @@ A proteção é **em volta**:
   no CSV do relatório;
 - `descreverSenha()` devolve `'(6 caracteres)'` e é a **única** forma de a senha
   chegar perto de um log — existe para tirar a tentação;
-- a listagem da grade devolve `temSenha: boolean`. O valor sai **só** de
-  `GET /senhas-de-prova/:id/revelar`, que é auditada em toda chamada e tem
+- a listagem da grade devolve `temSenha: boolean`. O valor sai **só** das rotas
+  de revelar (`GET /senhas-de-prova/:id/revelar` e `GET /senhas-de-prova/revelar`,
+  esta última o "Mostrar senhas" da tela), auditadas em toda chamada e com
   throttle de rota de credencial. A grade fica aberta num monitor compartilhado
-  da administração: ver a senha precisa ser um **ato com rastro**;
+  da administração e **abre oculta**: ver a senha precisa ser um **ato com
+  rastro**.
+  ⚠️ `/revelar` do intervalo audita **uma linha para o intervalo inteiro**, e não
+  uma por célula. Com ~20 sessões por dia seriam 120 linhas idênticas por semana,
+  o volume que ensina a ignorar o evento que importa — e um controle que custa
+  isso faz alguém anotar as senhas fora do sistema, onde não há rastro nenhum;
 - `DELETE` apaga a célula, e a execução histórica **sobrevive** (`onDelete:
   SetNull` + data/turno desnormalizados). Apagar o segredo não pode apagar a
   prova de que o lote rodou.
@@ -2360,12 +2461,11 @@ emite nenhum PUT — é a única conferência possível antes de mexer na prova 
 a instituição, e há um teste só para provar que o dry-run emite zero PUT.
 
 **Cron** (`@nestjs/schedule`, primeira fila/cron do projeto): um tick de um minuto
-chamando `turnoParaDisparar()`, uma **função pura testada** — e não três `@Cron`
-com expressão de horário, porque decorator é avaliado uma vez, na subida. Desde
-que os horários passaram a ser **escolhidos pelo admin na tela** (19/08/2026),
-isso deixou de ser elegância: salvar `07:30` às 07:25 precisa valer às 07:30, sem
-reiniciar nada. A **janela de tolerância** (30 min) faz um restart às 07:41 ainda
-aplicar o turno das 07:30.
+chamando `janelasParaDisparar()`, uma **função pura testada** — e não um `@Cron`
+por horário, porque decorator é avaliado uma vez, na subida. Como os horários são
+**escolhidos pelo admin na tela**, isso deixou de ser elegância: salvar `15:31`
+às 15:25 precisa valer às 15:31, sem reiniciar nada. A **janela de tolerância**
+(30 min) faz um restart às 12:12 ainda aplicar a sessão das 12:01.
 
 - **Opt-in por instância**: `SENHA_QUIZ_CRON_HABILITADO` default `false`, mesmo
   com `D2L_HABILITADO` sendo `true`. São coisas diferentes, e trocar senha
@@ -2373,17 +2473,20 @@ aplicar o turno das 07:30.
   `.env`**, e de propósito: ela responde "esta réplica dispara?", não "a que
   horas a prova começa".
 - **O cron nunca simula.** Dry-run agendado gera relatório que ninguém lê. A rede
-  de proteção equivalente é mais forte: **nada acontece se um humano não tiver
-  digitado a senha da célula.**
+  de proteção equivalente é mais forte: **nada acontece se ninguém tiver gerado a
+  senha daquela sessão.**
 - **Idempotência no banco**, não em memória: é o que sobrevive ao restart.
   Concluída → sai; viva → sai; morta (5 min sem sinal) → enterra e segue;
   tentativas ≥ 3 → sai (sem esse teto, uma falha permanente bateria no D2L a cada
   minuto pelos 30 min de tolerância).
 - **Multi-réplica**: o compose fixa uma réplica. Para subir outra, desligue o cron
   nela.
-- **Cron ligado e nenhum horário cadastrado** avisa (`SENHA_QUIZ_CRON_SEM_HORARIO`)
-  em vez de calar; e a tela avisa o inverso (horários salvos com o cron desligado
-  no servidor). Um cron que *parece* armado e não está é pior que um desligado.
+- **Cron ligado e nenhuma janela ativa cadastrada** avisa
+  (`DATA_QUIZ_CRON_SEM_JANELA`) em vez de calar; e a tela avisa o inverso
+  (calendário salvo com o cron desligado no servidor). Um cron que *parece* armado
+  e não está é pior que um desligado. Desde 21/09/2026 esse aviso vale pelos três
+  calendários de uma vez — sem janela não há data, nem grupo, nem senha, e
+  `SENHA_QUIZ_CRON_SEM_HORARIO` deixou de existir junto com os horários de turno.
 - **A tela precisa enxergar o disparo que não foi dela** (20/08/2026). O manual
   acompanha o lote pelo `id` que o POST devolveu; o do cron não tem dono, e a
   tela ficava **muda** — nem "trocando agora", nem "acabou". Quem estava com a
@@ -2436,8 +2539,9 @@ cada questionário casado; use `EXATO` assim que os nomes estiverem padronizados
 A mesma aba passou a fazer três coisas: trocar a **senha**, mover a **janela de
 datas** do questionário e — desde 26/08/2026 — trocar o **grupo** que libera a
 prova (ver a seção própria, mais abaixo). No dia da prova a prova fica aberta *só* durante a
-sessão corrente, e a senha (que já rodava por turno) continua sendo o segundo
-fator. Quem fez a prova das 15h não consegue nem abrir o questionário às 19h.
+sessão corrente, e a senha — que desde 21/09/2026 também é por sessão — continua
+sendo o segundo fator. Quem fez a prova das 15h não consegue nem abrir o
+questionário às 19h.
 
 ### ⚠️ A turma NÃO tem formato — ele é DERIVADO dos agendamentos
 
@@ -2547,14 +2651,15 @@ risco que o comentário de `ExecucaoSenhaQuiz.comSenhaLida` já registrava sobre
 CLI de origem, e ele volta no instante em que nasce um lote que *preserva*.
 
 Por isso `montarCorpoDoQuiz` mantém `novaSenha` **obrigatória nos dois lotes**, e
-`JanelaDeProva.turno` existe: ele diz de qual célula da grade o lote de datas
-tira a senha. **Sem senha cadastrada naquele turno, a janela não é aplicada** —
+a grade de senhas é chaveada pela própria janela: cada sessão lê a célula dela.
+**Sem senha gerada naquela sessão, a janela não é aplicada** —
 `DATA_QUIZ_CRON_SEM_GRADE`, que é evento de falha, não aviso.
 
-Consequência aceita (decisão do cliente): a grade continua com **três turnos**, e
-em Semi/Modular duas janelas seguidas do mesmo turno dividem a mesma senha. O que
-ainda segura o aluno é a própria janela — às 10:30 o questionário das 08:30 já
-está fechado.
+⚠️ **Era `JanelaDeProva.turno` quem apontava a célula até 21/09/2026**, e a
+consequência aceita então (decisão do cliente, 25/08/2026) era que em
+Semi/Modular duas sessões seguidas do mesmo turno dividiam a senha — o que
+segurava o aluno era só a janela, já fechada às 10:30. Com a grade por sessão
+isso acabou, e `turno` virou rótulo. Ver "A senha passou a ser por SESSÃO".
 
 ### Um lote por vez, e por que os dois moram na mesma tabela
 
@@ -2569,12 +2674,11 @@ justamente esse bug. Serializados, cada lote faz o próprio GET imediatamente
 antes do próprio PUT e preserva verbatim o campo do outro — não há atualização
 perdida.
 
-O tick do cron dispara **um** lote por minuto, e a **data vem primeiro**: sem a
-janela nova o questionário não abre e ninguém faz a prova; com a senha do turno
-anterior por mais um minuto, o pior caso é um aluno usando a senha velha numa
-prova que já está aberta para ele. A primeira falha impede a prova, a segunda só
-a adianta. Às 12:01 três formatos têm janela — vão nos minutos seguintes,
-dentro da tolerância de 30 min.
+O tick do cron dispara **um** lote por minuto. Desde 21/09/2026 não há mais o
+desempate "a data vem primeiro": o lote de DATAS grava a janela, o grupo **e** a
+senha da sessão, e o de senha sozinho só roda quando o special access substitui
+as janelas. Às 12:01 três formatos têm janela — vão nos minutos seguintes, dentro
+da tolerância de 30 min.
 
 ### As janelas são configuração de tela
 
@@ -2659,17 +2763,23 @@ Duas lições que ficaram no código:
   célula da grade sai a senha; sem ele no log, "por que a janela das 15h não
   rodou?" não tem resposta.
 
-### ⚠️ Os dois lotes NÃO tocam as mesmas turmas
+### ⚠️ Os dois lotes tocam as MESMAS turmas — desde 21/09/2026
 
 | | Quais turmas alcança |
 |---|---|
-| Senha | **todas** as turmas do CSV no período letivo vigente |
-| Data | só aqueles cujo **formato pôde ser derivado** dos agendamentos |
+| Senha | só aquelas cujo **formato pôde ser derivado** dos agendamentos |
+| Data | idem |
 
-É por isso que uma turma pode receber a senha nova e continuar com a data velha —
-e foi o primeiro sintoma real (`GSPS01N20001`, 26/08/2026). Não é falha: é a
-regra "nada é chutado" funcionando. Sem formato não há janela a escolher, e o
-lote prefere deixar a data antiga a abrir a prova no horário de outro formato.
+**Antes eram conjuntos diferentes**, e era por isso que uma turma podia receber a
+senha nova e continuar com a data velha — o primeiro sintoma real
+(`GSPS01N20001`, 26/08/2026). Com a senha passando a ser por sessão, o recorte
+teve de ser o mesmo: às 12:01 o EaD e o Semi trocam de senha ao mesmo tempo, com
+senhas diferentes.
+
+A consequência é que **turma sem formato derivado não recebe mais nem a senha**.
+Não é falha: é a regra "nada é chutado" funcionando, e o preço já estava pago —
+sem a data aquela prova não abre de qualquer forma, e dar a ela a senha de outro
+formato só adiantaria a confusão para o dia. Decisão do cliente, 21/09/2026.
 
 Os três caminhos que levam a isso, todos reportados por turma no CSV da execução:
 `SEM_AGENDAMENTO`, `MODALIDADE_AMBIGUA`, ou a turma derivou para **outro**
@@ -2679,9 +2789,10 @@ Desde 10/09/2026 o segundo caminho tem saída na tela: o admin decide qual
 formato vale naquela turma, e ela passa a entrar no lote normalmente. Ver
 "O desempate manual", acima.
 
-E o lote de senhas **nunca toca em condição de liberação**: ele alcança todas as
-turmas do CSV, sem janela, e trocar o grupo ali apontaria a prova da instituição
-inteira para o grupo de uma sessão só.
+E o lote de senhas **nunca toca em condição de liberação nem em data**, mesmo
+partindo de uma janela: ele existe para o conserto pontual e para o modo em que o
+special access substitui as janelas. Gravar as horas ali reabriria a prova a cada
+troca de senha, que é o oposto do que o recurso faz.
 
 **`semModalidade` tem o mesmo peso de `naoEncontradas` na tela.** Ficou fora da
 contagem de pendências até 26/08/2026, e o efeito foi exatamente o previsto no
@@ -2721,11 +2832,13 @@ manhã precisa estar digitada antes do disparo desta noite.** Esquecer não prod
 erro no momento — a prova de amanhã simplesmente amanhece com o horário de ontem,
 e a descoberta é às 08:30, com os alunos na frente.
 
-| Cron | Dispara em | Lê a célula de |
+| Disparo | Acontece em | Lê a célula de |
 |---|---|---|
-| Senhas | os 3 horários de turno | o próprio dia |
-| Datas — sessões diurnas | 2 a 4 horários | o próprio dia |
-| Datas — sessão da noite | 21:31 ou 22:01 | **o dia seguinte** |
+| Sessões diurnas (data + grupo + senha) | 2 a 5 horários por formato | o próprio dia |
+| Sessão da noite (data + grupo + senha) | 21:31 ou 22:01 | **o dia seguinte** |
+
+Desde 21/09/2026 **não há uma linha separada para a senha**: ela troca no disparo
+da própria sessão, e a célula que o lote lê é a dela.
 
 Do lado do servidor isso vira `DATA_QUIZ_CRON_SEM_GRADE`, que é **evento de
 falha** e não aviso: a janela não foi aplicada. Do lado da tela, a grade destaca
@@ -2889,9 +3002,10 @@ lista os grupos que existem naquela turma, para distinguir os dois casos.
   data devolve **500**.
 - **`DueDate` é preservado.** O cliente pediu abertura e fechamento; mover o
   prazo de entrega mudaria a nota de quem entregou atrasado.
-- **`turno` e `versaoAplicada` são NULOS em execuções `DATA`.** Gravar um turno
-  "plausível" faria a célula da grade parecer aplicada antes de o turno dela ter
-  rodado — por isso `GradeSenhasService.listar` filtra `tipo: SENHA`.
+- **`turno` deixou de ser nulo em execuções `DATA`** (21/09/2026): a execução
+  pertence a uma janela, e a janela acontece num turno — ele virou rótulo. Nulos
+  em `DATA` continuam `senhaDeProvaId`? **Não**: o lote de datas grava a senha, e
+  por isso aponta para a célula. Quem é nulo ali é `PREPARO`, de propósito.
 - **A "exibir data" (results view) ficou de fora**: no CLI de origem ela é um
   `PATCH` num microserviço Siren separado (`quizzes.api.brightspace.com`), com o
   host tirado do claim `tenantid` do JWT. Segunda integração, e o cliente não
@@ -3009,9 +3123,11 @@ depois de preparar e gravar todas as turmas.
 9b. ✅ Agendamento administrativo de UM aluno (`POST /agendamentos`): o
    atendimento de balcão que fecha a fila de exceções do compulsório. Funciona
    **sem** `D2L_HABILITADO` quando o aluno tem reserva anterior no semestre.
-10. ✅ Senha das provas: a grade dia × turno e o lote que troca o campo
+10. ✅ Senha das provas: a grade dia × **sessão** e o lote que troca o campo
    `Password` dos questionários no Brightspace, manual e por cron. **Exige
-   `D2L_HABILITADO`** e escopo `quizzing:` no consentimento OAuth.
+   `D2L_HABILITADO`** e escopo `quizzing:` no consentimento OAuth. Em 21/09/2026
+   a grade passou de dia × turno para dia × sessão e as senhas passaram a ser
+   **sorteadas** — ver "A senha passou a ser por SESSÃO".
 11. ✅ Datas das provas (25/08/2026): o mesmo lote passa a mover
    `StartDate`/`EndDate` do questionário, por **formato**, em até 6 janelas
    por dia. O formato da turma é **derivado dos agendamentos** — não há, e não

@@ -56,7 +56,10 @@ interface JanelaSemente {
   horaDisparo: string;
   horaInicio: string;
   horaFim: string;
-  /** De qual celula da grade sai a senha desta janela. Ver o schema. */
+  /**
+   * O turno em que a sessao acontece. ROTULO desde 21/09/2026 — ate ali ele
+   * dizia de qual celula da grade saia a senha. Ver o schema.
+   */
   turno: Turno;
 }
 
@@ -144,12 +147,17 @@ const JANELAS_SEMI_MODULAR: JanelaSemente[] = [
   },
 ];
 
-// ⚠️ As duas janelas de MANHA (e as duas de TARDE, e as duas de NOITE) dividem a
-// MESMA senha da grade — decisao do cliente em 25/08/2026, ao manter a grade com
-// tres turnos. O preco: o aluno das 08:30 pode repassar a senha ao das 10:30.
-// O que ainda o segura e a JANELA: as 10:30 o questionario da sessao anterior ja
-// esta fechado. Se isso deixar de bastar, o lugar de mudar e a grade de senhas
-// (para `data x modalidade x janela`), nao este arquivo.
+// ✅ RESOLVIDO em 21/09/2026, exatamente onde este comentario dizia que seria.
+//
+// Ate ali as duas janelas de MANHA (e as duas de TARDE, e as duas de NOITE)
+// dividiam a MESMA senha da grade — decisao do cliente em 25/08/2026, ao manter
+// a grade com tres turnos —, e o aluno das 08:30 podia repassar a senha ao das
+// 10:30. O que o segurava era so a JANELA: as 10:30 o questionario da sessao
+// anterior ja esta fechado.
+//
+// A grade passou a ser `data x JANELA`, como este comentario previa, e cada
+// sessao troca a sua senha no proprio disparo. Este arquivo nao mudou por causa
+// disso: `turno` continua aqui, agora como rotulo.
 
 /**
  * Presencial — 5 sessoes de 2h (`duracaoMinutos: 120`).

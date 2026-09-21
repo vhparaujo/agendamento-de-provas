@@ -9,7 +9,6 @@ import {
   IsOptional,
   Matches,
   Min,
-  ValidateIf,
 } from 'class-validator';
 import {
   ResultadoGrupoQuiz,
@@ -25,13 +24,15 @@ export class IniciarSenhaQuizDto {
     enum: TipoExecucaoQuiz,
     default: TipoExecucaoQuiz.SENHA,
     description:
-      '`SENHA` aplica uma celula da grade em TODAS as turmas do CSV (exige ' +
-      '`turno`). `DATA` aplica UMA janela de horario nas turmas de UM ' +
-      'formato (exige `janelaId`), e grava junto a senha da celula daquele ' +
-      'turno — o PUT do questionario substitui o objeto inteiro e nao pode ' +
-      'preservar a senha lida. `PREPARO` deixa o questionario pronto para o ' +
-      'special access (sem data, restrito, sem condicao de grupo), com a senha ' +
-      'da celula de `data` + `turno`.',
+      'Os tres exigem `janelaId` desde 21/09/2026: a celula da grade pertence a ' +
+      'uma SESSAO.\n\n' +
+      '`SENHA` aplica so a senha daquela sessao, nas turmas do FORMATO dela. ' +
+      '`DATA` aplica a janela de horario + o grupo + a senha, nas mesmas turmas ' +
+      '— a senha vai junto por obrigacao, porque o PUT do questionario ' +
+      'substitui o objeto inteiro e nao pode preservar a senha lida. `PREPARO` ' +
+      'deixa o questionario pronto para o special access (sem data, restrito, ' +
+      'sem condicao de grupo) em TODAS as turmas do CSV, com a senha da celula ' +
+      'escolhida como valor provisorio.',
   })
   @IsOptional()
   @IsEnum(TipoExecucaoQuiz)
@@ -40,34 +41,26 @@ export class IniciarSenhaQuizDto {
   @ApiProperty({
     example: '2026-09-16',
     description:
-      'Em `SENHA`, o dia da celula da grade. Em `DATA`, o dia que o ' +
-      'QUESTIONARIO passa a ter — ja com o "dia seguinte" resolvido, se a ' +
-      'janela for uma das noturnas.',
+      'O dia da PROVA — que e tambem o dia da celula da grade. Ja com o "dia ' +
+      'seguinte" resolvido, se a janela for uma das noturnas: elas disparam ' +
+      'hoje a noite para armar a sessao de amanha de manha, e leem a celula de ' +
+      'AMANHA.',
   })
   @IsDateString()
   data!: string;
 
-  @ApiPropertyOptional({
-    enum: Turno,
-    example: Turno.MANHA,
-    description:
-      'Obrigatorio em `SENHA`. Ignorado em `DATA`, onde o turno vem da janela.',
-  })
-  @ValidateIf((dto: IniciarSenhaQuizDto) => dto.tipo !== TipoExecucaoQuiz.DATA)
-  @IsEnum(Turno)
-  turno?: Turno;
-
-  @ApiPropertyOptional({
+  @ApiProperty({
     example: 10,
     description:
-      'Obrigatorio em `DATA`: a janela a aplicar. Ela carrega o formato ' +
-      '(que recorta as turmas), as horas de abertura e fechamento, e o turno ' +
-      'de onde sai a senha.',
+      'A SESSAO. Ela carrega o formato (que recorta as turmas), as horas de ' +
+      'abertura e fechamento, e a celula da grade de onde sai a senha.\n\n' +
+      'Passou a ser obrigatoria nos tres tipos em 21/09/2026, quando a grade ' +
+      'deixou de ser chaveada por turno — em Semi/Modular sao seis sessoes e ' +
+      'tres turnos, e duas sessoes seguidas dividiam a mesma senha.',
   })
-  @ValidateIf((dto: IniciarSenhaQuizDto) => dto.tipo === TipoExecucaoQuiz.DATA)
   @IsInt()
   @Min(1)
-  janelaId?: number;
+  janelaId!: number;
 
   @ApiPropertyOptional({
     type: [String],
@@ -190,8 +183,9 @@ export class AndamentoDaSenhaQuizDto {
     example: Turno.MANHA,
     nullable: true,
     description:
-      'Nulo nas execucoes `DATA`: turno e a chave da GRADE de senhas, e uma ' +
-      'execucao de datas se identifica pela janela, nao pelo turno.',
+      'O turno da SESSAO, como rotulo legivel. Nulo nas execucoes de data ' +
+      'anteriores a 21/09/2026, quando o turno era a chave da grade de senhas e ' +
+      'uma execucao de datas nao pertencia a turno nenhum.',
   })
   turno!: Turno | null;
 

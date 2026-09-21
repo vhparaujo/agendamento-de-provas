@@ -1129,7 +1129,7 @@ export class AgendamentoAdminService {
       porDia: [...porDia]
         .map(([dia, formatos]) => ({
           dia,
-          porModalidade: Object.fromEntries(formatos) as Record<number, number>,
+          porModalidade: Object.fromEntries(formatos),
         }))
         .sort((a, b) => a.dia.localeCompare(b.dia)),
     };

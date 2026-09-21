@@ -58,22 +58,22 @@ export type EventoSeguranca =
   | 'D2L_TOKEN_RENOVADO'
   | 'D2L_TOKEN_RENOVACAO_FALHOU'
   // Senha dos questionarios. NENHUM destes leva a senha em `detalhe` — so a
-  // celula (data + turno), contagens e quem disparou. Ver a postura de seguranca
+  // celula (dia + sessao), contagens e quem disparou. Ver a postura de seguranca
   // no cabecalho de src/senha-quiz/service/senha-quiz.service.ts.
   | 'SENHA_QUIZ_GRADE_ALTERADA'
   | 'SENHA_QUIZ_GRADE_REMOVIDA'
+  // O sorteio em lote (21/09/2026), que e como a grade passou a ser preenchida.
+  // Auditavel porque INVALIDA o que estava impresso: regerar um dia cuja folha
+  // ja esta com os fiscais troca a senha da prova sem ninguem na sala saber.
+  | 'SENHA_QUIZ_GRADE_GERADA'
   | 'SENHA_QUIZ_REVELADA'
   // Configuracao do lote. Sao auditaveis porque decidem QUAIS questionarios
   // sao reescritos e QUANDO — e um erro nos dois so aparece no dia da prova.
   | 'SENHA_QUIZ_ALVO_ALTERADO'
-  | 'SENHA_QUIZ_HORARIOS_ALTERADOS'
   | 'SENHA_QUIZ_INICIADA'
   | 'SENHA_QUIZ_CONCLUIDA'
   | 'SENHA_QUIZ_FALHOU'
   | 'SENHA_QUIZ_CRON_SEM_GRADE'
-  // Cron ligado no servidor e nenhum horario cadastrado na tela: ele nunca
-  // dispararia, e sem este aviso ninguem descobriria antes do dia.
-  | 'SENHA_QUIZ_CRON_SEM_HORARIO'
   | 'SENHA_QUIZ_CRON_IGNORADO'
   // Datas dos questionarios (25/08/2026). O mesmo lote, outro recorte: uma
   // JANELA (horario de abertura e fechamento) aplicada nas turmas de UM
@@ -205,7 +205,6 @@ const EVENTOS_DE_FALHA = new Set<EventoSeguranca>([
   // Nao e erro de sistema, mas e o alerta que evita alunos travados na prova: o
   // cron acordou no horario e nao havia senha cadastrada para aquele turno.
   'SENHA_QUIZ_CRON_SEM_GRADE',
-  'SENHA_QUIZ_CRON_SEM_HORARIO',
   'DATA_QUIZ_FALHOU',
   // Mesmo peso que os de senha, e pela mesma razao: a janela chegou e o
   // questionario nao foi aberto. A diferenca e que aqui a prova fica com a data

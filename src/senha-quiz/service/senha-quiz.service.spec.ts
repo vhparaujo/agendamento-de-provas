@@ -136,8 +136,9 @@ describe('SenhaQuizService', () => {
             ? {
                 id: 1,
                 data: new Date('2026-09-16T00:00:00.000Z'),
-                turno: Turno.MANHA,
-                senha: 'manha1609',
+                janelaDeProvaId: 10,
+                turno: null,
+                senha: '897325',
                 versao: 1,
               }
             : opcoes.celula,
@@ -291,19 +292,36 @@ describe('SenhaQuizService', () => {
 
     const auditoria = { registrar: jest.fn() } as unknown as AuditoriaService;
 
-    // Por padrao o lote de SENHAS nem consulta isto — ele nao recorta por
-    // formato. Fica mockado para o construtor, e os testes de DATA o
-    // sobrescrevem.
+    // ⚠️ **O lote de SENHAS passou a consultar isto em 21/09/2026.** Antes ele
+    // alcancava todas as turmas do CSV; agora recorta pelo formato da janela,
+    // como o de datas — senao a senha do EaD das 12:01 apagaria a do Semi.
+    //
+    // Quem NAO passa `modalidadePorTurma` esta testando outra coisa, e toda
+    // turma resolve para o formato da janela padrao (`modalidadeId: 1`) — e o
+    // que mantem os testes de senha medindo o que mediam antes do recorte.
+    //
+    // Quem PASSA o mapa esta testando justamente a derivacao, e ali turma fora
+    // do mapa significa SEM_AGENDAMENTO. Um padrao unico serviria a um dos dois
+    // grupos e mentiria para o outro.
     const modalidades = {
       resolver: jest.fn().mockResolvedValue({
         totalComAgendamento: 0,
         de: (orgUnitId: string) =>
-          opcoes.modalidadePorTurma?.[orgUnitId] ?? {
-            situacao: 'SEM_MODALIDADE',
-            motivo: 'SEM_AGENDAMENTO',
-            candidatas: [],
-            detalhe: 'sem agendamento confirmado nesta turma',
-          },
+          opcoes.modalidadePorTurma?.[orgUnitId] ??
+          (opcoes.modalidadePorTurma
+            ? {
+                situacao: 'SEM_MODALIDADE',
+                motivo: 'SEM_AGENDAMENTO',
+                candidatas: [],
+                detalhe: 'sem agendamento confirmado nesta turma',
+              }
+            : {
+                situacao: 'ENCONTRADA',
+                modalidadeId: 1,
+                codigo: 'EAD',
+                nome: 'EaD',
+                reservas: 40,
+              }),
       }),
     } as unknown as ModalidadeDaTurmaService;
 
@@ -345,7 +363,7 @@ describe('SenhaQuizService', () => {
     await servico.iniciar(
       {
         data: '2026-09-16',
-        turno: Turno.MANHA,
+        janelaId: 10,
         simulacao: true,
         forcar: false,
       },
@@ -362,13 +380,117 @@ describe('SenhaQuizService', () => {
     ]);
   });
 
+  /**
+   * ==========================================================================
+   * O RECORTE POR FORMATO CHEGOU AO LOTE DE SENHAS (21/09/2026)
+   * ==========================================================================
+   * As 12:01 o EaD troca de senha e o Semi tambem, cada um com a sua. Sem este
+   * recorte, a senha do EaD entraria nas turmas de Semi e apagaria a delas — um
+   * minuto antes da prova, e sem nada no relatorio acusando.
+   *
+   * O preco e o mesmo que o lote de datas ja paga: turma sem formato derivado
+   * fica de fora e vira linha de relatorio. Ele ja estava pago — aquela turma
+   * tambem nao recebe a data nova, e sem a data a prova nem abre.
+   */
+  it('so toca as turmas DO FORMATO da janela', async () => {
+    const EAD = {
+      situacao: 'ENCONTRADA',
+      modalidadeId: 1,
+      codigo: 'EAD',
+      nome: 'EaD',
+      reservas: 40,
+    };
+    const SEMI = {
+      situacao: 'ENCONTRADA',
+      modalidadeId: 2,
+      codigo: 'SEMI',
+      nome: 'Semi',
+      reservas: 12,
+    };
+
+    const { servico } = montar({
+      // A janela padrao do mock e EaD (`modalidadeId: 1`).
+      resolucao: {
+        totalNoCsv: 3,
+        resolvidas: [
+          turmaResolvida(1, '156126'),
+          turmaResolvida(2, '156127'),
+          turmaResolvida(3, '156128'),
+        ],
+      },
+      // 156128 fica de fora do mapa -> SEM_AGENDAMENTO.
+      modalidadePorTurma: { '156126': EAD, '156127': SEMI },
+      quizzesPorTurma: {
+        '156126': [{ QuizId: 42, Name: 'Prova N1' }],
+        '156127': [{ QuizId: 43, Name: 'Prova N1' }],
+      },
+    });
+
+    const resultado = await servico.iniciar(
+      { data: '2026-09-16', janelaId: 10, simulacao: false, forcar: false },
+      'admin@ucb.br',
+    );
+    await deixarOLoteTerminar();
+
+    // A de Semi nao e nem lida: ela tem a sessao dela, com a senha dela.
+    expect(listagens).toEqual(['156126']);
+    expect(gravacoes.map((g) => g.orgUnitId)).toEqual(['156126']);
+
+    // A de Semi sai em SILENCIO (nao e erro), e a sem formato vira relatorio.
+    expect(resultado.semModalidade).toBe(1);
+    expect(itensGravados.map((i) => i.resultado).sort()).toEqual([
+      ResultadoSenhaQuiz.DEFINIDA,
+      ResultadoSenhaQuiz.SEM_AGENDAMENTO,
+    ]);
+  });
+
+  /**
+   * O lote de senhas NAO move o calendario do questionario, mesmo partindo de
+   * uma janela. Se ele gravasse as horas, cada troca de senha reabriria a prova
+   * no horario daquela sessao — inclusive no modo em que o special access
+   * substitui as janelas, que e justamente onde este lote ainda dispara sozinho.
+   */
+  it('nao move a data do questionario, mesmo vindo de uma janela', async () => {
+    const { servico, prisma } = montar({
+      quizzesPorTurma: QUIZZES,
+      // A prova ja tem um calendario no AVA. A janela do mock e 15:00-18:00 do
+      // dia 16 — se o lote de senhas movesse a data, seria para la.
+      quizLido: {
+        QuizId: 42,
+        Name: 'Prova N1',
+        Password: 'antiga',
+        StartDate: '2026-09-15T12:00:00.000Z',
+        EndDate: '2026-09-15T15:00:00.000Z',
+      },
+    });
+
+    await servico.iniciar(
+      { data: '2026-09-16', janelaId: 10, simulacao: false, forcar: false },
+      'admin@ucb.br',
+    );
+    await deixarOLoteTerminar();
+
+    const corpo = gravacoes[0].corpo as Record<string, unknown>;
+    // O que o GET devolveu, VERBATIM — e nao as horas da janela.
+    expect(corpo.StartDate).toBe('2026-09-15T12:00:00.000Z');
+    expect(corpo.EndDate).toBe('2026-09-15T15:00:00.000Z');
+
+    const criacao = (prisma.execucaoSenhaQuiz.create as jest.Mock).mock
+      .calls[0][0] as { data: Record<string, unknown> };
+    expect(criacao.data.horaInicioAplicada).toBeNull();
+    expect(criacao.data.horaFimAplicada).toBeNull();
+    // A janela fica gravada assim mesmo: e dela que sairam a celula e o recorte.
+    expect(criacao.data.janelaDeProvaId).toBe(10);
+    expect(criacao.data.versaoSenhaAplicada).toBe(1);
+  });
+
   it('aplicando de verdade, grava o corpo COMPLETO com a senha da celula', async () => {
     const { servico } = montar({ quizzesPorTurma: QUIZZES });
 
     await servico.iniciar(
       {
         data: '2026-09-16',
-        turno: Turno.MANHA,
+        janelaId: 10,
         simulacao: false,
         forcar: false,
       },
@@ -379,7 +501,7 @@ describe('SenhaQuizService', () => {
     expect(gravacoes).toHaveLength(1);
     expect(gravacoes[0].orgUnitId).toBe('156126');
     expect((gravacoes[0].corpo as { Password: string }).Password).toBe(
-      'manha1609',
+      '897325',
     );
     expect(itensGravados[0].resultado).toBe(ResultadoSenhaQuiz.DEFINIDA);
   });
@@ -403,7 +525,7 @@ describe('SenhaQuizService', () => {
     await servico.iniciar(
       {
         data: '2026-09-16',
-        turno: Turno.MANHA,
+        janelaId: 10,
         simulacao: false,
         forcar: false,
       },
@@ -427,7 +549,7 @@ describe('SenhaQuizService', () => {
     await servico.iniciar(
       {
         data: '2026-09-16',
-        turno: Turno.MANHA,
+        janelaId: 10,
         simulacao: false,
         forcar: false,
       },
@@ -446,7 +568,7 @@ describe('SenhaQuizService', () => {
     await servico.iniciar(
       {
         data: '2026-09-16',
-        turno: Turno.MANHA,
+        janelaId: 10,
         simulacao: false,
         forcar: false,
       },
@@ -478,7 +600,7 @@ describe('SenhaQuizService', () => {
     await servico.iniciar(
       {
         data: '2026-09-16',
-        turno: Turno.MANHA,
+        janelaId: 10,
         simulacao: false,
         forcar: false,
       },
@@ -501,7 +623,7 @@ describe('SenhaQuizService', () => {
     await servico.iniciar(
       {
         data: '2026-09-16',
-        turno: Turno.MANHA,
+        janelaId: 10,
         simulacao: true,
         forcar: false,
       },
@@ -518,7 +640,7 @@ describe('SenhaQuizService', () => {
       servico.iniciar(
         {
           data: '2026-09-16',
-          turno: Turno.MANHA,
+          janelaId: 10,
           simulacao: false,
           forcar: false,
         },
@@ -581,7 +703,7 @@ describe('SenhaQuizService', () => {
         servico.iniciar(
           {
             data: '2026-09-16',
-            turno: Turno.MANHA,
+            janelaId: 10,
             simulacao: false,
             forcar: true,
           },
@@ -760,7 +882,7 @@ describe('SenhaQuizService', () => {
       await deixarOLoteTerminar();
 
       const corpo = gravacoes[0].corpo as Record<string, unknown>;
-      expect(corpo.Password).toBe('manha1609');
+      expect(corpo.Password).toBe('897325');
     });
 
     /**
@@ -915,7 +1037,10 @@ describe('SenhaQuizService', () => {
         .mock.calls[0][0] as { data: Record<string, unknown> };
 
       expect(criacao.data.tipo).toBe('DATA');
-      expect(criacao.data.turno).toBeNull();
+      // O turno da SESSAO, como rotulo. Ate 21/09/2026 era nulo aqui: o turno
+      // era a chave da grade de senhas, e uma execucao de datas nao pertencia
+      // a turno nenhum. Agora ela pertence a uma janela, e a janela tem turno.
+      expect(criacao.data.turno).toBe(Turno.TARDE);
       // A versao da JANELA (3 no mock), nao a da celula da grade (1).
       expect(criacao.data.versaoAplicada).toBe(3);
       expect(criacao.data.janelaDeProvaId).toBe(10);
@@ -1383,7 +1508,7 @@ describe('SenhaQuizService', () => {
       await servico.iniciar(
         {
           data: '2026-09-16',
-          turno: Turno.MANHA,
+          janelaId: 10,
           simulacao: false,
           forcar: false,
         },

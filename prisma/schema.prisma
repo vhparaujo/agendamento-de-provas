@@ -83,10 +83,10 @@ model Admin {
 // Um formato por aluno. Ex: EaD=180min, Semi/Modular=90min, Presencial=120min.
 
 model Modalidade {
-  id             Int    @id @default(autoincrement())
-  codigo         String @unique // EAD | SEMI | MODULAR | PRESENCIAL
-  nome           String
-  duracaoMinutos Int
+  id                  Int    @id @default(autoincrement())
+  codigo              String @unique // EAD | SEMI | MODULAR | PRESENCIAL
+  nome                String
+  duracaoMinutos      Int
   /// O `TimeLimitValue` que o special access grava para quem e deste formato
   /// (15/09/2026). NAO e `duracaoMinutos`: aquela decide o tamanho da faixa que
   /// aceita o formato, e muda-la invalidaria faixas publicadas; esta e o
@@ -94,10 +94,10 @@ model Modalidade {
   /// O aluno do NIOP recebe esta mais `ConfiguracaoSpecialAccess.tempoExtraNiopMinutos`.
   tempoDeProvaMinutos Int
 
-  alunos       AlunoImportado[]
-  salaFaixas   SalaFaixa[]
-  agendamentos Agendamento[] // fotografia do formato do aluno na reserva
-  janelas      JanelaDeProva[] // horarios do questionario no dia da prova
+  alunos          AlunoImportado[]
+  salaFaixas      SalaFaixa[]
+  agendamentos    Agendamento[] // fotografia do formato do aluno na reserva
+  janelas         JanelaDeProva[] // horarios do questionario no dia da prova
   // Qual periodo letivo do Brightspace vale para este formato em cada janela
   // de agendamento: modular anda por modulo, presencial por semestre.
   periodosLetivos PeriodoLetivoModalidade[]
@@ -861,27 +861,52 @@ enum TipoExecucaoQuiz {
   PREPARO
 }
 
-/// UMA celula da grade: dia x turno -> senha.
+/// UMA celula da grade: dia x JANELA -> senha.
 ///
-/// Sem linha aqui, NADA acontece naquele turno. Esse e o humano no circuito que
+/// ⚠️ **A chave passou a ser a JANELA em 21/09/2026** (antes era o TURNO). O
+/// motivo esta escrito no proprio seed de janelas desde 25/08/2026: com tres
+/// turnos, as duas sessoes de Semi/Modular do mesmo turno dividiam a mesma
+/// senha, e o aluno das 08:30 podia repassa-la ao das 10:30. Agora cada SESSAO
+/// de cada FORMATO tem a sua, trocada no disparo daquela janela — o mesmo
+/// calendario que ja movia a data e o grupo. Sao ~20 celulas por dia (3 no EaD,
+/// 6 em Semi, 6 em Modular, 5 no Presencial) contra as 3 de antes.
+///
+/// ⚠️ **A senha NASCE ALEATORIA** (`senha-aleatoria.ts`): 6 digitos, nenhum
+/// repetido mais de 3 vezes, unica dentro do dia. O admin deixou de digitar o
+/// valor — ele manda GERAR o periodo e le o que saiu. Digitar continua possivel
+/// (`definir`) como saida de emergencia, e nao como o caminho normal.
+///
+/// Sem linha aqui, NADA acontece naquela sessao. Esse e o humano no circuito que
 /// o cron nao dispensa — e tambem por que sabado a noite (sem prova) nao precisa
 /// de tratamento especial: a celula simplesmente nao existe.
 model SenhaDeProva {
-  id    Int      @id @default(autoincrement())
-  data  DateTime @db.Date
-  turno Turno
+  id   Int      @id @default(autoincrement())
+  data DateTime @db.Date
+
+  /// A SESSAO a que esta senha pertence. A janela ja carrega o formato, as horas
+  /// e o horario de disparo — e a mesma chave da grade de grupos.
+  ///
+  /// NULO so nas linhas ANTERIORES a 21/09/2026, que eram chaveadas por turno e
+  /// ficam como historico. A grade nunca as devolve; elas sobrevivem porque a
+  /// execucao daquele dia aponta para elas.
+  janelaDeProvaId Int?
+
+  /// O turno da celula no desenho ANTIGO (ate 21/09/2026). Nulo em toda linha
+  /// nova. Mantido para as linhas historicas continuarem legiveis sozinhas —
+  /// mesma razao de `ExecucaoSenhaQuiz.turno` ser desnormalizado.
+  turno Turno?
 
   /// TEXTO CLARO, e nao ha alternativa: o D2L exige o valor literal no PUT e a
   /// administracao imprime a folha para os fiscais. Hash impossibilitaria as duas.
   ///
   /// Esta e a UNICA coluna do banco com o valor. Ele NAO entra em
   /// ExecucaoSenhaQuiz, ItemSenhaQuiz, auditoria, log, CSV nem na listagem da
-  /// grade — so em GET /senhas-de-prova/:id/revelar, que e auditada.
+  /// grade — so nas rotas de revelar, que sao auditadas.
   senha String @db.VarChar(200)
 
   /// Sobe 1 a cada troca do VALOR (nao a cada PUT).
   ///
-  /// Responde a pergunta operacional real — "editei a senha as 07:20, o cron ja
+  /// Responde a pergunta operacional real — "gerei de novo as 07:20, o cron ja
   /// tinha rodado as 07:30?" — comparando com ExecucaoSenhaQuiz.versaoAplicada,
   /// SEM guardar a senha anterior em lugar nenhum. Um hash da senha aplicada
   /// resolveria o mesmo e seria forcavel por dicionario (sao 6 digitos); o
@@ -889,17 +914,28 @@ model SenhaDeProva {
   versao Int @default(1)
 
   /// Fotografia do e-mail, como HistoricoAgendamento.autor: precisa continuar
-  /// legivel se a conta do admin for desativada depois.
+  /// legivel se a conta do admin for desativada depois. `"gerador"` quando a
+  /// linha nasceu de uma geracao em lote pedida na tela.
   criadoPor     String
   atualizadoPor String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  execucoes ExecucaoSenhaQuiz[]
+  /// CASCADE, como em `GrupoDaJanela`: a sessao removida do calendario nao tem
+  /// mais senha a que se aplicar. A execucao historica sobrevive pelo outro
+  /// caminho (`onDelete: SetNull` + data/turno desnormalizados na execucao).
+  janelaDeProva JanelaDeProva?      @relation(fields: [janelaDeProvaId], references: [id], onDelete: Cascade)
+  execucoes     ExecucaoSenhaQuiz[]
 
+  /// A chave de hoje. O MySQL nao conflita NULLs, entao as linhas historicas
+  /// (janela nula) convivem aqui sem colidir umas com as outras.
+  @@unique([data, janelaDeProvaId])
+  /// A chave ANTIGA, preservada para as linhas historicas. Toda linha nova tem
+  /// `turno` nulo e por isso nunca esbarra nela.
   @@unique([data, turno])
   @@index([data])
+  @@index([janelaDeProvaId])
   @@map("senha_de_prova")
 }
 
@@ -918,13 +954,11 @@ model ConfiguracaoSenhaQuiz {
   nomeQuiz  String?
   matchQuiz TipoMatchQuiz @default(CONTEM)
 
-  /// "HH:MM" em America/Sao_Paulo. NULO = o cron nao dispara aquele turno — e
-  /// assim que sabado-a-noite, que nao tem prova, fica de fora sem gambiarra.
-  /// Guardado como texto e nao como minutos porque e o que o admin digita e o
-  /// que o log mostra; a conversao vive em `minutosDaHora`, com teste.
-  horaManha String? @db.VarChar(5)
-  horaTarde String? @db.VarChar(5)
-  horaNoite String? @db.VarChar(5)
+  // ⚠️ `horaManha`/`horaTarde`/`horaNoite` SAIRAM em 21/09/2026. Eram os tres
+  // horarios de turno do cron de senhas; agora a senha troca no disparo da
+  // JANELA, junto com a data e o grupo, e quem diz a que horas isso acontece e
+  // `JanelaDeProva.horaDisparo`. Manter as colunas mortas seria manter dois
+  // calendarios, e o errado e o que alguem acabaria editando.
 
   atualizadoPor String?
   atualizadoEm  DateTime @updatedAt
@@ -948,28 +982,41 @@ model ExecucaoSenhaQuiz {
   /// existiam quando esta coluna nasceu — elas eram todas de senha.
   tipo TipoExecucaoQuiz @default(SENHA)
 
+  /// A celula da grade cuja senha foi aplicada.
+  ///
   /// FK OPCIONAL de proposito: apagar a senha antiga (retencao) NAO pode apagar
   /// a prova de que o lote rodou. Por isso data/turno tambem sao desnormalizados.
   ///
-  /// NULO em toda execucao `DATA` — ela nao le celula nenhuma da grade.
+  /// Preenchida em `SENHA` **e em `DATA`** — desde 25/08/2026 o lote de datas
+  /// grava a senha junto, porque o PUT substitui o questionario inteiro. NULA so
+  /// em `PREPARO`, de proposito: um preparo nao pode passar por troca de senha
+  /// para o cron nem para a trava de "esta celula ja foi aplicada".
   senhaDeProvaId  Int?
-  /// O DIA que o lote mirou. Preenchido nos dois tipos: numa execucao `DATA` e o
-  /// dia que o questionario passa a ter, ja com o `diaSeguinte` aplicado.
+  /// O DIA que o lote mirou — o dia da PROVA, ja com o `diaSeguinte` aplicado
+  /// quando a janela e a que arma a manha seguinte.
   data            DateTime @db.Date
-  /// NULO em `DATA`: turno e a chave da grade de SENHAS, e a grade continua com
-  /// tres turnos. Uma execucao de datas se identifica pela janela, abaixo.
+  /// O turno da SESSAO, como rotulo legivel do relatorio e do log. Nulo nas
+  /// execucoes anteriores a 21/09/2026 que eram de DATA (ali o turno era a chave
+  /// da grade de senhas, e uma execucao de datas nao pertencia a um turno).
   turno           Turno?
   periodoLetivoId String
 
-  /// A janela aplicada. NULA em `SENHA`.
+  /// A janela aplicada.
   ///
-  /// FK opcional pelo mesmo motivo de `senhaDeProvaId`: apagar uma janela do
-  /// calendario nao pode apagar a prova de que o lote rodou. Por isso as horas
-  /// tambem sao desnormalizadas abaixo.
+  /// ⚠️ Desde 21/09/2026 ela e preenchida **tambem em `SENHA`**: a senha passou
+  /// a ser trocada por sessao, no disparo da janela, e nao mais tres vezes por
+  /// dia. Quem le esta coluna para decidir idempotencia PRECISA filtrar por
+  /// `tipo` — sem isso, a troca de senha das 12:01 faria a troca de data das
+  /// 12:01 parecer ja aplicada.
+  ///
+  /// NULA em `PREPARO`. FK opcional pelo mesmo motivo de `senhaDeProvaId`:
+  /// apagar uma janela do calendario nao pode apagar a prova de que o lote
+  /// rodou. Por isso as horas tambem sao desnormalizadas abaixo.
   janelaDeProvaId    Int?
   /// Congeladas no inicio, como `nomeQuizAlvo`: a janela pode ser editada na tela
   /// durante a execucao, e o registro precisa dizer o que REALMENTE foi aplicado.
-  /// Nulas em `SENHA`.
+  /// Nulas em `SENHA` e `PREPARO` — os dois nao movem o calendario do
+  /// questionario, mesmo o de senha ja sabendo de qual sessao a senha saiu.
   horaInicioAplicada String? @db.VarChar(5)
   horaFimAplicada    String? @db.VarChar(5)
 
@@ -979,10 +1026,35 @@ model ExecucaoSenhaQuiz {
   /// Em `SENHA` e a versao da CELULA; em `DATA`, a da JANELA. Nos dois casos
   /// responde a mesma pergunta — "qual versao da configuracao foi realmente
   /// aplicada?" —, e e o que faz a idempotencia do cron liberar um novo disparo
-  /// quando o admin corrige o horario ou a senha.
+  /// quando o admin corrige o horario ou gera a senha de novo.
+  ///
+  /// ⚠️ Por guardar coisas diferentes nos dois tipos, ela **so tem sentido ao
+  /// lado de um filtro por `tipo`**. Desde 21/09/2026 as duas execucoes do mesmo
+  /// minuto compartilham `janelaDeProvaId`, e sem o filtro a versao da celula de
+  /// uma poderia casar por acaso com a versao da janela da outra.
   versaoAplicada Int?
-  nomeQuizAlvo   String
-  matchQuizAlvo  TipoMatchQuiz
+
+  /// A versao da CELULA da grade, sempre — inclusive nas execucoes `DATA`.
+  ///
+  /// ⚠️ Nasceu em 21/09/2026 porque `versaoAplicada` guarda coisas diferentes
+  /// nos dois tipos: a da celula em `SENHA`, a da JANELA em `DATA`. A grade
+  /// precisa responder "o Brightspace esta com a senha que estou vendo?", e
+  /// desde que o lote de datas tambem grava a senha, a resposta tem de sair de
+  /// QUALQUER execucao que a tenha aplicado. Comparar com `versaoAplicada` de
+  /// uma execucao `DATA` compararia a versao da celula com a da janela — dois
+  /// contadores sem relacao, e a grade diria "desatualizada" no dia em que eles
+  /// se cruzassem.
+  ///
+  /// Entra tambem na idempotencia do lote de DATAS: gerar a senha de novo as
+  /// 12:43, depois do disparo das 12:01, precisa liberar um novo disparo HOJE —
+  /// o questionario esta com a senha antiga. Mesmo remedio do bug de
+  /// 25/08/2026, aplicado ao terceiro campo que o disparo grava.
+  ///
+  /// NULA em `PREPARO` (que nao conta como troca de senha) e em toda execucao
+  /// anterior a 21/09/2026.
+  versaoSenhaAplicada Int?
+  nomeQuizAlvo        String
+  matchQuizAlvo       TipoMatchQuiz
 
   /// Fase 1 — resolucao do orgUnitId das turmas do CSV.
   turmasNoCsv        Int @default(0)
@@ -1283,25 +1355,21 @@ model JanelaDeProva {
   /// "HH:MM" — vira o `EndDate`.
   horaFim      String @db.VarChar(5)
 
-  /// A celula da GRADE DE SENHAS que esta janela usa.
+  /// O TURNO em que esta sessao acontece. Hoje e so um ROTULO — de manha, de
+  /// tarde ou a noite — usado na tela, no log e na auditoria.
   ///
-  /// ⚠️ Nao e enfeite de relatorio: e o que impede o lote de datas de APAGAR a
-  /// senha de toda prova da instituicao. O PUT substitui o objeto inteiro, entao
-  /// ele precisa reenviar `Password` — e o GET **pode devolver `Password: null`
-  /// num questionario que tem senha** (o `QuizReadData` so expoe o campo se for
-  /// "nao nulo E visivel ao contexto do chamador"). Preservar a leitura seria o
-  /// bug que o comentario de `ExecucaoSenhaQuiz.comSenhaLida` ja registrava
-  /// sobre o CLI de origem. Com o turno aqui, o lote de datas le a senha da
-  /// GRADE — a mesma fonte autoritativa do lote de senhas — e a define.
+  /// ⚠️ **Ate 21/09/2026 ele decidia de qual celula da grade saia a senha**, e
+  /// era por isso que ele existia: o PUT substitui o questionario inteiro e
+  /// precisa reenviar `Password`, e o GET pode devolver `Password: null` num
+  /// questionario que TEM senha. Com a grade de senhas passando a ser chaveada
+  /// pela propria janela, cada sessao le a SUA celula e este campo parou de
+  /// decidir qualquer coisa — inclusive o efeito colateral que a decisao de
+  /// 25/08/2026 aceitava, de duas sessoes seguidas do mesmo turno dividirem a
+  /// mesma senha.
   ///
-  /// E DECLARADO, nao derivado de `horaInicio`. Derivar exigiria cravar no
-  /// codigo onde a manha vira tarde, e a resposta muda por instituicao e por
-  /// semestre; a grade tem tres turnos e o calendario de Semi/Modular tem seis
-  /// janelas, entao o mapa e N:1 e quem o conhece e a administracao. E a mesma
-  /// recusa que `turno.ts` ja faz para `Faixa.horaInicio`.
-  ///
-  /// Consequencia aceita (decisao do cliente, 25/08/2026): em Semi/Modular, duas
-  /// janelas seguidas do mesmo turno dividem a mesma senha.
+  /// Continua GRAVADO porque o rotulo tem uso proprio (a tela agrupa as sessoes
+  /// por turno, e "a janela da manha nao rodou" e como a administracao fala), e
+  /// porque tira-lo mexeria em telas e no lote de grupos sem nada em troca.
   turno Turno
 
   /// O disparo aponta para AMANHA, nao para hoje.
@@ -1397,6 +1465,7 @@ model JanelaDeProva {
 
   execucoes   ExecucaoSenhaQuiz[]
   gruposDoDia GrupoDaJanela[]
+  senhasDoDia SenhaDeProva[]
 
   @@unique([modalidadeId, ordem])
   @@index([modalidadeId])
@@ -1654,9 +1723,9 @@ model ExecucaoGruposD2L {
 }
 
 model ItemGruposD2L {
-  id         Int                @id @default(autoincrement())
-  execucaoId Int
-  orgUnitId  String
+  id             Int                @id @default(autoincrement())
+  execucaoId     Int
+  orgUnitId      String
   /// Desnormalizados: o relatorio precisa ser legivel sem join, e a turma pode
   /// sair do CSV do semestre seguinte.
   codigoTurma    String?
@@ -1731,7 +1800,7 @@ model ExecucaoSpecialAccess {
   /// As turmas escolhidas, separadas por virgula. Nulo = todas as que tem
   /// reserva na rodada. Serve para fatiar a carga contra o Brightspace — o lote
   /// e uma chamada por aluno em cada questionario.
-  orgUnitIds       String?  @db.VarChar(1000)
+  orgUnitIds       String? @db.VarChar(1000)
 
   nomeQuizAlvo          String
   matchQuizAlvo         TipoMatchQuiz

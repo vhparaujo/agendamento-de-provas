@@ -266,18 +266,20 @@ segredo ausente em produção.
 | `D2L_HABILITADO` | | **default `true`** (desde 18/08/2026) — só `false` desliga; ligado, as disciplinas do aluno passam a vir dos enrollments da Valence |
 | `D2L_*` | D2L | credenciais OAuth, URL do tenant, versão da API e Type Ids de org unit |
 | `SENHA_QUIZ_CRON_HABILITADO` | | **default `false`** — se **esta instância** pode disparar o cron. Opt-in mesmo com o D2L ligado |
-| `SENHA_QUIZ_CRON_TOLERANCIA_MIN` | | default `30` — janela em que um restart ainda aplica o turno |
+| `SENHA_QUIZ_CRON_TOLERANCIA_MIN` | | default `30` — janela em que um restart ainda aplica a sessão |
 | `SENHA_QUIZ_CRON_MAX_TENTATIVAS` | | default `3` — teto de tentativas reais por célula |
 | `SENHA_QUIZ_CONCORRENCIA` / `_DELAY_MS` / `_TIMEOUT_MS` / `_MAX_PAGINAS` | | ritmo do lote contra a Valence (default `4` / `400` / `30000` / `50`) |
 | `INTEGRACAO_API_KEYS` | integração | `sistema:chave[,sistema:chave]`, chaves com 32+ caracteres (`openssl rand -hex 32`). **Vazia = rotas de integração recusam tudo (401).** Duas entradas do mesmo sistema = rotação |
 | `INTEGRACAO_IPS_PERMITIDOS` | | IPs exatos, separados por vírgula. Vazio = qualquer origem. Depende de `TRUST_PROXY` correto |
 
 ⚠️ **Os horários do cron e o questionário-alvo não estão no `.env`** (desde
-19/08/2026): o admin os cadastra na tela, e eles moram em
-`configuracao_senha_quiz`. Os dois mudam por semestre, e quem os conhece é a
-administração — pedir deploy para trocar `07:30` garantia que o horário ficasse
-errado no primeiro dia em que a prova mudasse de hora. O que ficou no `.env` é
-o que é **da instância**: se ela pode disparar, e a que ritmo fala com a Valence.
+19/08/2026): o admin os cadastra na tela. O alvo mora em
+`configuracao_senha_quiz`; os horários são os das **janelas de cada formato**
+(`janela_de_prova`), um calendário só para data, grupo e senha desde 21/09/2026.
+Os dois mudam por semestre, e quem os conhece é a administração — pedir deploy
+para trocar `12:01` garantia que o horário ficasse errado no primeiro dia em que
+a prova mudasse de hora. O que ficou no `.env` é o que é **da instância**: se ela
+pode disparar, e a que ritmo fala com a Valence.
 
 Lista completa e comentada em [`.env.example`](.env.example). **Nunca commite o
 `.env`.**
@@ -967,18 +969,27 @@ devolve `Buffer`), separado das consultas (`lista-presenca.service.ts`).
 
 ### Senha das provas nos questionários do Brightspace
 
-A administração cadastra uma grade **dia × turno → senha** e o sistema troca o campo
-`Password` do questionário da prova em todas as turmas — manualmente por um botão,
-ou sozinho por cron nos horários configurados.
+O sistema sorteia uma grade **dia × sessão → senha** e troca o campo `Password`
+do questionário da prova nas turmas daquele formato — manualmente por um botão,
+ou sozinho no disparo de cada sessão, junto com a data e o grupo.
+
+⚠️ **Mudou em 21/09/2026.** Era dia × **turno** (três senhas por dia, digitadas
+pelo admin, aplicadas em todas as turmas do CSV). Duas sessões seguidas do mesmo
+turno dividiam a senha, e o aluno das 08:30 podia repassá-la ao das 10:30. Agora
+cada sessão tem a sua, sorteada, e o recorte por formato passou a valer também
+aqui — às 12:01 o EaD e o Semi trocam de senha ao mesmo tempo, com senhas
+diferentes. Ver "Senha das provas" no `CLAUDE.md` para o raciocínio inteiro.
 
 | Método | Rota | Descrição |
 |---|---|---|
 | `GET` | `/senhas-de-prova?de=&ate=` | A grade do intervalo. **Nunca devolve o valor da senha** — só `temSenha` |
-| `PUT` | `/senhas-de-prova` | Cadastra/atualiza a célula `(data, turno)` |
-| `GET` | `/senhas-de-prova/:id/revelar` | O valor em texto claro. **Auditado e com throttle apertado** |
+| `POST` | `/senhas-de-prova/gerar` | **Sorteia** as senhas do período: 6 dígitos, nenhum repetido mais de 3×, únicas dentro do dia. `substituir: false` (padrão) só preenche as vazias |
+| `PUT` | `/senhas-de-prova` | Grava a célula `(data, janelaDeProvaId)` **à mão** — emergência, não o caminho normal |
+| `GET` | `/senhas-de-prova/revelar?de=&ate=` | As senhas do intervalo em claro (o "Mostrar senhas" da tela). **Auditado numa linha por intervalo**, com throttle apertado |
+| `GET` | `/senhas-de-prova/:id/revelar` | O valor de uma célula. **Auditado e com throttle apertado** |
 | `DELETE` | `/senhas-de-prova/:id` | Retenção: apaga a senha, preservando o histórico da execução |
 | `GET`/`PUT` | `/senhas-de-prova/alvo` | Qual questionário o lote procura (nome + `EXATO`/`CONTEM`) |
-| `GET`/`PUT` | `/senhas-de-prova/horarios` | A que horas o cron aplica cada turno. Turno em branco não dispara |
+| `GET`/`PUT` | `/senhas-de-prova/janelas` | O calendário das sessões por formato — é dele que saem os horários de disparo |
 | `GET` | `/senhas-de-prova/turmas` | Pré-visualiza **quais turmas serão tocadas**, e quais não resolveram |
 | `PUT`/`DELETE` | `/senhas-de-prova/turmas/:turmaId/modalidade` | Desempata a turma **ambígua** — e só ela. Ver abaixo |
 | `POST` | `/senhas-de-prova/execucoes` | Dispara. Responde na hora com um `id`; **simula por padrão** |
@@ -987,25 +998,39 @@ ou sozinho por cron nos horários configurados.
 | `GET` | `/senhas-de-prova/execucoes/:id/relatorio` | CSV do que aconteceu em cada turma. **Sem coluna de senha** |
 
 ```jsonc
-// PUT /api/senhas-de-prova
-{ "data": "2026-09-16", "turno": "MANHA", "senha": "897325" }
+// POST /api/senhas-de-prova/gerar  — o caminho normal
+{ "de": "2026-09-21", "ate": "2026-09-26" }
+// resposta: a grade do intervalo, SEM os valores
+{ "criadas": 120, "substituidas": 0, "preservadas": 0, "celulas": [/* … */] }
+
+// PUT /api/senhas-de-prova  — emergência
+{ "data": "2026-09-16", "janelaDeProvaId": 7, "senha": "897325" }
 
 // POST /api/senhas-de-prova/execucoes
-{ "data": "2026-09-16", "turno": "MANHA", "simulacao": true }
+{ "data": "2026-09-16", "janelaId": 7, "simulacao": true }
 // resposta imediata
 { "id": 12, "simulacao": true, "turmasResolvidas": 312 }
 ```
 
-**Quais turmas.** Todas as do **CSV de turmas importado** que pertencem ao período
-letivo vigente. Não se verifica se há agendamento na turma. O `orgUnitId`, que o
-CSV não traz, é descoberto cruzando com os descendentes do período letivo e
-gravado de volta — é o mesmo match por `Code` composto usado no portal do aluno, e
-ele **nunca chuta**: linha ambígua não grava nada e vai para o relatório.
+**Quais turmas.** As do **CSV de turmas importado** que pertencem ao período
+letivo vigente **e cujo formato pôde ser derivado dos agendamentos** — o mesmo
+recorte do lote de datas desde 21/09/2026. O `orgUnitId`, que o CSV não traz, é
+descoberto cruzando com os descendentes do período letivo e gravado de volta — é
+o mesmo match por `Code` composto usado no portal do aluno, e ele **nunca
+chuta**: linha ambígua não grava nada e vai para o relatório. Turma sem formato
+também não: ela vira linha de relatório (`SEM_AGENDAMENTO`/`MODALIDADE_AMBIGUA`),
+e sem a data nova aquela prova não abriria de qualquer forma.
 
-**A senha do turno sobrescreve a do turno anterior, de propósito** — é o que
-impede o aluno da manhã de repassar a senha ao da tarde. Justamente por isso,
-reprocessar a manhã depois da tarde põe a senha da manhã de volta em todas as
-turmas; a reaplicação exige `forcar` e confirmação na tela.
+**A senha de uma sessão sobrescreve a da anterior, de propósito** — é o que
+impede o aluno das 08:30 de repassar a senha ao das 10:30. Justamente por isso,
+reprocessar uma sessão passada põe a senha dela de volta naquele formato inteiro;
+a reaplicação exige `forcar` e confirmação na tela.
+
+**As senhas são sorteadas com `crypto.randomInt`, por rejeição.** Seis dígitos,
+nenhum repetido mais de três vezes (regra de legibilidade: "777773" lido em voz
+alta para uma sala erra mais), únicas dentro do dia. Regerar um dia cuja folha já
+está com os fiscais troca a senha da prova sem ninguém na sala saber — por isso
+`substituir` é sempre um pedido explícito, com confirmação, e auditado.
 
 **Rode a simulação primeiro.** Ela percorre tudo, lista cada questionário que
 casou com o nome configurado e **não emite nenhum PUT**. É a única conferência
@@ -1046,21 +1071,21 @@ começar. Um default plausível ("Prova") seria pior que a ausência: ele rodari
 casaria com o que estivesse por perto e ninguém saberia até o dia da prova.
 
 **Os horários também vêm da tela.** Um tick de um minuto compara o relógio de São
-Paulo com o que está em `configuracao_senha_quiz`, então corrigir o horário às
-07:25 já vale às 07:30, sem reiniciar nada. Turno em branco não dispara. Formato
-fora de `HH:MM` é **recusado** — um `7:30` aceito calado viraria um turno que
-nunca dispara.
+Paulo com as janelas cadastradas, então corrigir o horário às 15:25 já vale às
+15:31, sem reiniciar nada. Sessão desligada (`ativo: false`) não dispara, e
+formato fora de `HH:MM` é **recusado** — um `7:30` aceito calado viraria uma
+sessão que nunca dispara.
 
 **O cron é opt-in por instância** (`SENHA_QUIZ_CRON_HABILITADO=false` por padrão)
 e **nunca simula** — a rede de proteção é outra: nada acontece se ninguém tiver
-digitado a senha daquela célula. A tolerância de **30 min** faz um restart às
-07:41 ainda aplicar o turno das 07:30, e a idempotência fica no banco, não em
-memória: reiniciar o servidor não reexecuta o turno.
+gerado a senha daquela sessão. A tolerância de **30 min** faz um restart às 12:12
+ainda aplicar a sessão das 12:01, e a idempotência fica no banco, não em memória:
+reiniciar o servidor não reexecuta a sessão.
 
-⚠️ Com o cron **ligado no servidor e nenhum horário cadastrado**, o tick avisa
-(`SENHA_QUIZ_CRON_SEM_HORARIO`) em vez de calar: um cron que parece armado e não
-está é pior que um cron desligado. A tela também avisa o contrário — horários
-cadastrados com `SENHA_QUIZ_CRON_HABILITADO=false`.
+⚠️ Com o cron **ligado no servidor e nenhuma janela ativa cadastrada**, o tick
+avisa (`DATA_QUIZ_CRON_SEM_JANELA`) em vez de calar: um cron que parece armado e
+não está é pior que um cron desligado. A tela também avisa o contrário —
+calendário cadastrado com `SENHA_QUIZ_CRON_HABILITADO=false`.
 
 **Exige `D2L_HABILITADO`** e, no consentimento OAuth, os escopos
 `quizzing:quizzes:read quizzing:quizzes:write`. ⚠️ Acrescentá-los ao `D2L_SCOPES`
@@ -1367,8 +1392,8 @@ PeriodoAgendamento ── PeriodoLetivoModalidade ── Modalidade
 | `HistoricoAgendamento` | Quem alterou o agendamento: evento, autor (aluno/admin), de → para |
 | `PeriodoAgendamento` | Janela de agendamento; fecha por `dataFechamento`. Identidade = `periodoLetivoId` (o **principal**) + `rodada` |
 | `PeriodoLetivoModalidade` | O mapa `modalidade → periodoLetivoId` de uma janela. Existe porque módulos e semestres correm em paralelo — ver *duas grades no mesmo ano* |
-| `SenhaDeProva` | Uma célula da grade `(data, turno)` → senha da prova. **Única coluna do banco com a senha em texto claro** |
-| `ConfiguracaoSenhaQuiz` | Linha única (`id=1`): o que o admin configura — questionário-alvo e os horários do cron |
+| `SenhaDeProva` | Uma célula da grade `(data, janelaDeProvaId)` → senha da prova, sorteada. **Única coluna do banco com a senha em texto claro.** Linhas anteriores a 21/09/2026 têm `turno` e não têm janela: são histórico |
+| `ConfiguracaoSenhaQuiz` | Linha única (`id=1`): o questionário-alvo. Os horários de disparo saíram daqui em 21/09/2026 — são os das janelas |
 | `ExecucaoSenhaQuiz` | Uma rodada do lote de troca de senhas. Guarda contadores e a `versaoAplicada`; **nunca a senha** |
 | `ItemSenhaQuiz` | Uma linha por (turma, questionário) da execução, com o `resultado`. **Nunca a senha** |
 | `JanelaDeProva` | Um disparo: a que horas o questionário abre/fecha, por formato, e o grupo que libera a prova |
@@ -1716,7 +1741,8 @@ src/
                   nome-de-arquivo.ts (o nome com que a folha baixa)
   seguranca/      auditoria + filtro global de exceções
   senha-quiz/
-    service/      grade-senhas.service.ts (a grade dia × turno)
+    service/      grade-senhas.service.ts (a grade dia × sessão)
+                  senha-aleatoria.ts (o sorteio: 6 dígitos, máx. 3 repetições)
                   senha-quiz.service.ts (o lote que grava no Brightspace)
                   senha-quiz.cron.ts (o tick de um minuto)
                   resolucao-orgunit.service.ts (CSV ∩ ofertas do semestre)
@@ -2015,7 +2041,7 @@ A ordem de implementação segue a prioridade definida para o projeto.
 | 8a | Valence: OAuth + leitura de matrículas (disciplinas do semestre) | ✅ concluída — **ligada por padrão** desde 18/08/2026 |
 | 8b | Valence: special access no quiz | ✅ concluída (15/09/2026) — convive com datas e grupos; ver [Special access por agendamento](#special-access-por-agendamento) |
 | 9 | Agendamento compulsório + agendamento administrativo de um aluno | ✅ concluída |
-| 10 | Senha das provas: grade dia × turno + troca em massa no Brightspace (manual e por cron) | ✅ concluída |
+| 10 | Senha das provas: grade dia × **sessão** (sorteada) + troca em massa no Brightspace (manual e por cron) | ✅ concluída — por sessão e sorteada desde 21/09/2026 |
 
 **Pendências conhecidas**
 

@@ -38,7 +38,7 @@ import {
 import { SenhaQuizService } from '../service/senha-quiz.service';
 
 /**
- * O lote que aplica a senha de UMA celula da grade em todas as turmas do CSV.
+ * O lote que aplica UMA sessao do calendario nas turmas do formato dela.
  *
  * Tres rotas e nao uma porque o lote leva minutos: dispara, acompanha, baixa o
  * relatorio. Mesmo desenho do compulsorio, e pelo mesmo motivo.
@@ -57,23 +57,30 @@ export class SenhaQuizController {
   @Post()
   @ApiOperation({
     summary:
-      'Aplica a senha de um turno, ou a janela de horario de um formato ' +
+      'Aplica uma sessao do calendario: so a senha, ou a janela inteira ' +
       '(simula por padrao)',
     description:
       '### Dois lotes, a mesma maquinaria\n\n' +
-      '`tipo: SENHA` (padrao) troca o campo `Password` do questionario da prova ' +
-      'em **todas as turmas do CSV importado que pertencem ao periodo letivo ' +
-      'vigente**. Nao verifica se ha agendamento na turma.\n\n' +
+      'Os dois primeiros partem da MESMA sessao (`janelaId` + `data`) e tocam ' +
+      'as MESMAS turmas: as do formato daquela janela. O que muda e o que cada ' +
+      'um grava.\n\n' +
+      '`tipo: SENHA` (padrao) troca so o campo `Password` do questionario. Ate ' +
+      '21/09/2026 ele alcancava todas as turmas do CSV e era chaveado por ' +
+      'TURNO; nao da mais para ser assim, porque as 12:01 o EaD e o Semi trocam ' +
+      'de senha ao mesmo tempo com senhas diferentes.\n\n' +
       '`tipo: DATA` troca `StartDate`/`EndDate` — a janela em que a prova fica ' +
-      'aberta — nas turmas de **UM formato**, a da janela informada em ' +
-      '`janelaId`. O formato de cada turma e DERIVADO dos agendamentos ' +
-      'confirmados; turma sem formato derivavel fica de fora e vira linha de ' +
-      'relatorio (`SEM_AGENDAMENTO` / `MODALIDADE_AMBIGUA`).\n\n' +
+      'aberta —, o grupo que a libera **e** a senha, tudo na mesma execucao. E ' +
+      'este o lote que o cron dispara no calendario normal.\n\n' +
+      'O formato de cada turma e DERIVADO dos agendamentos confirmados; turma ' +
+      'sem formato derivavel fica de fora e vira linha de relatorio ' +
+      '(`SEM_AGENDAMENTO` / `MODALIDADE_AMBIGUA`).\n\n' +
       '`tipo: PREPARO` deixa o questionario pronto para o **special access** em ' +
       'todas as turmas do CSV (ou so nas de `orgUnitIds`): apaga `StartDate`/`EndDate`, ' +
       'liga `AllowOnlyUsersWithSpecialAccess` e tira as condicoes de liberacao ' +
       'por grupo (com backup). O quiz e gravado ANTES das condicoes: se ele ' +
-      'falhar, elas nao sao tocadas. Grava a senha da celula `data` + `turno`.\n\n' +
+      'falhar, elas nao sao tocadas. Grava a senha da celula `data` + ' +
+      '`janelaId` como valor PROVISORIO — no dia, o disparo da sessao de cada ' +
+      'turma poe a senha do formato dela por cima.\n\n' +
       'Com o special access substituindo as janelas (Special access > ' +
       'Configuracao), `tipo: DATA` recusa com 400.\n\n' +
       '**`DATA` grava a senha tambem.** Nao e escopo a mais: o PUT do ' +
@@ -114,47 +121,41 @@ export class SenhaQuizController {
       forcar: dto.forcar ?? false,
     };
 
-    // `ValidateIf` no DTO ja garante a presenca do campo de cada tipo; o `!`
-    // aqui seria a unica alternativa, e trocar um contrato validado por uma
-    // assercao e o que faz um 500 nascer de um corpo malformado.
-    if (dto.tipo === TipoExecucaoQuiz.DATA) {
-      if (dto.janelaId === undefined) {
-        throw new BadRequestException(
-          'Escolha a janela: cada execução de datas aplica UMA janela.',
-        );
-      }
+    // ⚠️ **Os TRES tipos pedem a janela desde 21/09/2026.** A celula da grade
+    // pertence a uma SESSAO, entao ate o preparo — que nao recorta turma por
+    // formato — precisa dizer de qual sessao tira a senha que vai no PUT.
+    //
+    // `ValidateIf` no DTO ja garante a presenca do campo; o `!` aqui seria a
+    // unica alternativa, e trocar um contrato validado por uma assercao e o que
+    // faz um 500 nascer de um corpo malformado.
+    if (dto.janelaId === undefined) {
+      throw new BadRequestException(
+        'Escolha a sessão: cada execução aplica UMA janela do questionário, e ' +
+          'é dela que sai a senha.',
+      );
+    }
 
+    const comJanela = { ...comum, janelaId: dto.janelaId };
+
+    if (dto.tipo === TipoExecucaoQuiz.DATA) {
       return this.service.iniciar(
-        { ...comum, tipo: TipoExecucaoQuiz.DATA, janelaId: dto.janelaId },
+        { ...comJanela, tipo: TipoExecucaoQuiz.DATA },
         admin.email,
       );
     }
 
     if (dto.tipo === TipoExecucaoQuiz.PREPARO) {
-      if (dto.turno === undefined) {
-        throw new BadRequestException(
-          'Escolha o turno: o preparo grava junto a senha de UMA célula da grade.',
-        );
-      }
-
       return this.service.iniciar(
         {
-          ...comum,
+          ...comJanela,
           tipo: TipoExecucaoQuiz.PREPARO,
-          turno: dto.turno,
           orgUnitIds: dto.orgUnitIds ?? [],
         },
         admin.email,
       );
     }
 
-    if (dto.turno === undefined) {
-      throw new BadRequestException(
-        'Escolha o turno: cada execução de senhas aplica UMA célula da grade.',
-      );
-    }
-
-    return this.service.iniciar({ ...comum, turno: dto.turno }, admin.email);
+    return this.service.iniciar(comJanela, admin.email);
   }
 
   /**

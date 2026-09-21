@@ -6,6 +6,7 @@ import {
   HttpCode,
   Param,
   ParseIntPipe,
+  Post,
   Put,
   Query,
 } from '@nestjs/common';
@@ -29,12 +30,13 @@ import {
   CelulaDaGradeDto,
   DefinirSenhaDto,
   EscolherModalidadeDaTurmaDto,
-  HorariosDoCronDto,
+  GerarSenhasDto,
   JanelasDeProvaDto,
   SalvarAlvoDto,
-  SalvarHorariosDto,
   SalvarJanelasDto,
   SenhaReveladaDto,
+  SenhasGeradasDto,
+  SenhasReveladasDto,
   TurmaDoLoteDto,
   TurmasDoLoteDto,
 } from '../dto/grade-senhas.dto';
@@ -49,13 +51,13 @@ import { PeriodoService } from '../../periodo/service/periodo.service';
 import { BadRequestException } from '@nestjs/common';
 
 /**
- * A grade dia x turno que a administracao preenche, e a pre-visualizacao do que
- * o lote vai tocar.
+ * A grade dia x SESSAO que a administracao gera, e a pre-visualizacao do que o
+ * lote vai tocar.
  *
  * **A senha nunca sai na listagem.** `GET /senhas-de-prova` devolve `temSenha`;
- * o valor so vem de `/:id/revelar`, que e auditada em toda chamada. A grade fica
- * aberta num monitor compartilhado da administração — revelar precisa ser um ATO,
- * e um ato com rastro.
+ * o valor so vem das rotas de revelar (`/:id/revelar` e `/revelar`), auditadas
+ * em toda chamada. A grade fica aberta num monitor compartilhado da
+ * administração — ver a senha precisa ser um ATO, e um ato com rastro.
  */
 @ApiTags(TAGS.SENHAS_QUIZ)
 @Controller('senhas-de-prova')
@@ -72,11 +74,14 @@ export class GradeSenhasController {
   @ApiOperation({
     summary: 'A grade de senhas do intervalo (sem os valores)',
     description:
-      'Uma linha por celula CADASTRADA. A tela desenha as colunas do intervalo e ' +
-      'preenche com o que vier — celula ausente e celula vazia.\n\n' +
+      'Uma linha por celula CADASTRADA, chaveada por `(data, janelaDeProvaId)`. ' +
+      'A tela desenha as linhas (sessoes) e colunas (dias) e preenche com o que ' +
+      'vier — celula ausente e celula vazia.\n\n' +
+      '**So as celulas por SESSAO.** As anteriores a 21/09/2026 eram chaveadas ' +
+      'por turno e ficam como historico das execucoes daqueles dias.\n\n' +
       '`situacao` responde a pergunta operacional: `DESATUALIZADA` significa que ' +
-      'a senha foi editada DEPOIS de aplicada, ou seja, o Brightspace ainda esta ' +
-      'com a anterior.',
+      'a senha foi gerada de novo DEPOIS de aplicada, ou seja, o Brightspace ' +
+      'ainda esta com a anterior.',
   })
   @ApiQuery({ name: 'de', example: '2026-09-10', description: 'AAAA-MM-DD.' })
   @ApiQuery({ name: 'ate', example: '2026-09-16', description: 'AAAA-MM-DD.' })
@@ -92,11 +97,69 @@ export class GradeSenhasController {
     return this.grade.listar(de, ate);
   }
 
+  @Post('gerar')
+  @ApiOperation({
+    summary: 'Sorteia as senhas do periodo (o caminho normal)',
+    description:
+      'Uma senha de 6 digitos por (dia, sessao ativa) do intervalo, com nenhum ' +
+      'digito repetido mais de 3 vezes e **sem repetir dentro do mesmo dia**.\n\n' +
+      'Substituiu a digitacao em 21/09/2026: com ~20 sessoes por dia, digitar ' +
+      'deixou de ser viavel, e o que se digita a mao tende a "123456".\n\n' +
+      '`substituir: false` (o padrao) preenche **so as celulas vazias**. Regerar ' +
+      'um dia cuja folha ja esta na mao dos fiscais troca a senha da prova sem ' +
+      'ninguem na sala saber — tem de ser pedido explicitamente.\n\n' +
+      '**A resposta nao traz os valores**, como qualquer listagem: use `/revelar`.',
+  })
+  @ApiOkResponse({ type: SenhasGeradasDto })
+  @ApiBadRequestResponse({
+    description: 'Intervalo invalido, grande demais, ou nenhuma sessao ativa',
+  })
+  gerar(@Body() dto: GerarSenhasDto, @AdminLogado() admin: AdminJwtPayload) {
+    return this.grade.gerar(dto, admin.email);
+  }
+
+  @Get('revelar')
+  // Mesmo limite das rotas de credencial, pelo mesmo motivo de `/:id/revelar`.
+  @Throttle(LIMITE_AUTENTICACAO)
+  @ApiOperation({
+    summary: 'As senhas de um intervalo, em claro (auditado)',
+    description:
+      'O que a tela chama de "Mostrar senhas", e o que vira a folha dos ' +
+      'fiscais.\n\n' +
+      '**Uma linha de auditoria para o intervalo inteiro**, e nao uma por ' +
+      'celula: com ~20 sessoes por dia, auditar celula a celula produziria mais ' +
+      'de cem linhas identicas por semana e afogaria o log de seguranca — o ' +
+      'volume que ensina a ignorar justamente o evento que importa.\n\n' +
+      'Continua sendo um ATO: a grade abre oculta, e nada disto chega a tela sem ' +
+      'alguem ter clicado.',
+  })
+  @ApiQuery({ name: 'de', example: '2026-09-21', description: 'AAAA-MM-DD.' })
+  @ApiQuery({ name: 'ate', example: '2026-09-26', description: 'AAAA-MM-DD.' })
+  @ApiOkResponse({ type: SenhasReveladasDto })
+  @ApiBadRequestResponse({ description: 'Intervalo ausente ou invalido' })
+  async revelarIntervalo(
+    @AdminLogado() admin: AdminJwtPayload,
+    @Query('de') de?: string,
+    @Query('ate') ate?: string,
+  ): Promise<SenhasReveladasDto> {
+    if (!de || !ate) {
+      throw new BadRequestException(
+        'Informe as datas De e Até: a grade é sempre de um intervalo.',
+      );
+    }
+
+    return { senhas: await this.grade.revelarIntervalo(de, ate, admin.email) };
+  }
+
   @Put()
   @ApiOperation({
-    summary: 'Cadastra ou atualiza a senha de uma celula',
+    summary: 'Grava a senha de uma celula A MAO (emergencia)',
     description:
-      'Upsert por (data, turno).\n\n' +
+      'Upsert por (data, janelaDeProvaId).\n\n' +
+      '**Nao e o caminho normal desde 21/09/2026** — quem preenche a grade e ' +
+      '`POST /senhas-de-prova/gerar`. Esta rota existe para repor uma senha que ' +
+      'um fiscal ja anunciou na sala, ou casar com uma folha que nao da para ' +
+      'reimprimir.\n\n' +
       'A `versao` sobe **so quando o valor muda** — salvar a mesma senha de novo ' +
       'nao pode fazer a tela alegar que o Brightspace ficou para tras.\n\n' +
       'Recusa senha vazia, com espaco nas pontas ou com caractere invisivel. A do ' +
@@ -116,8 +179,8 @@ export class GradeSenhasController {
     summary: 'Pre-visualiza quais turmas o lote vai tocar',
     description:
       'O conjunto e **CSV de turmas ∩ ofertas do periodo letivo vigente**. Nao ' +
-      'depende de turno: ele e o mesmo em toda execucao — o turno so decide qual ' +
-      'senha entra.\n\n' +
+      'depende da sessao: ele e o mesmo em toda execucao — o que cada lote toca ' +
+      'de fato sai dali recortado pelo FORMATO da janela.\n\n' +
       'Uma oferta do semestre que **nao** esta no CSV e ignorada: ela nao tem prova.\n\n' +
       '**Revise `naoResolvidas` antes do primeiro dia.** Cada linha ali e uma ' +
       'turma do CSV cujo `orgUnitId` nao foi descoberto — e ela ficaria sem senha, ' +
@@ -283,41 +346,6 @@ export class GradeSenhasController {
   @ApiOkResponse({ type: AlvoDoQuizDto })
   lerAlvo() {
     return this.grade.lerAlvo();
-  }
-
-  @Get('horarios')
-  @ApiOperation({
-    summary: 'A que horas o cron aplica cada turno',
-    description:
-      'Saiu do `.env` em 19/08/2026: o calendario dos turnos muda por semestre, e ' +
-      'quem o conhece e a administração. Turno sem horario **nao dispara** — e assim ' +
-      'que sabado a noite, que nao tem prova, fica de fora.\n\n' +
-      '`cronHabilitado` e `toleranciaMin` vem do `.env` e sao **so leitura**: ' +
-      'a tela precisa poder avisar que esta instancia nao dispara nada, senao o ' +
-      'admin cadastra 07:30 e espera por um cron desligado.',
-  })
-  @ApiOkResponse({ type: HorariosDoCronDto })
-  lerHorarios() {
-    return this.grade.lerHorarios();
-  }
-
-  @Put('horarios')
-  @ApiOperation({
-    summary: 'Define os horarios do cron',
-    description:
-      'Vale a partir do minuto seguinte, sem reiniciar o servidor: o cron le ' +
-      'estes valores a cada tick.\n\n' +
-      'Campo vazio desliga o turno. Formato invalido e **recusado** de proposito: ' +
-      'um "7:30" aceito calado viraria um turno que nunca dispara, e ninguem ' +
-      'descobriria antes do dia da prova.',
-  })
-  @ApiOkResponse({ type: HorariosDoCronDto })
-  @ApiBadRequestResponse({ description: 'Horario fora do formato HH:MM' })
-  salvarHorarios(
-    @Body() dto: SalvarHorariosDto,
-    @AdminLogado() admin: AdminJwtPayload,
-  ) {
-    return this.grade.salvarHorarios(dto, admin.email);
   }
 
   @Get('janelas')

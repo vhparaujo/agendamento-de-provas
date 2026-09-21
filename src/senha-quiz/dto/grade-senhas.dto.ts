@@ -22,17 +22,6 @@ import {
 } from '../../generated/prisma/client';
 import type { SituacaoDaCelula } from '../service/grade-senhas.service';
 
-/**
- * "HH:MM" em 24h, ou VAZIO. O vazio precisa passar pelo validador porque e como
- * a tela desliga um turno — recusa-lo obrigaria o front a mandar `null`, e um
- * `<input type="time">` limpo manda `''`.
- */
-const PADRAO_HORA_OU_VAZIO = /^(([01]\d|2[0-3]):([0-5]\d))?$/;
-
-const MSG_HORA = (campo: string) =>
-  `${campo} deve estar em HH:MM (24h, com zero a esquerda), ex.: 07:30, ` +
-  'ou vazio para nao disparar este turno';
-
 const SITUACOES: SituacaoDaCelula[] = [
   'SALVA',
   'SIMULADA',
@@ -50,9 +39,16 @@ export class DefinirSenhaDto {
   @IsDateString()
   data!: string;
 
-  @ApiProperty({ enum: Turno, example: Turno.MANHA })
-  @IsEnum(Turno)
-  turno!: Turno;
+  @ApiProperty({
+    example: 7,
+    description:
+      'A SESSAO a que a senha pertence — uma janela do questionario. Substituiu ' +
+      'o `turno` em 21/09/2026: em Semi/Modular sao seis sessoes e tres turnos, ' +
+      'e duas sessoes seguidas dividiam a mesma senha.',
+  })
+  @IsInt()
+  @Min(1)
+  janelaDeProvaId!: number;
 
   /**
    * Rejeitada quando vem vazia, so com espacos, com espaco nas pontas ou com
@@ -62,11 +58,67 @@ export class DefinirSenhaDto {
   @ApiProperty({
     example: '897325',
     description:
-      'A senha do turno, em texto claro. Nao pode ser vazia, comecar/terminar ' +
-      'com espaco nem conter caractere invisivel.',
+      'A senha da sessao, em texto claro. Nao pode ser vazia, comecar/terminar ' +
+      'com espaco nem conter caractere invisivel.\n\n' +
+      'Este e o caminho de EMERGENCIA: o normal e `POST /senhas-de-prova/gerar`, ' +
+      'que sorteia. Aceita qualquer valor que o AVA aceite (e nao so seis ' +
+      'digitos) de propósito — a regra do sorteio e sobre o que o sistema ' +
+      'PRODUZ, e impo-la aqui impediria repor uma senha ja anunciada na sala.',
   })
   @IsString()
   senha!: string;
+}
+
+export class GerarSenhasDto {
+  @ApiProperty({
+    example: '2026-09-21',
+    description: 'Primeiro dia (AAAA-MM-DD).',
+  })
+  @IsDateString()
+  de!: string;
+
+  @ApiProperty({
+    example: '2026-09-26',
+    description: 'Ultimo dia (AAAA-MM-DD).',
+  })
+  @IsDateString()
+  ate!: string;
+
+  @ApiPropertyOptional({
+    example: false,
+    default: false,
+    description:
+      'true = TROCA tambem as celulas que ja tem senha.\n\n' +
+      'O padrao e `false`, e a diferenca importa: regerar um dia cuja folha ja ' +
+      'esta na mao dos fiscais troca a senha da prova sem ninguem na sala saber. ' +
+      'Tem de ser um pedido explicito, e nao o efeito de clicar duas vezes.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  substituir?: boolean;
+}
+
+export class SenhasGeradasDto {
+  @ApiProperty({ example: 120, description: 'Celulas que nasceram agora.' })
+  criadas!: number;
+
+  @ApiProperty({
+    example: 0,
+    description: 'Celulas que ja existiam e receberam uma senha nova.',
+  })
+  substituidas!: number;
+
+  @ApiProperty({
+    example: 20,
+    description: 'Celulas que ja tinham senha e foram preservadas.',
+  })
+  preservadas!: number;
+
+  @ApiProperty({
+    type: () => [CelulaDaGradeDto],
+    description: 'A grade do intervalo, ja com o que foi gerado.',
+  })
+  celulas!: CelulaDaGradeDto[];
 }
 
 export class ResumoDaExecucaoDto {
@@ -116,8 +168,11 @@ export class CelulaDaGradeDto {
   @ApiProperty({ example: '2026-09-16' })
   data!: string;
 
-  @ApiProperty({ enum: Turno, example: Turno.MANHA })
-  turno!: Turno;
+  @ApiProperty({
+    example: 7,
+    description: 'A sessao. A janela carrega o formato, as horas e o disparo.',
+  })
+  janelaDeProvaId!: number;
 
   @ApiProperty({
     example: true,
@@ -150,6 +205,20 @@ export class CelulaDaGradeDto {
 
   @ApiProperty({ type: ResumoDaExecucaoDto, nullable: true })
   ultimaExecucao!: ResumoDaExecucaoDto | null;
+}
+
+export class SenhasReveladasDto {
+  @ApiProperty({
+    example: { 3: '897325', 4: '104507' },
+    description:
+      'Id da celula -> senha em claro, para todo o intervalo pedido.\n\n' +
+      'Uma linha de auditoria para o intervalo INTEIRO, e nao uma por celula: ' +
+      'com ~20 sessoes por dia, auditar celula a celula produziria mais de cem ' +
+      'linhas identicas por semana e afogaria o log de seguranca.',
+    additionalProperties: { type: 'string' },
+    type: 'object',
+  })
+  senhas!: Record<number, string>;
 }
 
 export class SenhaReveladaDto {
@@ -208,73 +277,6 @@ export class AlvoDoQuizDto {
   configurado!: boolean;
 }
 
-export class SalvarHorariosDto {
-  @ApiPropertyOptional({
-    example: '07:30',
-    nullable: true,
-    description:
-      'Horario (HH:MM, 24h) em que o cron aplica a senha da manha. ' +
-      '**Vazio ou nulo = este turno nao dispara** — e assim que sabado a noite, ' +
-      'que nao tem prova, fica de fora.',
-  })
-  @IsOptional()
-  @IsString()
-  @Matches(PADRAO_HORA_OU_VAZIO, { message: MSG_HORA('horaManha') })
-  horaManha?: string | null;
-
-  @ApiPropertyOptional({ example: '12:30', nullable: true })
-  @IsOptional()
-  @IsString()
-  @Matches(PADRAO_HORA_OU_VAZIO, { message: MSG_HORA('horaTarde') })
-  horaTarde?: string | null;
-
-  @ApiPropertyOptional({ example: '18:00', nullable: true })
-  @IsOptional()
-  @IsString()
-  @Matches(PADRAO_HORA_OU_VAZIO, { message: MSG_HORA('horaNoite') })
-  horaNoite?: string | null;
-}
-
-export class HorariosDoCronDto {
-  @ApiProperty({ example: '07:30', nullable: true })
-  horaManha!: string | null;
-
-  @ApiProperty({ example: '12:30', nullable: true })
-  horaTarde!: string | null;
-
-  @ApiProperty({
-    example: '18:00',
-    nullable: true,
-    description: 'Nulo = o cron nao dispara este turno.',
-  })
-  horaNoite!: string | null;
-
-  @ApiProperty({ example: 'admin@ucb.br', nullable: true })
-  atualizadoPor!: string | null;
-
-  @ApiProperty({ example: '2026-09-01T12:00:00.000Z', nullable: true })
-  atualizadoEm!: Date | null;
-
-  @ApiProperty({
-    example: true,
-    description:
-      'Do `.env` (`SENHA_QUIZ_CRON_HABILITADO`), **so leitura**. `false` ' +
-      'significa que esta instancia nao dispara nada, por mais horarios que ' +
-      'estejam cadastrados — a tela precisa dizer isso, senao o admin salva ' +
-      '07:30 e espera por um cron desligado.',
-  })
-  cronHabilitado!: boolean;
-
-  @ApiProperty({
-    example: 30,
-    description:
-      'Do `.env`, so leitura. Janela em minutos apos o horario em que um ' +
-      'servidor que estava fora ainda aplica o turno.',
-  })
-  toleranciaMin!: number;
-}
-
-/** Um dos formatos em disputa numa turma ambigua. */
 export class CandidataDeModalidadeDto {
   @ApiProperty({ example: 3, description: 'Id do formato, para o PUT.' })
   modalidadeId!: number;
@@ -453,8 +455,7 @@ export class IdDaCelulaDto {
 /**
  * "HH:MM" em 24h, OBRIGATORIO.
  *
- * Diferente de `PADRAO_HORA_OU_VAZIO`: nos turnos o vazio significa "desligado",
- * mas uma janela sem hora nao existe — para desligar uma sessao ha `ativo`, que
+ * Uma janela sem hora nao existe — para desligar uma sessao ha `ativo`, que
  * preserva o horario cadastrado para o semestre seguinte.
  */
 const PADRAO_HORA = /^([01]\d|2[0-3]):([0-5]\d)$/;
