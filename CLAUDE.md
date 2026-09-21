@@ -254,6 +254,10 @@ O teste roda em `npm run test:e2e` e exige banco de pé.
   confiar em nada vindo do cliente.
 - **STATUS CURSO não bloqueia o login**, só o agendamento: um aluno cancelado é
   reconhecido e recebe mensagem clara, em vez de "não encontrado".
+- **O perfil é da PESSOA, não do nível** (`PATCH /auth/perfil`, 21/09/2026). Os
+  três níveis editam o próprio nome e e-mail — esconder isso de alguém o
+  deixaria sem como corrigir o próprio cadastro, já que a tela de
+  Administradores não edita nome nem e-mail de terceiros. Ver a seção própria.
 - **Travas em admins**: ninguém desativa a si mesmo nem altera o próprio nível;
   o último admin ativo não pode ser desativado, e o último **superadministrador**
   ativo não pode ser desativado nem rebaixado.
@@ -360,6 +364,59 @@ Duas telas mudam de forma conforme o nível:
 | `src/auth/jwt/niveis.spec.ts` | A regra: o padrão fecha, o superadmin passa em tudo, token sem nível não passa em nada |
 | `src/auth/jwt/matriz-de-niveis.spec.ts` | Que cada rota real está declarada para quem a especificação disse — lendo a metadata das classes, sem banco |
 | `test/niveis-de-admin.e2e-spec.ts` | O caminho inteiro: login → token com nível → guard → 403. É o único que pega alguém mexer no `JwtAdminGuard` e o nível deixar de ser conferido |
+
+### O admin edita a própria conta (21/09/2026)
+
+`PATCH /auth/perfil` — nome e e-mail, aberto aos **três níveis**. A senha
+continua em `POST /auth/trocar-senha`, que já existe: duplicar a troca de senha
+num segundo lugar criaria duas implementações da mesma regra, e uma delas
+acabaria sem a conferência da senha atual.
+
+#### ⚠️ Trocar o e-mail exige a senha atual. Trocar o nome, não.
+
+O login é **e-mail + senha**, então o e-mail é *metade da credencial*. Sem a
+re-autenticação (ASVS 5.0, V6), um access token roubado — 15 minutos de vida —
+bastaria para mudar por qual endereço a conta entra, e o dono legítimo
+descobriria no próximo login **sem ter como desfazer**: neste sistema não há
+reset por e-mail, quem repõe o acesso é outro superadministrador.
+
+Mudar só o nome não pede senha: não muda credencial nenhuma, e exigi-la ali
+ensinaria a digitar a senha para qualquer coisa — que é o oposto do que a
+confirmação serve. A regra é do DTO (`@ValidateIf` em `senhaAtual`), e não só do
+service, para que o front saiba pelo OpenAPI quando precisa pedi-la.
+
+| Decisão | Por quê |
+|---|---|
+| **Sem `@PermitidoComSenhaProvisoria()`** | Com a senha provisória pendente o admin tem UMA coisa a fazer, que é trocá-la. Liberar o perfil ali daria uma saída lateral ao estado que existe para forçar isso |
+| Limite de **5/min** (`LIMITE_AUTENTICACAO`) | A rota confere senha. Sem o limite, ela vira um oráculo de força bruta para a conta da própria sessão |
+| `nome` vazio **apaga** (vira nulo), não grava `""` | A tela mostra `nome \|\| email`; um `""` passaria pela checagem de "tem nome?" e deixaria a saudação em branco sem nada no cadastro explicando por quê. Mesma regra do `nomeGrupo` da janela |
+| Campo **ausente** não é tocado | É um PATCH: mandar o formulário inteiro não pode reescrever o que ninguém editou |
+| 409 **nomeia** o motivo ("já existe um administrador com este e-mail") | Ao contrário do login, que é uniforme de propósito. Ali o anônimo não pode descobrir quais e-mails existem; aqui quem pergunta já está autenticado como administrador da instituição, e a vaguidão só custaria a quem digitou o endereço de um colega por engano |
+| A pré-checagem do e-mail aceita a mesma corrida que `AdminService.criar` | São poucas pessoas, e o `@unique` do banco continua sendo a garantia de verdade. A checagem existe pela MENSAGEM |
+| `nivel`, `ativo` e `mustChangePassword` **não existem no DTO** | `forbidNonWhitelisted` os recusa com 400. Sem isso, o perfil seria a escalada de privilégio mais barata do sistema — e viria do próprio dono da sessão. Há teste para os quatro campos |
+
+**Auditado como `ADMIN_PERFIL_ALTERADO`, com o e-mail em DE → PARA**: ele é a
+chave pela qual o resto do log identifica a pessoa (`ator`), e sem o par a
+trilha de antes da troca fica órfã. Senha errada vira
+`ADMIN_PERFIL_ALTERACAO_FALHOU` (evento de falha, WARN), irmão de
+`SENHA_TROCA_FALHOU` e pelo mesmo motivo: repetido, é alguém adivinhando a senha
+de uma sessão que já capturou.
+
+⚠️ **Nome e e-mail viajam no access token**, então a tela precisa renovar os
+tokens logo depois de salvar — senão continua mostrando os valores antigos por
+até 15 minutos, com a pessoa olhando para o que acabou de trocar.
+`adminAuth.atualizarPerfil` já faz isso (`/auth/refresh` + `/auth/me`), como a
+troca de senha. O refresh funciona porque ele relê o admin **por id**, não por
+e-mail.
+
+Do lado do front é `PerfilView.vue`, em `/admin/perfil` — **sem `meta.exige`**,
+e alcançado pelo nome/e-mail na barra do topo em vez de um item de menu (o menu
+é filtrado por nível e teria de abrir exceção justo para esta tela).
+
+⚠️ **A tela não menciona nível de acesso** (decisão do cliente, 21/09/2026) —
+nem no subtítulo, nem como campo de leitura. Ali a pessoa mexe no que é dela, e
+o nível não é: ele é concedido por um superadministrador, na tela de
+Administradores. Mostrá-lo no perfil convidaria a procurar onde trocá-lo.
 
 ### Como o token do aluno chega ao front (código de uso único)
 
@@ -473,6 +530,7 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `GET /health` | — | Status da API + banco + integração D2L (200 mesmo com banco fora) |
 | `POST /auth/login` · `/auth/refresh` | — | Tokens do admin |
 | `POST /auth/trocar-senha` · `GET /auth/me` | admin | Liberadas com senha provisória |
+| `PATCH /auth/perfil` | admin (**os três níveis**) | O admin edita o próprio nome e e-mail. Trocar o e-mail exige `senhaAtual` |
 | `GET/POST /lti/login` · `POST /lti/launch` · `GET /lti/jwks` | — | Fluxo LTI (autentica pela assinatura do Brightspace) |
 | `POST /lti/sessao` | — | Troca o `code` do redirect pelo token do aluno (ver abaixo) |
 | `GET/POST /admins` · `POST /admins/:id/resetar-senha` · `PATCH /admins/:id/ativo` · `PATCH /admins/:id/nivel` | **superadmin** | Gestão de administradores e dos níveis de acesso |

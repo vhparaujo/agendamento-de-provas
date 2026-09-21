@@ -139,4 +139,14 @@ describe('Matriz de niveis: o que TODO admin faz sobre a propria conta', () => {
   it.each([ASSISTENTE, EXECUTIVO])('%s le os proprios dados', (nivel) => {
     expect(abrePara(nivel, AuthController, 'me')).toBe(true);
   });
+
+  /**
+   * O perfil e da PESSOA, nao do nivel dela: os tres editam o proprio nome e
+   * e-mail. Fechar isto por engano deixaria o assistente e o visualizador sem
+   * como corrigir o proprio cadastro — e sem ninguem para pedir, porque a tela
+   * de Administradores nao edita nome nem e-mail de terceiros.
+   */
+  it.each([ASSISTENTE, EXECUTIVO])('%s edita o proprio perfil', (nivel) => {
+    expect(abrePara(nivel, AuthController, 'atualizarPerfil')).toBe(true);
+  });
 });

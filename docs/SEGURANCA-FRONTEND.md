@@ -165,6 +165,28 @@ estado, **todas as rotas devolvem 403**, exceto `/api/auth/trocar-senha` e
 O front **deve** redirecionar para a tela de troca de senha antes de qualquer
 outra coisa. Se ignorar a flag, o app trava em 403 sem explicação aparente.
 
+### 4.1-c Admin editando a própria conta (`PATCH /auth/perfil`)
+
+Nome e e-mail, nos três níveis. Duas coisas que o front precisa fazer:
+
+- **Pedir a senha atual só quando o e-mail muda.** O servidor a exige nesse caso
+  (400 sem ela, 401 se errada) e a ignora quando só o nome mudou. Exibir o campo
+  sempre ensinaria a digitar a senha sem pensar; escondê-lo sempre produziria um
+  400 que o usuário não entende.
+- **Renovar os tokens logo depois de salvar.** Nome e e-mail viajam *dentro* do
+  access token: sem um par novo, a tela continua mostrando os valores antigos
+  por até 15 minutos — a pessoa acabou de trocar e vê o valor velho. A sequência
+  é a mesma da troca de senha: `PATCH /auth/perfil` → `POST /auth/refresh` →
+  `GET /auth/me`.
+
+O refresh continua valendo depois da troca de e-mail: ele relê o admin **por
+id**, não pelo endereço.
+
+Mande no corpo **só o que mudou** — é um PATCH, e campo ausente não é tocado.
+Reenviar o e-mail igual faria o servidor pedir a senha à toa. E `nivel`, `ativo`
+e `mustChangePassword` são recusados com 400: o perfil não é a porta para se
+promover.
+
 ### 4.1-b Entrada do aluno: o `code` do redirect
 
 O aluno chega pelo Brightspace, não por um formulário. O launch é um POST do LMS

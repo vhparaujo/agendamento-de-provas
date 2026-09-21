@@ -138,6 +138,142 @@ describe('Auth admin (e2e)', () => {
     expect(res.body).toMatchObject({ email: EMAIL, nome: 'Admin E2E' });
   });
 
+  /**
+   * ==========================================================================
+   * PATCH /auth/perfil — o admin edita a PROPRIA conta (21/09/2026)
+   * ==========================================================================
+   * O que estes testes protegem nao e o UPDATE (isso o Prisma faz), e sim a
+   * RE-AUTENTICACAO: o e-mail e metade da credencial de login, e trocar o dele
+   * sem conferir a senha deixaria um access token roubado (15 min de vida)
+   * mudar por qual endereco a conta entra — sem reset por e-mail neste sistema
+   * para desfazer.
+   */
+  describe('PATCH /auth/perfil', () => {
+    /** Devolvido ao estado original no fim, para nao afetar os outros testes. */
+    const EMAIL_NOVO = 'e2e-admin-renomeado@ucb.br';
+
+    /**
+     * O token e sempre explicito: depois da troca de e-mail o login passa a ser
+     * por OUTRO endereco, e um helper que entrasse sozinho pelo e-mail antigo
+     * falharia justamente nos testes que vem depois dela.
+     */
+    const entrar = async (email: string) =>
+      (
+        await request(app.getHttpServer())
+          .post('/api/auth/login')
+          .send({ email, senha: SENHA_NOVA })
+          .expect(200)
+      ).body.accessToken as string;
+
+    const perfil = (token: string, corpo: Record<string, unknown>) =>
+      request(app.getHttpServer())
+        .patch('/api/auth/perfil')
+        .set('Authorization', `Bearer ${token}`)
+        .send(corpo);
+
+    afterAll(async () => {
+      // O e-mail volta ao original: os testes seguintes fazem login com ele.
+      await prisma.admin.updateMany({
+        where: { email: EMAIL_NOVO },
+        data: { email: EMAIL, nome: 'Admin E2E' },
+      });
+    });
+
+    it('troca o nome SEM pedir senha', async () => {
+      const res = await perfil(await entrar(EMAIL), {
+        nome: '  Maria da Silva  ',
+      }).expect(200);
+
+      expect(res.body).toMatchObject({ nome: 'Maria da Silva', email: EMAIL });
+    });
+
+    it('nome vazio APAGA o nome, em vez de gravar string vazia', async () => {
+      const token = await entrar(EMAIL);
+
+      const res = await perfil(token, { nome: '   ' }).expect(200);
+      expect(res.body.nome).toBeNull();
+
+      await perfil(token, { nome: 'Admin E2E' }).expect(200);
+    });
+
+    /**
+     * `forbidNonWhitelisted`: o perfil nao e a porta para se promover. Sem esta
+     * trava, um `nivel` no corpo seria a escalada de privilegio mais barata do
+     * sistema — e ela viria do proprio dono da sessao.
+     */
+    it.each([
+      ['nivel', { nivel: 'SUPERADMIN' }],
+      ['ativo', { ativo: true }],
+      ['mustChangePassword', { mustChangePassword: false }],
+      ['senhaHash', { senhaHash: 'x' }],
+    ])('recusa %s no corpo', async (_campo, corpo) => {
+      await perfil(await entrar(EMAIL), corpo).expect(400);
+    });
+
+    /** ⚠️ O assert central: sem senha, o e-mail nao se move. */
+    it('RECUSA a troca de e-mail sem a senha atual', async () => {
+      await perfil(await entrar(EMAIL), { email: EMAIL_NOVO }).expect(400);
+
+      expect(
+        await prisma.admin.findUnique({ where: { email: EMAIL } }),
+      ).not.toBeNull();
+    });
+
+    it('RECUSA a troca de e-mail com a senha errada', async () => {
+      await perfil(await entrar(EMAIL), {
+        email: EMAIL_NOVO,
+        senhaAtual: 'chute-errado',
+      }).expect(401);
+
+      expect(
+        await prisma.admin.findUnique({ where: { email: EMAIL } }),
+      ).not.toBeNull();
+    });
+
+    it('recusa e-mail ja usado por outro administrador', async () => {
+      const OUTRO = 'e2e-admin-ocupado@ucb.br';
+
+      await prisma.admin.deleteMany({ where: { email: OUTRO } });
+      await prisma.admin.create({
+        data: {
+          email: OUTRO,
+          senhaHash: await bcrypt.hash('outra-senha-123', 10),
+          mustChangePassword: false,
+        },
+      });
+
+      try {
+        await perfil(await entrar(EMAIL), {
+          email: OUTRO,
+          senhaAtual: SENHA_NOVA,
+        }).expect(409);
+      } finally {
+        await prisma.admin.deleteMany({ where: { email: OUTRO } });
+      }
+    });
+
+    /** ⚠️ POR ULTIMO: daqui em diante o login e por EMAIL_NOVO. */
+    it('troca o e-mail com a senha certa, e o login passa a ser por ele', async () => {
+      const res = await perfil(await entrar(EMAIL), {
+        email: EMAIL_NOVO,
+        senhaAtual: SENHA_NOVA,
+      }).expect(200);
+
+      expect(res.body.email).toBe(EMAIL_NOVO);
+
+      // A prova de que trocou de verdade: o e-mail antigo deixa de autenticar.
+      await login(SENHA_NOVA).expect(401);
+      await entrar(EMAIL_NOVO);
+    });
+
+    it('exige token de admin', async () => {
+      await request(app.getHttpServer())
+        .patch('/api/auth/perfil')
+        .send({ nome: 'Anonimo' })
+        .expect(401);
+    });
+  });
+
   it('nao devolve o hash da senha ao listar admins', async () => {
     const { body } = await login(SENHA_NOVA).expect(200);
 

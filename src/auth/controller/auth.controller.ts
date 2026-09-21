@@ -4,10 +4,12 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Patch,
   Post,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
+  ApiConflictResponse,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
@@ -22,6 +24,7 @@ import {
   MensagemResponseDto,
   TokensAdminResponseDto,
 } from '../dto/auth.response.dto';
+import { AtualizarPerfilDto } from '../dto/atualizar-perfil.dto';
 import { LoginDto } from '../dto/login.dto';
 import { RefreshTokenDto } from '../dto/refresh-token.dto';
 import { TrocarSenhaDto } from '../dto/trocar-senha.dto';
@@ -113,6 +116,58 @@ export class AuthController {
       dto.senhaAtual,
       dto.novaSenha,
     );
+  }
+
+  @Patch('perfil')
+  @Throttle(LIMITE_AUTENTICACAO)
+  @SomenteAdmin()
+  // Todo admin edita a PROPRIA conta, em qualquer nivel: o perfil e da pessoa,
+  // nao do nivel dela.
+  @NiveisPermitidos(
+    NivelAdmin.ASSISTENTE_OPERACIONAL,
+    NivelAdmin.VISUALIZADOR_EXECUTIVO,
+  )
+  // ⚠️ SEM @PermitidoComSenhaProvisoria(), de proposito: com a senha provisoria
+  // pendente o admin tem UMA coisa a fazer, que e troca-la. Liberar a edicao do
+  // perfil ali daria uma saida lateral ao estado que existe para forcar isso.
+  @ApiOperation({
+    summary: 'Edita o proprio nome e e-mail',
+    description:
+      'O perfil da pessoa autenticada, aberto aos **tres niveis**.\n\n' +
+      '**Trocar o `email` exige `senhaAtual`** — ele e metade da credencial de ' +
+      'login, e uma sessao roubada nao pode troca-lo sozinha. Mudar so o `nome` ' +
+      'nao pede senha.\n\n' +
+      'O `nome` vazio APAGA o nome (a tela volta a mostrar o e-mail). Campo ' +
+      'ausente nao e tocado.\n\n' +
+      '⚠️ Nome e e-mail viajam no access token: **renove os tokens em ' +
+      '`POST /auth/refresh` logo depois**, senao a tela continua mostrando os ' +
+      'valores antigos ate a proxima renovacao.',
+  })
+  @ApiOkResponse({ type: AdminLogadoResponseDto })
+  @ApiUnauthorizedResponse({
+    description: 'Senha atual incorreta, ou conta inativa/inexistente',
+  })
+  @ApiConflictResponse({
+    description: 'Ja existe um administrador com o e-mail pedido',
+  })
+  @ApiBadRequestResponse({
+    description:
+      'E-mail invalido, nome longo demais, ou `senhaAtual` ausente na troca de e-mail',
+  })
+  async atualizarPerfil(
+    @AdminLogado() admin: AdminJwtPayload,
+    @Body() dto: AtualizarPerfilDto,
+  ) {
+    const atualizado = await this.authService.atualizarPerfil(admin.sub, dto);
+
+    // O nivel e o mustChangePassword vem do token: nenhum dos dois muda aqui, e
+    // rele-los do banco so para devolver o mesmo valor seria consulta a toa.
+    return {
+      ...atualizado,
+      perfil: admin.perfil,
+      nivel: admin.nivel,
+      mustChangePassword: admin.mustChangePassword,
+    };
   }
 
   @Get('me')

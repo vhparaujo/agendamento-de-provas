@@ -2,6 +2,7 @@ import {
   Injectable,
   UnauthorizedException,
   BadRequestException,
+  ConflictException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService, JwtSignOptions } from '@nestjs/jwt';
@@ -177,6 +178,107 @@ export class AuthService {
     this.auditoria.registrar('SENHA_TROCADA', { ator: admin.email });
 
     return { mensagem: 'Senha alterada com sucesso.' };
+  }
+
+  /**
+   * ==========================================================================
+   * O ADMIN EDITA A PROPRIA CONTA (21/09/2026)
+   * ==========================================================================
+   * Nome e e-mail, para os TRES niveis: o perfil e da pessoa, nao do nivel
+   * dela. A senha continua em `trocarSenha`, que ja existe.
+   *
+   * ⚠️ **Trocar o e-mail exige a senha atual, e isso nao e formalidade.** O
+   * login e e-mail + senha, entao o e-mail e METADE da credencial. Sem a
+   * re-autenticacao, um access token roubado (15 min de vida) bastaria para
+   * mudar por qual endereco a conta entra — e o dono legitimo descobriria no
+   * proximo login, sem ter como desfazer, porque neste sistema nao ha reset por
+   * e-mail: quem repoe o acesso e outro superadministrador (ASVS 5.0, V6).
+   *
+   * Trocar so o NOME nao pede senha: nao muda credencial nenhuma, e exigi-la ali
+   * ensinaria a digitar a senha para qualquer coisa.
+   */
+  async atualizarPerfil(
+    adminId: string,
+    dados: { nome?: string; email?: string; senhaAtual?: string },
+  ): Promise<{ id: string; email: string; nome: string | null }> {
+    const admin = await this.prisma.admin.findUnique({
+      where: { id: adminId },
+    });
+
+    if (!admin || !admin.ativo) {
+      throw new UnauthorizedException(
+        'Sua conta de administrador está inativa ou não existe mais. Procure outro administrador.',
+      );
+    }
+
+    const trocaDeEmail =
+      dados.email !== undefined && dados.email !== admin.email;
+
+    if (trocaDeEmail) {
+      // O DTO ja exige `senhaAtual` quando `email` vem; aqui a conferencia e do
+      // VALOR. Mensagem identica a de `trocarSenha`: e o mesmo fato.
+      if (!(await bcrypt.compare(dados.senhaAtual ?? '', admin.senhaHash))) {
+        this.auditoria.registrar('ADMIN_PERFIL_ALTERACAO_FALHOU', {
+          ator: admin.email,
+          detalhe: 'senha atual incorreta na troca de e-mail',
+        });
+
+        throw new UnauthorizedException('Senha atual incorreta.');
+      }
+
+      /**
+       * `Admin.email` e unique. A conferencia aqui existe pela MENSAGEM — sem
+       * ela o conflito viraria um 500 generico e ninguem saberia o que corrigir.
+       *
+       * Ela aceita a mesma corrida que `AdminService.criar` ja aceita (dois
+       * admins gravando o mesmo e-mail no mesmo instante): sao poucas pessoas, e
+       * o unique do banco continua sendo a garantia de verdade.
+       *
+       * A frase nomeia o motivo em vez de ser vaga como a do login. Ali o
+       * anonimo nao pode descobrir quais e-mails existem; aqui quem pergunta ja
+       * esta autenticado como administrador da instituicao, e a vaguidao so
+       * custaria a quem digitou o endereco de um colega por engano.
+       */
+      const ocupado = await this.prisma.admin.findUnique({
+        where: { email: dados.email! },
+      });
+
+      if (ocupado) {
+        throw new ConflictException(
+          'Já existe um administrador com este e-mail.',
+        );
+      }
+    }
+
+    const nome = dados.nome === undefined ? undefined : dados.nome || null;
+
+    const atualizado = await this.prisma.admin.update({
+      where: { id: admin.id },
+      data: {
+        ...(nome !== undefined ? { nome } : {}),
+        ...(trocaDeEmail ? { email: dados.email } : {}),
+      },
+      select: { id: true, email: true, nome: true },
+    });
+
+    /**
+     * Auditado sempre que algo muda, e o e-mail sai com o DE e o PARA: ele e a
+     * chave pela qual o resto do log de seguranca identifica a pessoa (`ator`),
+     * e sem o par a trilha de antes da troca fica orfa.
+     */
+    this.auditoria.registrar('ADMIN_PERFIL_ALTERADO', {
+      ator: admin.email,
+      detalhe: [
+        trocaDeEmail ? `e-mail ${admin.email} -> ${atualizado.email}` : null,
+        nome !== undefined
+          ? `nome ${admin.nome ?? '(vazio)'} -> ${nome ?? '(vazio)'}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join('; '),
+    });
+
+    return atualizado;
   }
 
   /** JWT interno do aluno — curto, so para navegacao no portal. */

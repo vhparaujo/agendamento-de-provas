@@ -1668,6 +1668,23 @@ guard bloqueia todas as rotas até a troca. As exceções, marcadas com
 `@PermitidoComSenhaProvisoria()`, são `/auth/trocar-senha` e `/auth/me` — sem elas
 o admin do seed ficaria travado para sempre.
 
+### O admin edita a própria conta
+
+`PATCH /auth/perfil` — nome e e-mail, aberto aos **três níveis**: o perfil é da
+pessoa, não do nível dela. A senha continua em `POST /auth/trocar-senha`.
+
+⚠️ **Trocar o e-mail exige a senha atual; trocar o nome, não.** O login é e-mail
++ senha, então o e-mail é metade da credencial: sem a confirmação, uma sessão
+roubada (15 min) mudaria por qual endereço a conta entra, e não há reset por
+e-mail neste sistema para desfazer — quem repõe o acesso é outro
+superadministrador.
+
+O `nome` vazio apaga o nome (a tela volta a mostrar o e-mail); campo ausente não
+é tocado. E-mail já usado responde 409. `nivel`, `ativo` e `mustChangePassword`
+não existem no corpo: o perfil não é a porta para se promover.
+
+Na tela é **Meu perfil** (`/admin/perfil`), alcançado pelo nome na barra do topo.
+
 ### Três níveis de administrador (21/09/2026)
 
 Até aqui havia um só: JWT de admin válido = acesso total. Agora a conta tem um

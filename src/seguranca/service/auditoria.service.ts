@@ -21,6 +21,14 @@ export type EventoSeguranca =
   // alguem a SUPERADMIN e a acao mais forte do sistema — passa a valer no
   // proximo refresh da pessoa, sem ninguem precisar fazer login de novo.
   | 'ADMIN_NIVEL_ALTERADO'
+  // O admin editou a PROPRIA conta (21/09/2026). O e-mail sai com DE e PARA
+  // porque ele e a chave pela qual o resto deste log identifica a pessoa
+  // (`ator`): sem o par, a trilha de antes da troca fica orfa.
+  | 'ADMIN_PERFIL_ALTERADO'
+  // Senha atual errada na troca do proprio e-mail. E o irmao de
+  // SENHA_TROCA_FALHOU, e existe pelo mesmo motivo: repetido, e alguem tentando
+  // adivinhar a senha de uma sessao que ja capturou.
+  | 'ADMIN_PERFIL_ALTERACAO_FALHOU'
   | 'LTI_LAUNCH_OK'
   | 'LTI_LAUNCH_RECUSADO'
   // Troca do codigo do redirect pelo token, feita pelo portal do aluno.
@@ -196,6 +204,7 @@ const EVENTOS_DE_FALHA = new Set<EventoSeguranca>([
   'LOGIN_FALHOU',
   'REFRESH_FALHOU',
   'SENHA_TROCA_FALHOU',
+  'ADMIN_PERFIL_ALTERACAO_FALHOU',
   'LTI_LAUNCH_RECUSADO',
   'LTI_SESSAO_RECUSADA',
   'AGENDAMENTO_RECUSADO',
