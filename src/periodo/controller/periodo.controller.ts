@@ -18,7 +18,12 @@ import {
   ApiParam,
   ApiTags,
 } from '@nestjs/swagger';
-import { AdminLogado, SomenteAdmin } from '../../auth/roles.decorator';
+import {
+  AdminLogado,
+  NiveisPermitidos,
+  SomenteAdmin,
+} from '../../auth/roles.decorator';
+import { NivelAdmin } from '../../generated/prisma/client';
 import type { AdminJwtPayload } from '../../auth/jwt/jwt.types';
 import { TAGS } from '../../config/swagger';
 import {
@@ -44,6 +49,10 @@ export class PeriodoController {
   constructor(private readonly periodoService: PeriodoService) {}
 
   @Get()
+  @NiveisPermitidos(
+    NivelAdmin.ASSISTENTE_OPERACIONAL,
+    NivelAdmin.VISUALIZADOR_EXECUTIVO,
+  )
   @ApiOperation({
     summary: 'Lista os periodos, do mais recente para o mais antigo',
     description:

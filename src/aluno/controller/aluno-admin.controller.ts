@@ -19,7 +19,12 @@ import {
   ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
-import { AdminLogado, SomenteAdmin } from '../../auth/roles.decorator';
+import {
+  AdminLogado,
+  NiveisPermitidos,
+  SomenteAdmin,
+} from '../../auth/roles.decorator';
+import { NivelAdmin } from '../../generated/prisma/client';
 import type { AdminJwtPayload } from '../../auth/jwt/jwt.types';
 import { TAGS } from '../../config/swagger';
 import {
@@ -63,6 +68,7 @@ export class AlunoAdminController {
   ) {}
 
   @Get()
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'Pesquisa os alunos importados pelos CSVs',
     description:
@@ -134,6 +140,7 @@ export class AlunoAdminController {
 
   /** Antes de `:id` de proposito: senao "cursos" cairia no ParseIntPipe. */
   @Get('cursos')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'Cursos distintos presentes na base',
     description: 'Popula o dropdown de filtro da listagem de alunos.',
@@ -144,6 +151,7 @@ export class AlunoAdminController {
   }
 
   @Put('niop/:matricula')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'Marca a matricula como NIOP',
     description:
@@ -166,6 +174,7 @@ export class AlunoAdminController {
   }
 
   @Delete('niop/:matricula')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'Tira a marca do NIOP da matricula',
     description:
@@ -182,6 +191,7 @@ export class AlunoAdminController {
   }
 
   @Get(':id')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'Detalha um vinculo de aluno',
     description:
@@ -198,6 +208,7 @@ export class AlunoAdminController {
   }
 
   @Post(':id/mesclar')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'Funde dois vinculos duplicados da mesma matricula',
     description:

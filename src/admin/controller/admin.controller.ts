@@ -19,11 +19,16 @@ import {
 } from '../dto/admin.response.dto';
 import { CriarAdminDto } from '../dto/criar-admin.dto';
 import { DefinirAtivoDto } from '../dto/definir-ativo.dto';
+import { DefinirNivelDto } from '../dto/definir-nivel.dto';
 import { AdminService } from '../service/admin.service';
 
 /**
- * Gestao de administradores. Todas as rotas exigem um JWT de admin — nao ha
- * niveis: qualquer admin autenticado pode criar outro ou resetar senha alheia.
+ * Gestao de administradores. **So SUPERADMIN**, e por isso nenhuma rota daqui
+ * leva `@NiveisPermitidos` — na ausencia do decorator o guard fecha para os
+ * demais niveis (ver src/auth/jwt/niveis.ts).
+ *
+ * E a unica tela que concede acesso: quem a abre pode criar contas, resetar
+ * senha alheia e promover alguem a superadministrador.
  */
 @ApiTags(TAGS.ADMINS)
 @Controller('admins')
@@ -45,6 +50,8 @@ export class AdminController {
   @ApiOperation({
     summary: 'Cria um administrador',
     description:
+      'O `nivel` e obrigatorio: quem cria a conta escolhe o que ela podera fazer, nunca ' +
+      'por omissao.\n\n' +
       'Sem `senha` no corpo, o sistema gera uma provisoria e a devolve UMA unica vez. ' +
       'Em ambos os casos a conta nasce com `mustChangePassword: true`, para que so o dono ' +
       'conheca a senha final.',
@@ -94,5 +101,30 @@ export class AdminController {
     @AdminLogado() solicitante: AdminJwtPayload,
   ) {
     return this.adminService.definirAtivo(id, dto.ativo, solicitante.sub);
+  }
+
+  @Patch(':id/nivel')
+  @ApiOperation({
+    summary: 'Define o nível de acesso de um administrador',
+    description:
+      'Duas travas, da mesma familia da auto-desativacao: ninguem altera o proprio nivel, ' +
+      'e o ultimo superadministrador ativo nao pode ser rebaixado — do contrario o sistema ' +
+      'ficaria sem ninguem capaz de conceder acesso.\n\n' +
+      'A mudanca vale no proximo refresh de token da pessoa (no maximo 15 min): o nivel ' +
+      'viaja no access token, e o refresh o rele do banco.',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: AdminResumoDto })
+  @ApiNotFoundResponse({ description: 'Administrador nao encontrado' })
+  @ApiBadRequestResponse({
+    description:
+      'Alteracao do proprio nivel, ou rebaixamento do ultimo superadministrador ativo',
+  })
+  definirNivel(
+    @Param('id') id: string,
+    @Body() dto: DefinirNivelDto,
+    @AdminLogado() solicitante: AdminJwtPayload,
+  ) {
+    return this.adminService.definirNivel(id, dto.nivel, solicitante.sub);
   }
 }

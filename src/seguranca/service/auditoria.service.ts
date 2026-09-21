@@ -17,6 +17,10 @@ export type EventoSeguranca =
   | 'ADMIN_CRIADO'
   | 'ADMIN_SENHA_RESETADA'
   | 'ADMIN_ATIVO_ALTERADO'
+  // O nivel de acesso de um admin mudou (21/09/2026). Auditavel porque promover
+  // alguem a SUPERADMIN e a acao mais forte do sistema — passa a valer no
+  // proximo refresh da pessoa, sem ninguem precisar fazer login de novo.
+  | 'ADMIN_NIVEL_ALTERADO'
   | 'LTI_LAUNCH_OK'
   | 'LTI_LAUNCH_RECUSADO'
   // Troca do codigo do redirect pelo token, feita pelo portal do aluno.

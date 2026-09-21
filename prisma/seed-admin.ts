@@ -1,4 +1,5 @@
 import * as bcrypt from 'bcrypt';
+import { NivelAdmin } from '../src/generated/prisma/client';
 import type { PrismaClient } from '../src/generated/prisma/client';
 
 const BCRYPT_ROUNDS = 12;
@@ -10,6 +11,10 @@ const BCRYPT_ROUNDS = 12;
  *
  * Le SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD / SEED_ADMIN_NOME do .env.
  * A senha e gravada em hash bcrypt e o admin nasce com mustChangePassword = true.
+ *
+ * Nasce SUPERADMIN, e nao ha opcao: e o primeiro administrador de um sistema
+ * vazio, e so um superadmin consegue criar os demais e escolher o nivel deles.
+ * Qualquer outro nivel aqui deixaria o ambiente novo sem caminho de entrada.
  */
 export async function seedAdmin(prisma: PrismaClient): Promise<void> {
   const email = process.env.SEED_ADMIN_EMAIL?.trim().toLowerCase();
@@ -32,10 +37,13 @@ export async function seedAdmin(prisma: PrismaClient): Promise<void> {
     data: {
       email,
       nome,
+      nivel: NivelAdmin.SUPERADMIN,
       senhaHash: await bcrypt.hash(senha, BCRYPT_ROUNDS),
       mustChangePassword: true,
     },
   });
 
-  console.log(`[seed] admin: ${email} criado (troca de senha obrigatoria)`);
+  console.log(
+    `[seed] admin: ${email} criado como SUPERADMIN (troca de senha obrigatoria)`,
+  );
 }

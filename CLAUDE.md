@@ -235,7 +235,8 @@ O teste roda em `npm run test:e2e` e exige banco de pé.
   - Novos admins: rota protegida por JWT de admin.
   - Reset: administrativo (um admin gera senha provisória para outro). Campos de
     reset por e-mail existem no schema mas ficam fora do MVP.
-  - **Um único nível de acesso**: JWT de admin válido = acesso total.
+  - **Três níveis de acesso** desde 21/09/2026 (ver a seção própria, abaixo).
+    Antes disso havia um só: JWT de admin válido = acesso total.
 
 **Decisões já implementadas — não reinventar:**
 
@@ -253,8 +254,9 @@ O teste roda em `npm run test:e2e` e exige banco de pé.
   confiar em nada vindo do cliente.
 - **STATUS CURSO não bloqueia o login**, só o agendamento: um aluno cancelado é
   reconhecido e recebe mensagem clara, em vez de "não encontrado".
-- **Duas travas em admins**: ninguém desativa a si mesmo, e o último admin ativo
-  não pode ser desativado.
+- **Travas em admins**: ninguém desativa a si mesmo nem altera o próprio nível;
+  o último admin ativo não pode ser desativado, e o último **superadministrador**
+  ativo não pode ser desativado nem rebaixado.
 - **LTI**: `state` de uso único com expiração + `nonce` conferido; valida versão
   `1.3.0`, `LtiResourceLinkRequest` e `deployment_id`. Os claims de matrícula e
   UserId são configuráveis por lista (`LTI_CLAIM_*`, tentados em ordem) porque
@@ -262,7 +264,102 @@ O teste roda em `npm run test:e2e` e exige banco de pé.
   recebidos para descobrir os nomes reais (ignorado em produção).
 
 Decorators prontos em `src/auth/roles.decorator.ts`: `@SomenteAdmin()`,
-`@SomenteAluno()`, `@AdminLogado()`, `@AlunoLogado()`, `@UsuarioLogado()`.
+`@SomenteAluno()`, `@NiveisPermitidos()`, `@AdminLogado()`, `@AlunoLogado()`,
+`@UsuarioLogado()`.
+
+### Os três níveis de administrador (21/09/2026)
+
+Até aqui não havia hierarquia: possuir um JWT de admin válido dava acesso ao
+sistema inteiro. Agora são três, e o que separa um do outro é uma **lista de
+telas**, não um número:
+
+| Nível | O que abre |
+|---|---|
+| `SUPERADMIN` | Tudo. É o único que abre a tela de Administradores, cria contas e **escolhe o nível** das outras pessoas — inclusive promove outro superadministrador |
+| `ASSISTENTE_OPERACIONAL` | Início, Faixas, Polos e salas, Alunos, Relatórios. Mais Agendamentos e Senhas, os dois em **somente leitura** |
+| `VISUALIZADOR_EXECUTIVO` | Só a tela inicial, para acompanhar os números |
+
+**Não existe `nivel >= X`.** O assistente enxerga telas que o executivo não
+enxerga, mas nenhum dos dois é "meio superadmin": as rotas do superadmin (gestão
+de admins, disparo de lote no AVA) não são *mais* das mesmas coisas, são outras.
+Comparar números inventaria uma ordem que a especificação não tem, e o primeiro
+nível novo quebraria a conta.
+
+#### Como uma rota declara quem a abre
+
+`@SomenteAdmin()` continua significando "precisa de JWT de admin". O nível é
+declarado à parte:
+
+```ts
+@SomenteAdmin()                                      // SÓ superadmin
+@NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL) // + assistente
+```
+
+⚠️ **Rota de admin sem `@NiveisPermitidos` é rota de superadmin.** É a mesma
+postura do `AutenticacaoGuard`: o esquecimento **fecha** a rota. O controller
+novo que esquecer a linha nega o assistente — alguém reclama no mesmo dia — em
+vez de entregar a ele, calado, a tela que concede acesso. O superadmin nunca
+precisa ser listado: passa em tudo, por definição.
+
+A matriz vive em `src/auth/jwt/niveis.ts`; quem a aplica é o `JwtAdminGuard`,
+logo depois da checagem de senha provisória. A recusa é 403 e vira
+`ACESSO_NEGADO` no log de graça — o `ExcecoesFilter` audita todo 401/403.
+
+#### Decisões que não devem ser desfeitas
+
+- **O nível viaja no ACCESS token, não no refresh.** O refresh relê o admin do
+  banco, e é por isso que rebaixar alguém passa a valer em no máximo 15 minutos,
+  sem ninguém precisar derrubar a sessão da pessoa. No refresh, ficaria
+  congelado por 7 dias.
+- **Token SEM `nivel` é recusado com 401** (`JwtAdminStrategy`), e não tratado
+  como superadmin. São os tokens emitidos antes desta mudança: fechar aqui é o
+  que impede um access token velho de continuar abrindo tudo pelos 15 minutos
+  seguintes ao deploy. O custo é zero — 401 é o sinal que o front já usa para
+  renovar.
+- **O default da coluna é `SUPERADMIN`, e isso é da MIGRAÇÃO, não do cadastro.**
+  É a única escolha que não tira acesso de ninguém no deploy: toda conta que já
+  existia tinha acesso total. `CriarAdminDto.nivel` é **obrigatório** — quem cria
+  administrador escolhe o nível na hora, nunca por omissão.
+- **Ninguém altera o próprio nível** (400), como ninguém se desativa: um
+  superadmin que se rebaixasse por engano perderia, no mesmo clique, a única tela
+  capaz de desfazer isso.
+- **O último superadministrador ativo não é rebaixado nem desativado** (400).
+  Sem ele, ninguém cria admin, reseta senha nem concede nível: o sistema fica com
+  as telas funcionando e sem caminho de volta, e o conserto vira um UPDATE no
+  banco.
+- **O seed nasce `SUPERADMIN`, sem opção.** É o primeiro administrador de um
+  sistema vazio; qualquer outro nível deixaria o ambiente novo sem entrada.
+
+#### Do lado do front
+
+`podeAdmin`, em `stores/adminAuth.ts`, é o **único** lugar que compara nível —
+as telas perguntam "posso cancelar este agendamento?", nunca "qual é o meu
+nível?". As mesmas permissões alimentam o menu (`LayoutAdmin.vue`) e as guardas
+de rota (`meta.exige`), para um item do menu nunca levar a uma tela que a guarda
+devolve para o Início.
+
+⚠️ **Esconder botão é UX, não segurança** — igual às guardas de rota
+(`docs/SEGURANCA-FRONTEND.md`, seção 3). Quem recusa é o backend, rota por rota.
+
+Duas telas mudam de forma conforme o nível:
+
+- **Agendamentos**: o assistente vê a lista, o detalhe e o histórico; somem
+  "Agendar aluno", "Remanejar", "Cancelar" e o "Cancelar agendamento" do detalhe.
+- **Senhas**: o assistente recebe `SenhasSomenteLeituraView` — uma tabela por
+  formato, linhas = sessão, colunas = dia. É uma tela **separada**, e não a
+  completa com os botões escondidos: aquela chama ao abrir meia dúzia de rotas
+  que só o superadmin acessa, e ele veria uma sequência de 403 em avisos que não
+  são problema dele. A tabela **abre oculta** e o "Mostrar senhas" continua
+  auditado — ser só de consulta não muda o fato de a tela ficar num monitor
+  compartilhado.
+
+#### Onde isto é testado
+
+| Arquivo | O que prova |
+|---|---|
+| `src/auth/jwt/niveis.spec.ts` | A regra: o padrão fecha, o superadmin passa em tudo, token sem nível não passa em nada |
+| `src/auth/jwt/matriz-de-niveis.spec.ts` | Que cada rota real está declarada para quem a especificação disse — lendo a metadata das classes, sem banco |
+| `test/niveis-de-admin.e2e-spec.ts` | O caminho inteiro: login → token com nível → guard → 403. É o único que pega alguém mexer no `JwtAdminGuard` e o nível deixar de ser conferido |
 
 ### Como o token do aluno chega ao front (código de uso único)
 
@@ -315,6 +412,10 @@ rota, nunca abre.
 É esse guard que lê o `PERFIL_KEY` — a metadata que antes era gravada e nunca
 consultada. **Não coloque `UseGuards(JwtAdminGuard)` numa rota**: com o guard
 global, o token seria verificado duas vezes por request.
+
+**O mesmo padrão vale para os NÍVEIS de admin** (21/09/2026): rota com
+`@SomenteAdmin()` e sem `@NiveisPermitidos()` é rota de **superadmin**. Esquecer
+fecha, nunca abre. Ver "Os três níveis de administrador".
 
 **Limite de requisições** (`@nestjs/throttler`, ASVS 6.3.1): 120/min no geral;
 **5/min** em login, refresh, troca de senha e callback OAuth do D2L
@@ -374,7 +475,7 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `POST /auth/trocar-senha` · `GET /auth/me` | admin | Liberadas com senha provisória |
 | `GET/POST /lti/login` · `POST /lti/launch` · `GET /lti/jwks` | — | Fluxo LTI (autentica pela assinatura do Brightspace) |
 | `POST /lti/sessao` | — | Troca o `code` do redirect pelo token do aluno (ver abaixo) |
-| `GET/POST /admins` · `POST /admins/:id/resetar-senha` · `PATCH /admins/:id/ativo` | admin | Gestão de administradores |
+| `GET/POST /admins` · `POST /admins/:id/resetar-senha` · `PATCH /admins/:id/ativo` · `PATCH /admins/:id/nivel` | **superadmin** | Gestão de administradores e dos níveis de acesso |
 | `POST /importacao/alunos` · `/importacao/turmas` · `GET /importacao` | admin | CSVs + auditoria |
 | `GET /alunos` · `/alunos/cursos` · `/alunos/:id` | admin | Pesquisa os vínculos importados (só leitura) |
 | `POST /alunos/:id/mesclar` | admin | Funde o vínculo duplicado pela troca de grafia do curso |
@@ -838,6 +939,8 @@ src/
   seguranca/   ✅ auditoria (log de eventos) · filtro global de excecoes
   database/    ✅ prisma.service.ts · mariadb-adapter.ts · prisma.module.ts
   enums/       ✅ perfil.enum.ts · status-curso.enum.ts
+               (os NÍVEIS de admin são enum do Prisma: `NivelAdmin`, lido de
+                generated/prisma/client; a matriz vive em auth/jwt/niveis.ts)
   dto/         ✅ respostas de rotas fora de módulo (health)
   generated/   ✅ client do Prisma — NÃO versionado, não editar
 
@@ -895,7 +998,8 @@ src/
   vaga esgotada, `ForbiddenException` para período fechado).
 - **Rota nova = decorator de acesso obrigatório.** Sem `@SomenteAdmin()`,
   `@SomenteAluno()`, `@SomenteIntegracao()` ou `@Publico()` ela é negada pelo
-  guard global.
+  guard global. Rota de admin que **não** seja exclusiva do superadministrador
+  precisa também de `@NiveisPermitidos()` — sem ele, só o superadmin a abre.
 - **Ação sensível = evento de auditoria.** Login, troca de senha, mudança de
   admin, e o que vier de agendamento/remanejo.
 - **Comentário explica o *porquê*, não o *quê*.** O padrão do repositório é

@@ -19,7 +19,8 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import type { Response } from 'express';
-import { SomenteAdmin } from '../../auth/roles.decorator';
+import { NiveisPermitidos, SomenteAdmin } from '../../auth/roles.decorator';
+import { NivelAdmin } from '../../generated/prisma/client';
 import { TAGS } from '../../config/swagger';
 import { SalaComListaDto } from '../dto/sala-com-lista.dto';
 import { ListaPresencaService } from '../service/lista-presenca.service';
@@ -60,6 +61,7 @@ export class RelatorioController {
   constructor(private readonly listas: ListaPresencaService) {}
 
   @Get('listas-de-presenca')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary:
       'Lista as salas que terao aplicacao de prova e quantos assinam em cada',
@@ -89,6 +91,7 @@ export class RelatorioController {
    * sao declaradas.
    */
   @Get('listas-de-presenca/pdf')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'Baixa o PDF com a lista de presenca de todas as salas do recorte',
     description:
@@ -131,6 +134,7 @@ export class RelatorioController {
   }
 
   @Get('listas-de-presenca/:salaFaixaId/pdf')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'Baixa a lista de presenca de UMA sala',
     description:

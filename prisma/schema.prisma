@@ -74,7 +74,34 @@ model Admin {
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
+  /// O QUE este admin pode fazer. Ate 21/09/2026 nao havia nivel nenhum: ter um
+  /// JWT de admin valido era acesso total. Ver enum NivelAdmin abaixo.
+  ///
+  /// O @default existe para a MIGRACAO, e nao para o cadastro: as contas que ja
+  /// existiam tinham acesso total e precisam continuar tendo. Quem cria admin
+  /// pela API sempre informa o nivel — CriarAdminDto o exige.
+  nivel NivelAdmin @default(SUPERADMIN)
+
   @@map("admin")
+}
+
+/// ---------------------------------------------------------------------------
+/// OS TRES NIVEIS ADMINISTRATIVOS (21/09/2026)
+/// ---------------------------------------------------------------------------
+/// A matriz completa (quais rotas cada um abre) NAO mora aqui: mora em
+/// src/auth/jwt/niveis.ts, ao lado do guard que a aplica. Aqui fica so o que
+/// cada nivel significa para quem le o banco.
+enum NivelAdmin {
+  /// Acesso total, inclusive a gestao de administradores. E o unico que cria
+  /// outros admins e escolhe o nivel deles.
+  SUPERADMIN
+
+  /// A operacao do dia a dia: Inicio, Faixas, Polos e salas, Alunos,
+  /// Relatorios, Agendamentos (SO LEITURA) e Senhas (SO LEITURA).
+  ASSISTENTE_OPERACIONAL
+
+  /// So a tela inicial, para acompanhar os numeros. Nao altera nada.
+  VISUALIZADOR_EXECUTIVO
 }
 
 // ----------------------------------------------------------------------------

@@ -13,6 +13,8 @@ import {
 import { Request } from 'express';
 import { AUTH_ADMIN, AUTH_ALUNO, AUTH_INTEGRACAO } from '../config/swagger';
 import { Perfil } from '../enums/perfil.enum';
+import { NivelAdmin } from '../generated/prisma/client';
+import { ROTULO_DO_NIVEL } from './jwt/niveis';
 import {
   AdminJwtPayload,
   AlunoJwtPayload,
@@ -29,6 +31,7 @@ import {
  */
 export const PERFIL_KEY = 'perfil';
 export const PUBLICO_KEY = 'publico';
+export const NIVEIS_KEY = 'niveis_de_admin';
 
 /**
  * Marca a rota como aberta. **Toda rota sem decorator de acesso e NEGADA** pelo
@@ -41,9 +44,8 @@ export const PUBLICO_KEY = 'publico';
 export const Publico = () => SetMetadata(PUBLICO_KEY, true);
 
 /**
- * Ha um unico nivel administrativo: possuir um JWT de admin valido = acesso
- * total. Por isso nao existe matriz de permissoes — so a separacao entre os dois
- * perfis (ADMIN e ALUNO), declarada por estes decorators.
+ * Exige um JWT de admin valido. **Sozinho, isto significa SO SUPERADMIN**: o
+ * nivel e declarado a parte, com `@NiveisPermitidos()` — ver src/auth/jwt/niveis.ts.
  *
  * Os decorators tambem declaram a seguranca no OpenAPI: qualquer rota nova que
  * use @SomenteAdmin()/@SomenteAluno() ja nasce documentada com o cadeado certo e
@@ -68,6 +70,30 @@ export const SomenteAluno = () =>
     ApiBearerAuth(AUTH_ALUNO),
     ApiUnauthorizedResponse({
       description: 'Token de aluno ausente, invalido ou expirado',
+    }),
+  );
+
+/**
+ * Abre a rota TAMBEM para estes niveis, alem do superadmin (que passa sempre).
+ *
+ * So faz sentido junto de `@SomenteAdmin()` — e o nivel de um admin que ele
+ * declara. Quem aplica e o `JwtAdminGuard`, depois de autenticar.
+ *
+ * ⚠️ **Rota de admin SEM este decorator e rota de superadmin.** O padrao e
+ * fechado de proposito, pelo mesmo motivo do AutenticacaoGuard: o controller
+ * novo que esquecer a linha nega o assistente (alguem reclama no mesmo dia) em
+ * vez de entregar a ele, calado, uma rota que nao era dele.
+ */
+export const NiveisPermitidos = (...niveis: NivelAdmin[]) =>
+  applyDecorators(
+    SetMetadata(NIVEIS_KEY, niveis),
+    ApiForbiddenResponse({
+      description:
+        'Nivel de administrador sem acesso a esta rota. Abertas para: ' +
+        [
+          ROTULO_DO_NIVEL.SUPERADMIN,
+          ...niveis.map((n) => ROTULO_DO_NIVEL[n]),
+        ].join(', '),
     }),
   );
 

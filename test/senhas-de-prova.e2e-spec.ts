@@ -22,8 +22,27 @@ import { Turno } from './../src/generated/prisma/client';
  * Brightspace — a recusa. Os caminhos de 409 (lote vivo, senha ja aplicada)
  * vivem em `src/senha-quiz/service/senha-quiz.service.spec.ts`, onde da para
  * mockar a Valence.
+ *
+ * ---------------------------------------------------------------------------
+ * ⚠️ A CHAVE DA CELULA E A SESSAO, NAO O TURNO (21/09/2026)
+ * ---------------------------------------------------------------------------
+ * Esta suite descrevia a grade `dia x TURNO`, que deixou de existir: a celula
+ * passou a ser `dia x JANELA DE PROVA` e os horarios do cron sairam de
+ * `configuracao_senha_quiz` para o calendario de janelas. Em Semi/Modular sao
+ * seis sessoes e tres turnos, e ate aqui duas sessoes seguidas DIVIDIAM a
+ * senha — o aluno das 08:30 podia repassa-la ao das 10:30.
+ *
+ * O que mudou nos testes, e por que:
+ *
+ *   `PUT /senhas-de-prova` { data, turno }   -> { data, janelaDeProvaId }
+ *   `GET /senhas-de-prova`  devolvia `turno` -> devolve `janelaDeProvaId`
+ *   `GET/PUT /senhas-de-prova/horarios`      -> nao existe; virou `/janelas`
+ *   `POST .../execucoes` { data, turno }     -> { data, janelaId }
+ *
+ * `Turno` sobrevive como ROTULO da janela (a tela agrupa as sessoes por ele), e
+ * por isso o bloco de janelas continua mandando o campo.
  */
-describe('Senhas de prova: a grade dia x turno (e2e)', () => {
+describe('Senhas de prova: a grade dia x sessao (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
   let auth: AuthService;
@@ -42,6 +61,18 @@ describe('Senhas de prova: a grade dia x turno (e2e)', () => {
   /** Codigo improvavel: `Modalidade.codigo` e unico e o seed usa os reais. */
   const MODALIDADE_CODIGO = 'E2E_JANELA_GRUPO';
   const SENHA_NOVA = '441028';
+  /** A senha da OUTRA sessao do mesmo dia — ver o teste das duas sessoes. */
+  const SENHA_DA_TARDE = '305174';
+
+  /**
+   * As duas sessoes do formato de teste, criadas por `criarSessoes()`.
+   *
+   * Sao duas, e nao uma, de proposito: a grade passou a ser `dia x SESSAO` em
+   * 21/09/2026 justamente porque duas sessoes do mesmo dia precisavam de senhas
+   * diferentes. Com uma so, nada aqui provaria a mudanca.
+   */
+  let sessaoManha: number;
+  let sessaoTarde: number;
 
   const api = () => request(app.getHttpServer());
   const comoAdmin = <T extends request.Test>(r: T) =>
@@ -402,17 +433,76 @@ describe('Senhas de prova: a grade dia x turno (e2e)', () => {
     });
   });
 
+  /**
+   * Duas sessoes no formato de teste, para as celulas terem onde se pendurar.
+   *
+   * Criadas direto no Prisma, e nao pelo `PUT /senhas-de-prova/janelas`: aquele
+   * SUBSTITUI o calendario inteiro do formato, e levaria junto a janela que os
+   * dois blocos anteriores deixaram montada (com a grade de grupos pendurada
+   * nela por FK). Aqui o que se quer e acrescentar, nao redefinir.
+   */
+  async function criarSessoes() {
+    const modalidade = await prisma.modalidade.findUniqueOrThrow({
+      where: { codigo: MODALIDADE_CODIGO },
+    });
+
+    const criar = async (
+      ordem: number,
+      disparo: string,
+      inicio: string,
+      fim: string,
+      turno: Turno,
+    ) =>
+      (
+        await prisma.janelaDeProva.create({
+          data: {
+            modalidadeId: modalidade.id,
+            ordem,
+            horaDisparo: disparo,
+            horaInicio: inicio,
+            horaFim: fim,
+            turno,
+            // Derivado de `horaDisparo > horaInicio` (`ehDoDiaSeguinte`). Quem o
+            // calcula e `salvarJanelas`, que nao passa aqui — os dois disparos
+            // abaixo sao ANTES da abertura, entao `false` e o valor correto.
+            diaSeguinte: false,
+          },
+        })
+      ).id;
+
+    // Disparo ANTES da abertura, como no calendario real (a regra e "fim da
+    // sessao anterior + 1 minuto"). Disparar depois de a prova abrir e o que
+    // torna a janela do dia seguinte, e nao e o caso destas duas.
+    sessaoManha = await criar(2, '08:01', '08:30', '10:00', Turno.MANHA);
+    sessaoTarde = await criar(3, '10:01', '14:00', '15:30', Turno.TARDE);
+  }
+
+  /** A celula de uma sessao num dia, pelo banco — sem depender de id capturado. */
+  const celulaDe = (data: string, janelaDeProvaId: number) =>
+    prisma.senhaDeProva.findFirstOrThrow({
+      where: { data: new Date(data), janelaDeProvaId },
+    });
+
+  /** Qual das duas sessoes de teste e um id — so para a mensagem do assert. */
+  const nomeDaSessao = (id: number) =>
+    id === sessaoManha ? 'manha' : id === sessaoTarde ? 'tarde' : String(id);
+
   describe('PUT /senhas-de-prova — cadastro da celula', () => {
+    beforeAll(criarSessoes);
+
     it('cria a celula e NAO devolve a senha na resposta', async () => {
       const res = await comoAdmin(
-        api()
-          .put('/api/senhas-de-prova')
-          .send({ data: DIA, turno: Turno.MANHA, senha: SENHA_DA_PROVA }),
+        api().put('/api/senhas-de-prova').send({
+          data: DIA,
+          janelaDeProvaId: sessaoManha,
+          senha: SENHA_DA_PROVA,
+        }),
       ).expect(200);
 
       expect(res.body.temSenha).toBe(true);
       expect(res.body.versao).toBe(1);
       expect(res.body.situacao).toBe('SALVA');
+      expect(res.body.janelaDeProvaId).toBe(sessaoManha);
 
       // O assert que importa: o valor nao pode estar em lugar NENHUM do corpo,
       // nem num campo que alguem acrescente sem pensar mais tarde.
@@ -429,15 +519,32 @@ describe('Senhas de prova: a grade dia x turno (e2e)', () => {
       await comoAdmin(
         api()
           .put('/api/senhas-de-prova')
-          .send({ data: OUTRO_DIA, turno: Turno.NOITE, senha }),
+          .send({ data: OUTRO_DIA, janelaDeProvaId: sessaoTarde, senha }),
+      ).expect(400);
+    });
+
+    /**
+     * A sessao precisa existir. Aceitar um id solto gravaria uma celula que
+     * disparo nenhum vai ler — a prova amanheceria com a senha da vespera, sem
+     * erro em lugar nenhum.
+     */
+    it('recusa uma sessao que nao existe', async () => {
+      await comoAdmin(
+        api().put('/api/senhas-de-prova').send({
+          data: DIA,
+          janelaDeProvaId: 999_999_999,
+          senha: SENHA_DA_PROVA,
+        }),
       ).expect(400);
     });
 
     it('salvar a MESMA senha de novo nao sobe a versao', async () => {
       const res = await comoAdmin(
-        api()
-          .put('/api/senhas-de-prova')
-          .send({ data: DIA, turno: Turno.MANHA, senha: SENHA_DA_PROVA }),
+        api().put('/api/senhas-de-prova').send({
+          data: DIA,
+          janelaDeProvaId: sessaoManha,
+          senha: SENHA_DA_PROVA,
+        }),
       ).expect(200);
 
       // Se subisse, a tela passaria a alegar DESATUALIZADA sem nada ter mudado
@@ -449,37 +556,82 @@ describe('Senhas de prova: a grade dia x turno (e2e)', () => {
       const res = await comoAdmin(
         api()
           .put('/api/senhas-de-prova')
-          .send({ data: DIA, turno: Turno.MANHA, senha: SENHA_NOVA }),
+          .send({ data: DIA, janelaDeProvaId: sessaoManha, senha: SENHA_NOVA }),
       ).expect(200);
 
       expect(res.body.versao).toBe(2);
       expect(JSON.stringify(res.body)).not.toContain(SENHA_NOVA);
+    });
+
+    /**
+     * ⚠️ O MOTIVO DE A GRADE TER DEIXADO DE SER POR TURNO (21/09/2026).
+     *
+     * Duas sessoes do MESMO dia e do MESMO formato sao duas celulas, com senhas
+     * independentes. Enquanto a chave era o turno, as duas sessoes da manha de
+     * Semi/Modular caiam na mesma linha e dividiam a senha — e o aluno das 08:30
+     * podia repassa-la ao das 10:30. Se algum dia isto voltar a colapsar numa
+     * celula so, e aqui que aparece.
+     */
+    it('duas sessoes do mesmo dia tem senhas independentes', async () => {
+      const tarde = await comoAdmin(
+        api().put('/api/senhas-de-prova').send({
+          data: DIA,
+          janelaDeProvaId: sessaoTarde,
+          senha: SENHA_DA_TARDE,
+        }),
+      ).expect(200);
+
+      const daManha = await celulaDe(DIA, sessaoManha);
+
+      const manha = await comoAdmin(
+        api().get(`/api/senhas-de-prova/${daManha.id}/revelar`),
+      ).expect(200);
+
+      expect(tarde.body.id).not.toBe(daManha.id);
+      expect(tarde.body.versao).toBe(1);
+
+      // A da manha continua a que era: gravar a da tarde nao a tocou.
+      expect(manha.body.senha).toBe(SENHA_NOVA);
+
+      const daTarde = await comoAdmin(
+        api().get(`/api/senhas-de-prova/${tarde.body.id}/revelar`),
+      ).expect(200);
+
+      expect(daTarde.body.senha).toBe(SENHA_DA_TARDE);
     });
   });
 
   describe('GET /senhas-de-prova — a grade', () => {
     it('lista as celulas do intervalo sem nenhuma senha no corpo', async () => {
       await comoAdmin(
-        api()
-          .put('/api/senhas-de-prova')
-          .send({ data: OUTRO_DIA, turno: Turno.TARDE, senha: SENHA_DA_PROVA }),
+        api().put('/api/senhas-de-prova').send({
+          data: OUTRO_DIA,
+          janelaDeProvaId: sessaoTarde,
+          senha: SENHA_DA_PROVA,
+        }),
       ).expect(200);
 
       const res = await comoAdmin(
         api().get(`/api/senhas-de-prova?de=${DIA}&ate=${OUTRO_DIA}`),
       ).expect(200);
 
-      const celulas = res.body as { data: string; turno: Turno }[];
+      const celulas = res.body as { data: string; janelaDeProvaId: number }[];
 
-      expect(celulas).toHaveLength(2);
-      expect(celulas.map((c) => `${c.data} ${c.turno}`).sort()).toEqual([
-        `${DIA} ${Turno.MANHA}`,
-        `${OUTRO_DIA} ${Turno.TARDE}`,
-      ]);
+      // Tres: as duas sessoes de DIA (manha e tarde) e a tarde de OUTRO_DIA.
+      const daSuite = celulas.filter((c) =>
+        [sessaoManha, sessaoTarde].includes(c.janelaDeProvaId),
+      );
+
+      expect(
+        daSuite
+          .map((c) => `${c.data} ${nomeDaSessao(c.janelaDeProvaId)}`)
+          .sort(),
+      ).toEqual([`${DIA} manha`, `${DIA} tarde`, `${OUTRO_DIA} tarde`]);
 
       const corpo = JSON.stringify(res.body);
       expect(corpo).not.toContain(SENHA_DA_PROVA);
       expect(corpo).not.toContain(SENHA_NOVA);
+      expect(corpo).not.toContain(SENHA_DA_TARDE);
     });
 
     it('exige o intervalo', async () => {
@@ -492,8 +644,16 @@ describe('Senhas de prova: a grade dia x turno (e2e)', () => {
         api().get(`/api/senhas-de-prova?de=${DIA}&ate=${DIA}`),
       ).expect(200);
 
-      expect(res.body[0].ultimaExecucao).toBeNull();
-      expect(res.body[0].situacao).toBe('SALVA');
+      const celulas = res.body as {
+        janelaDeProvaId: number;
+        ultimaExecucao: unknown;
+        situacao: string;
+      }[];
+
+      const minha = celulas.find((c) => c.janelaDeProvaId === sessaoManha);
+
+      expect(minha?.ultimaExecucao).toBeNull();
+      expect(minha?.situacao).toBe('SALVA');
     });
   });
 
@@ -504,9 +664,7 @@ describe('Senhas de prova: a grade dia x turno (e2e)', () => {
         .mockImplementation(() => undefined);
 
       try {
-        const celula = await prisma.senhaDeProva.findFirstOrThrow({
-          where: { data: new Date(DIA), turno: Turno.MANHA },
-        });
+        const celula = await celulaDe(DIA, sessaoManha);
 
         const res = await comoAdmin(
           api().get(`/api/senhas-de-prova/${celula.id}/revelar`),
@@ -567,43 +725,40 @@ describe('Senhas de prova: a grade dia x turno (e2e)', () => {
     });
   });
 
-  describe('GET/PUT /senhas-de-prova/horarios — quando o cron dispara', () => {
-    it('salva os horarios e devolve o estado do cron no servidor', async () => {
-      const salvo = await comoAdmin(
-        api()
-          .put('/api/senhas-de-prova/horarios')
-          .send({ horaManha: '07:30', horaTarde: '12:30', horaNoite: '18:00' }),
-      ).expect(200);
-
-      expect(salvo.body).toMatchObject({
-        horaManha: '07:30',
-        horaTarde: '12:30',
-        horaNoite: '18:00',
-        atualizadoPor: EMAIL,
-      });
-
-      // Vem do .env e e SO LEITURA. Sem estes dois, a tela deixaria o admin
-      // cadastrar 07:30 e esperar por um cron que esta desligado no servidor.
-      expect(typeof salvo.body.cronHabilitado).toBe('boolean');
-      expect(typeof salvo.body.toleranciaMin).toBe('number');
-
-      const lido = await comoAdmin(
-        api().get('/api/senhas-de-prova/horarios'),
-      ).expect(200);
-
-      expect(lido.body.horaManha).toBe('07:30');
-    });
-
-    it('campo vazio DESLIGA o turno — e como sabado a noite fica de fora', async () => {
+  /**
+   * ⚠️ ESTE BLOCO ERA `GET/PUT /senhas-de-prova/horarios`.
+   *
+   * Aquelas rotas nao existem mais: os tres horarios de turno viviam em
+   * `configuracao_senha_quiz.horaManha/_Tarde/_Noite`, e as colunas foram
+   * DROPADAS em 21/09/2026. Quando a senha passou a trocar no disparo da
+   * propria sessao, o calendario virou um so — o das janelas —, e manter dois
+   * lugares para responder "a que horas a senha troca?" era garantir que o
+   * errado fosse o editado.
+   *
+   * O que aqueles testes protegiam continua protegido, em `/janelas`:
+   *
+   *   "recusa horario sem zero a esquerda"  -> `horaDisparo` invalido = 400
+   *   "o estado do cron vem do servidor"    -> cronHabilitado/toleranciaMin
+   *   "campo vazio DESLIGA o turno"         -> `ativo: false` na sessao
+   *
+   * O unico que nao tem sucessor e "o alvo e os horarios convivem na mesma
+   * linha sem se apagar": com os horarios fora de `configuracao_senha_quiz`,
+   * nao ha mais dois PUTs disputando a mesma linha.
+   */
+  describe('GET/PUT /senhas-de-prova/janelas — quando o cron dispara', () => {
+    /**
+     * Vem do `.env` e e SO LEITURA. Sem estes dois na resposta, a tela deixaria
+     * o admin cadastrar 08:30 e esperar por um cron que esta desligado no
+     * servidor — um calendario que PARECE armado e nao esta e pior que um
+     * calendario vazio.
+     */
+    it('o estado do cron no servidor vem junto do calendario', async () => {
       const res = await comoAdmin(
-        api()
-          .put('/api/senhas-de-prova/horarios')
-          .send({ horaManha: '08:00', horaTarde: '', horaNoite: '' }),
+        api().get('/api/senhas-de-prova/janelas'),
       ).expect(200);
 
-      expect(res.body.horaManha).toBe('08:00');
-      expect(res.body.horaTarde).toBeNull();
-      expect(res.body.horaNoite).toBeNull();
+      expect(typeof res.body.cronHabilitado).toBe('boolean');
+      expect(typeof res.body.toleranciaMin).toBe('number');
     });
 
     it.each([
@@ -611,37 +766,59 @@ describe('Senhas de prova: a grade dia x turno (e2e)', () => {
       ['hora inexistente', '25:00'],
       ['minuto inexistente', '07:75'],
       ['sem os minutos', '07'],
-    ])('recusa horario %s', async (_caso, horaManha) => {
-      // Aceitar calado seria um turno que NUNCA dispara, e ninguem descobriria
-      // antes do dia da prova.
+    ])('recusa horario de disparo %s', async (_caso, horaDisparo) => {
+      // Aceitar calado seria uma sessao que NUNCA dispara, e ninguem
+      // descobriria antes do dia da prova.
+      const modalidade = await prisma.modalidade.findUniqueOrThrow({
+        where: { codigo: MODALIDADE_CODIGO },
+      });
+
       await comoAdmin(
-        api().put('/api/senhas-de-prova/horarios').send({ horaManha }),
+        api()
+          .put('/api/senhas-de-prova/janelas')
+          .send({
+            modalidadeId: modalidade.id,
+            janelas: [
+              {
+                ordem: 1,
+                horaDisparo,
+                horaInicio: '15:00',
+                horaFim: '18:00',
+                turno: Turno.TARDE,
+              },
+            ],
+          }),
       ).expect(400);
     });
 
-    it('o alvo e os horarios convivem na mesma linha sem se apagar', async () => {
+    /**
+     * `diaSeguinte` e DERIVADO (`horaDisparo > horaInicio`), nao configurado.
+     * Foi um checkbox na tela por um dia, e nao havia resposta certa que o
+     * admin pudesse dar: marcar "mesmo dia" produz uma prova que abre no
+     * passado — a API aceita, e ela nasce fechada.
+     */
+    it('recusa `diaSeguinte` no corpo, porque ele e derivado', async () => {
+      const modalidade = await prisma.modalidade.findUniqueOrThrow({
+        where: { codigo: MODALIDADE_CODIGO },
+      });
+
       await comoAdmin(
         api()
-          .put('/api/senhas-de-prova/alvo')
-          .send({ nomeQuiz: 'Prova E2E 2', matchQuiz: 'CONTEM' }),
-      ).expect(200);
-
-      const horarios = await comoAdmin(
-        api().get('/api/senhas-de-prova/horarios'),
-      ).expect(200);
-
-      // Salvar o alvo nao pode zerar o horario: sao dois PUTs na MESMA linha.
-      expect(horarios.body.horaManha).toBe('08:00');
-
-      await comoAdmin(
-        api().put('/api/senhas-de-prova/horarios').send({ horaManha: '09:00' }),
-      ).expect(200);
-
-      const alvo = await comoAdmin(
-        api().get('/api/senhas-de-prova/alvo'),
-      ).expect(200);
-
-      expect(alvo.body.nomeQuiz).toBe('Prova E2E 2');
+          .put('/api/senhas-de-prova/janelas')
+          .send({
+            modalidadeId: modalidade.id,
+            janelas: [
+              {
+                ordem: 1,
+                horaDisparo: '22:01',
+                horaInicio: '09:00',
+                horaFim: '12:00',
+                turno: Turno.MANHA,
+                diaSeguinte: true,
+              },
+            ],
+          }),
+      ).expect(400);
     });
   });
 
@@ -650,7 +827,7 @@ describe('Senhas de prova: a grade dia x turno (e2e)', () => {
       const res = await comoAdmin(
         api()
           .post('/api/senhas-de-prova/execucoes')
-          .send({ data: DIA, turno: Turno.MANHA }),
+          .send({ data: DIA, janelaId: sessaoManha }),
       ).expect(400);
 
       // A mensagem precisa ser acionavel: sem ela o operador procuraria o
@@ -671,9 +848,7 @@ describe('Senhas de prova: a grade dia x turno (e2e)', () => {
 
   describe('DELETE /senhas-de-prova/:id — retencao', () => {
     it('apaga a celula', async () => {
-      const celula = await prisma.senhaDeProva.findFirstOrThrow({
-        where: { data: new Date(OUTRO_DIA), turno: Turno.TARDE },
-      });
+      const celula = await celulaDe(OUTRO_DIA, sessaoTarde);
 
       await comoAdmin(api().delete(`/api/senhas-de-prova/${celula.id}`)).expect(
         204,
@@ -696,7 +871,8 @@ describe('Senhas de prova: a grade dia x turno (e2e)', () => {
       ['get', '/api/senhas-de-prova?de=2099-09-16&ate=2099-09-16'],
       ['get', '/api/senhas-de-prova/1/revelar'],
       ['get', '/api/senhas-de-prova/alvo'],
-      ['get', '/api/senhas-de-prova/horarios'],
+      ['get', '/api/senhas-de-prova/janelas'],
+      ['get', '/api/senhas-de-prova/revelar?de=2099-09-16&ate=2099-09-16'],
       ['get', '/api/senhas-de-prova/turmas'],
       ['get', '/api/senhas-de-prova/execucoes/1'],
       ['delete', '/api/senhas-de-prova/1'],
@@ -715,7 +891,7 @@ describe('Senhas de prova: a grade dia x turno (e2e)', () => {
       await api()
         .post('/api/senhas-de-prova/execucoes')
         .set('Authorization', `Bearer ${alunoToken}`)
-        .send({ data: DIA, turno: Turno.MANHA })
+        .send({ data: DIA, janelaId: sessaoManha })
         .expect(401);
     });
   });

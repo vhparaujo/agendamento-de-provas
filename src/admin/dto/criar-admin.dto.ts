@@ -2,11 +2,13 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
   IsEmail,
+  IsEnum,
   IsOptional,
   IsString,
   MaxLength,
   MinLength,
 } from 'class-validator';
+import { NivelAdmin } from '../../generated/prisma/client';
 
 export class CriarAdminDto {
   @ApiProperty({
@@ -24,6 +26,17 @@ export class CriarAdminDto {
   @IsString()
   @MaxLength(150)
   nome?: string;
+
+  @ApiProperty({
+    enum: NivelAdmin,
+    example: NivelAdmin.ASSISTENTE_OPERACIONAL,
+    description:
+      'O que a conta podera fazer. **Obrigatorio**: o default da coluna existe para a ' +
+      'migracao das contas antigas, nao para o cadastro — quem cria um administrador ' +
+      'escolhe o nivel dele na hora, e nunca por omissao.',
+  })
+  @IsEnum(NivelAdmin, { message: 'Escolha um nível de acesso válido.' })
+  nivel!: NivelAdmin;
 
   @ApiPropertyOptional({
     minLength: 8,

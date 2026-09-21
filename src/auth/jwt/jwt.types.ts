@@ -1,4 +1,5 @@
 import { Perfil } from '../../enums/perfil.enum';
+import { NivelAdmin } from '../../generated/prisma/client';
 
 /** Payload do access token de admin. */
 export interface AdminJwtPayload {
@@ -11,6 +12,18 @@ export interface AdminJwtPayload {
    */
   nome?: string | null;
   perfil: Perfil.ADMIN;
+  /**
+   * O QUE este admin pode fazer (21/09/2026). Ver src/auth/jwt/niveis.ts.
+   *
+   * Opcional so por causa dos tokens emitidos ANTES de o nivel existir: ausente,
+   * ele nao vale como superadmin — a estrategia recusa o token com 401 e o front
+   * troca por um novo no refresh, que le o nivel do banco. Fechar aqui e o que
+   * impede um access token velho de continuar abrindo tudo por 15 minutos.
+   *
+   * Trocar o nivel de alguem so aparece no proximo refresh (no maximo 15 min),
+   * como o `nome`.
+   */
+  nivel?: NivelAdmin;
   mustChangePassword: boolean;
 }
 

@@ -16,7 +16,8 @@ import {
   ApiParam,
   ApiTags,
 } from '@nestjs/swagger';
-import { SomenteAdmin } from '../../auth/roles.decorator';
+import { NiveisPermitidos, SomenteAdmin } from '../../auth/roles.decorator';
+import { NivelAdmin } from '../../generated/prisma/client';
 import { TAGS } from '../../config/swagger';
 import {
   AtualizarOfertaDto,
@@ -39,6 +40,7 @@ export class SalaFaixaController {
   constructor(private readonly salaFaixaService: SalaFaixaService) {}
 
   @Get(':id')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({ summary: 'Detalha uma oferta e sua ocupacao' })
   @ApiParam({ name: 'id', type: Number, example: 55 })
   @ApiOkResponse({ type: OfertaDetalheDto })
@@ -48,6 +50,7 @@ export class SalaFaixaController {
   }
 
   @Patch(':id')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'Ajusta vagas e ordem de preenchimento',
     description:
@@ -72,6 +75,7 @@ export class SalaFaixaController {
   }
 
   @Delete(':id')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'Tira uma sala da faixa',
     description: 'So enquanto nenhum aluno tiver sido alocado nela.',

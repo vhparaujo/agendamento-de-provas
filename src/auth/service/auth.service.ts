@@ -8,6 +8,7 @@ import { JwtService, JwtSignOptions } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../database/prisma.service';
 import { Perfil } from '../../enums/perfil.enum';
+import { NivelAdmin } from '../../generated/prisma/client';
 import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 import {
   AdminJwtPayload,
@@ -81,12 +82,7 @@ export class AuthService {
       data: { ultimoLogin: new Date() },
     });
 
-    return this.emitirTokensAdmin(
-      admin.id,
-      admin.email,
-      admin.nome,
-      admin.mustChangePassword,
-    );
+    return this.emitirTokensAdmin(admin);
   }
 
   async refreshAdmin(refreshToken: string): Promise<TokensAdmin> {
@@ -134,12 +130,7 @@ export class AuthService {
 
     this.auditoria.registrar('REFRESH_OK', { ator: admin.email });
 
-    return this.emitirTokensAdmin(
-      admin.id,
-      admin.email,
-      admin.nome,
-      admin.mustChangePassword,
-    );
+    return this.emitirTokensAdmin(admin);
   }
 
   async trocarSenha(
@@ -205,22 +196,32 @@ export class AuthService {
     return { accessToken, expiraEm };
   }
 
-  private async emitirTokensAdmin(
-    id: string,
-    email: string,
-    nome: string | null,
-    mustChangePassword: boolean,
-  ): Promise<TokensAdmin> {
+  /**
+   * ⚠️ O `nivel` vai no ACCESS token e NAO no refresh.
+   *
+   * O refresh e trocado relendo o admin do banco, entao o nivel do proximo par
+   * sai de la — e por isso rebaixar alguem passa a valer em no maximo 15 min,
+   * sem ninguem precisar deslogar a pessoa. Grava-lo no refresh congelaria o
+   * nivel por 7 dias.
+   */
+  private async emitirTokensAdmin(admin: {
+    id: string;
+    email: string;
+    nome: string | null;
+    nivel: NivelAdmin;
+    mustChangePassword: boolean;
+  }): Promise<TokensAdmin> {
     const accessPayload: AdminJwtPayload = {
-      sub: id,
-      email,
-      nome,
+      sub: admin.id,
+      email: admin.email,
+      nome: admin.nome,
       perfil: Perfil.ADMIN,
-      mustChangePassword,
+      nivel: admin.nivel,
+      mustChangePassword: admin.mustChangePassword,
     };
 
     const refreshPayload: AdminRefreshPayload = {
-      sub: id,
+      sub: admin.id,
       perfil: Perfil.ADMIN,
       tipo: 'refresh',
     };
@@ -239,6 +240,10 @@ export class AuthService {
       }),
     ]);
 
-    return { accessToken, refreshToken, mustChangePassword };
+    return {
+      accessToken,
+      refreshToken,
+      mustChangePassword: admin.mustChangePassword,
+    };
   }
 }

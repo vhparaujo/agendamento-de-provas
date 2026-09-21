@@ -335,15 +335,17 @@ Ao registrar a ferramenta no Brightspace, aponte:
 
 ### Administradores
 
-Todas exigem JWT de admin. **Não há níveis**: qualquer admin autenticado pode
-criar outro ou resetar a senha alheia.
+**Só superadministrador.** É a tela que concede acesso: quem a abre cria contas,
+reseta senha alheia e promove alguém a superadministrador. Ver "Três níveis de
+administrador".
 
 | Método | Rota | Descrição |
 |---|---|---|
 | `GET` | `/admins` | Lista |
-| `POST` | `/admins` | Cria (nasce com `mustChangePassword`) |
+| `POST` | `/admins` | Cria (o `nivel` é **obrigatório**; nasce com `mustChangePassword`) |
 | `POST` | `/admins/:id/resetar-senha` | Gera senha provisória para outro admin |
 | `PATCH` | `/admins/:id/ativo` | Ativa/desativa |
+| `PATCH` | `/admins/:id/nivel` | Troca o nível de acesso de outro admin |
 
 ### Importação de CSV
 
@@ -1666,9 +1668,38 @@ guard bloqueia todas as rotas até a troca. As exceções, marcadas com
 `@PermitidoComSenhaProvisoria()`, são `/auth/trocar-senha` e `/auth/me` — sem elas
 o admin do seed ficaria travado para sempre.
 
-**Um único nível de acesso:** JWT de admin válido = acesso total. Não há matriz de
-permissões, só a separação entre os perfis `ADMIN` e `ALUNO`, aplicada pelos
-decorators `@SomenteAdmin()` e `@SomenteAluno()`.
+### Três níveis de administrador (21/09/2026)
+
+Até aqui havia um só: JWT de admin válido = acesso total. Agora a conta tem um
+`nivel`, e ele decide **quais telas** ela abre:
+
+| Nível | O que abre |
+|---|---|
+| **Superadministrador** | Tudo. É o único que abre a tela de Administradores, cria contas e escolhe o nível das outras pessoas — inclusive promove outro superadministrador |
+| **Administrador Assistente Operacional** | Início, Faixas, Polos e salas, Alunos, Relatórios. Mais Agendamentos e Senhas, os dois **somente para visualizar** |
+| **Administrador Visualizador Executivo** | Só a tela inicial, para acompanhar os números |
+
+Em **Agendamentos**, o assistente vê a lista, o detalhe e o histórico, e não tem
+os botões de agendar, remanejar nem cancelar. Em **Senhas**, ele recebe uma
+tabela de consulta — uma por formato, linhas = sessão, colunas = dia — com o
+mesmo "Mostrar senhas" auditado da tela completa, e nada que edite ou dispare.
+
+A rota declara quem a abre com `@NiveisPermitidos()`, ao lado de
+`@SomenteAdmin()`. **Rota de admin sem esse decorator é rota de superadmin**: o
+esquecimento fecha, como no guard global. A matriz vive em
+`src/auth/jwt/niveis.ts`.
+
+Três travas que existem para o sistema não ficar sem quem conceda acesso:
+ninguém altera o próprio nível, o último superadministrador ativo não pode ser
+rebaixado, e também não pode ser desativado.
+
+O nível viaja no **access token**, então trocar o nível de alguém vale na
+renovação seguinte da sessão dela — no máximo 15 minutos, sem precisar derrubá-la.
+
+⚠️ **A migração dá `SUPERADMIN` a todas as contas que já existiam**, porque
+todas tinham acesso total. Depois do deploy, revise a tela de Administradores e
+rebaixe quem deve mudar de nível. No cadastro o nível é **obrigatório** — não há
+default.
 
 ### Aluno — LTI 1.3
 

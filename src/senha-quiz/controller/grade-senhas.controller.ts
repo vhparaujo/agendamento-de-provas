@@ -22,7 +22,12 @@ import {
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import type { AdminJwtPayload } from '../../auth/jwt/jwt.types';
-import { AdminLogado, SomenteAdmin } from '../../auth/roles.decorator';
+import {
+  AdminLogado,
+  NiveisPermitidos,
+  SomenteAdmin,
+} from '../../auth/roles.decorator';
+import { NivelAdmin } from '../../generated/prisma/client';
 import { TAGS } from '../../config/swagger';
 import { LIMITE_AUTENTICACAO } from '../../config/throttler.config';
 import {
@@ -71,6 +76,7 @@ export class GradeSenhasController {
   ) {}
 
   @Get()
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'A grade de senhas do intervalo (sem os valores)',
     description:
@@ -119,6 +125,7 @@ export class GradeSenhasController {
   }
 
   @Get('revelar')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   // Mesmo limite das rotas de credencial, pelo mesmo motivo de `/:id/revelar`.
   @Throttle(LIMITE_AUTENTICACAO)
   @ApiOperation({
@@ -349,6 +356,7 @@ export class GradeSenhasController {
   }
 
   @Get('janelas')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'As janelas do questionario, por formato',
     description:
@@ -415,6 +423,7 @@ export class GradeSenhasController {
   }
 
   @Get(':id/revelar')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   // Mesmo limite das rotas de credencial: e a unica rota do sistema que devolve
   // uma senha de prova em texto claro, e o uso legitimo e um clique de cada vez.
   @Throttle(LIMITE_AUTENTICACAO)

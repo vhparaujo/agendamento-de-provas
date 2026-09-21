@@ -27,7 +27,12 @@ import { RefreshTokenDto } from '../dto/refresh-token.dto';
 import { TrocarSenhaDto } from '../dto/trocar-senha.dto';
 import { PermitidoComSenhaProvisoria } from '../jwt/jwt-admin.guard';
 import type { AdminJwtPayload } from '../jwt/jwt.types';
-import { AdminLogado, SomenteAdmin } from '../roles.decorator';
+import {
+  AdminLogado,
+  NiveisPermitidos,
+  SomenteAdmin,
+} from '../roles.decorator';
+import { NivelAdmin } from '../../generated/prisma/client';
 import { AuthService } from '../service/auth.service';
 
 @ApiTags(TAGS.AUTH_ADMIN)
@@ -78,6 +83,13 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @Throttle(LIMITE_AUTENTICACAO)
   @SomenteAdmin()
+  // Todo admin troca a PROPRIA senha, em qualquer nivel. Sem esta linha, o guard
+  // de nivel trancaria o assistente e o visualizador na tela de senha provisoria
+  // — presos num 403 na unica rota que os tiraria de la.
+  @NiveisPermitidos(
+    NivelAdmin.ASSISTENTE_OPERACIONAL,
+    NivelAdmin.VISUALIZADOR_EXECUTIVO,
+  )
   // unica rota acessivel com senha provisoria pendente — sem ela o admin do seed
   // ficaria travado para sempre
   @PermitidoComSenhaProvisoria()
@@ -105,6 +117,12 @@ export class AuthController {
 
   @Get('me')
   @SomenteAdmin()
+  // Quem esta logado precisa saber quem e, em qualquer nivel — e e daqui que a
+  // tela descobre o proprio nivel para montar o menu.
+  @NiveisPermitidos(
+    NivelAdmin.ASSISTENTE_OPERACIONAL,
+    NivelAdmin.VISUALIZADOR_EXECUTIVO,
+  )
   @PermitidoComSenhaProvisoria()
   @ApiOperation({
     summary: 'Dados do admin autenticado',
@@ -118,6 +136,7 @@ export class AuthController {
       email: admin.email,
       nome: admin.nome ?? null,
       perfil: admin.perfil,
+      nivel: admin.nivel,
       mustChangePassword: admin.mustChangePassword,
     };
   }

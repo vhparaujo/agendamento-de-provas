@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { NivelAdmin } from '../../generated/prisma/client';
 import type { Admin } from '../service/admin.service';
 
 /** Projecao publica de um administrador. Nunca inclui `senhaHash`. */
@@ -14,6 +15,13 @@ export class AdminResumoDto implements Admin {
 
   @ApiProperty({ nullable: true, example: 'Maria da Silva' })
   nome!: string | null;
+
+  @ApiProperty({
+    enum: NivelAdmin,
+    example: NivelAdmin.ASSISTENTE_OPERACIONAL,
+    description: 'O que esta conta pode fazer. Ver PATCH /admins/:id/nivel.',
+  })
+  nivel!: NivelAdmin;
 
   @ApiProperty({ example: true })
   ativo!: boolean;

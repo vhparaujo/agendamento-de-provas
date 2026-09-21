@@ -20,7 +20,8 @@ import {
   ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
-import { SomenteAdmin } from '../../auth/roles.decorator';
+import { NiveisPermitidos, SomenteAdmin } from '../../auth/roles.decorator';
+import { NivelAdmin } from '../../generated/prisma/client';
 import { TAGS } from '../../config/swagger';
 import {
   AtualizarSalaDto,
@@ -42,6 +43,7 @@ export class SalaController {
   constructor(private readonly salaService: SalaService) {}
 
   @Get()
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'Lista as salas',
     description: 'Filtre por polo para montar uma faixa daquele polo.',
@@ -58,6 +60,7 @@ export class SalaController {
   }
 
   @Get(':id')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({ summary: 'Detalha uma sala' })
   @ApiParam({ name: 'id', type: Number, example: 21 })
   @ApiOkResponse({ type: SalaComPoloDto })
@@ -67,6 +70,7 @@ export class SalaController {
   }
 
   @Post()
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'Cadastra uma sala',
     description:
@@ -81,6 +85,7 @@ export class SalaController {
   }
 
   @Patch(':id')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'Atualiza nome, capacidade ou situacao',
     description:
@@ -102,6 +107,7 @@ export class SalaController {
   }
 
   @Delete(':id')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'Remove uma sala nunca ofertada',
     description:

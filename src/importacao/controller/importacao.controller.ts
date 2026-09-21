@@ -22,7 +22,12 @@ import {
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import type { AdminJwtPayload } from '../../auth/jwt/jwt.types';
-import { AdminLogado, SomenteAdmin } from '../../auth/roles.decorator';
+import {
+  AdminLogado,
+  NiveisPermitidos,
+  SomenteAdmin,
+} from '../../auth/roles.decorator';
+import { NivelAdmin } from '../../generated/prisma/client';
 import { TAGS } from '../../config/swagger';
 import { LIMITE_UPLOAD } from '../../config/throttler.config';
 import { PrismaService } from '../../database/prisma.service';
@@ -182,6 +187,7 @@ export class ImportacaoController {
 
   /** Historico de importacoes (auditoria: tipo, arquivo, linhas, quem, quando). */
   @Get()
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'Historico de importacoes',
     description:

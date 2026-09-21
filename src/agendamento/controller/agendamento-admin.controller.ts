@@ -26,9 +26,13 @@ import {
 } from '@nestjs/swagger';
 import type { Response } from 'express';
 import type { AdminJwtPayload } from '../../auth/jwt/jwt.types';
-import { AdminLogado, SomenteAdmin } from '../../auth/roles.decorator';
+import {
+  AdminLogado,
+  NiveisPermitidos,
+  SomenteAdmin,
+} from '../../auth/roles.decorator';
 import { TAGS } from '../../config/swagger';
-import { StatusAgendamento } from '../../generated/prisma/client';
+import { NivelAdmin, StatusAgendamento } from '../../generated/prisma/client';
 import {
   AgendamentoAdminDto,
   AgendamentoPeloAdminDto,
@@ -126,6 +130,7 @@ export class AgendamentoAdminController {
   }
 
   @Get()
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'Lista os agendamentos, com filtros e paginacao',
     description:
@@ -162,6 +167,7 @@ export class AgendamentoAdminController {
   }
 
   @Get('resumo')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'Ocupacao por sala',
     description:
@@ -175,6 +181,10 @@ export class AgendamentoAdminController {
   }
 
   @Get('estatisticas')
+  @NiveisPermitidos(
+    NivelAdmin.ASSISTENTE_OPERACIONAL,
+    NivelAdmin.VISUALIZADOR_EXECUTIVO,
+  )
   @ApiOperation({
     summary: 'Como esta indo o agendamento da rodada vigente',
     description:
@@ -194,6 +204,7 @@ export class AgendamentoAdminController {
   }
 
   @Get('exportacao')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'Baixa o CSV de TODOS os alunos, agendados ou nao',
     description:
@@ -247,6 +258,7 @@ export class AgendamentoAdminController {
   }
 
   @Get(':id')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({ summary: 'Detalha um agendamento' })
   @ApiParam({ name: 'id', type: Number, example: 501 })
   @ApiOkResponse({ type: AgendamentoAdminDto })
@@ -256,6 +268,7 @@ export class AgendamentoAdminController {
   }
 
   @Get(':id/historico')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'Quem mexeu neste agendamento',
     description:

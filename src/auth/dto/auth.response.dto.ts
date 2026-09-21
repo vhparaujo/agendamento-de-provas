@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Perfil } from '../../enums/perfil.enum';
+import { NivelAdmin } from '../../generated/prisma/client';
 import type { TokensAdmin } from '../service/auth.service';
 
 /**
@@ -48,6 +49,15 @@ export class AdminLogadoResponseDto {
 
   @ApiProperty({ enum: Perfil, example: Perfil.ADMIN })
   perfil!: Perfil;
+
+  @ApiProperty({
+    enum: NivelAdmin,
+    example: NivelAdmin.ASSISTENTE_OPERACIONAL,
+    description:
+      'O que este admin pode fazer. E daqui que a tela descobre quais telas montar — ' +
+      'mas quem RECUSA e sempre o backend, rota por rota.',
+  })
+  nivel!: NivelAdmin;
 
   @ApiProperty({ example: false })
   mustChangePassword!: boolean;

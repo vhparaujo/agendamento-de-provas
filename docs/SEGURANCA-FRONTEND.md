@@ -118,9 +118,39 @@ consequências para o front:
 - **Não invente `alunoId`.** Envie o `alunoId` que veio no launch; se não bater
   com o token, o backend recusa (e isso vai para o log de auditoria).
 
-O mesmo vale para as telas de admin: não há níveis de admin, então qualquer admin
-autenticado pode tudo. Não construa uma "matriz de permissões" no front — ela não
-existe no backend.
+### 3.1 Os três níveis de admin (21/09/2026)
+
+Até esta data não havia níveis, e este documento dizia para não construir matriz
+de permissões no front. **Mudou.** Agora `GET /api/auth/me` devolve um `nivel`:
+
+| `nivel` | O que a pessoa abre |
+|---|---|
+| `SUPERADMIN` | Tudo, inclusive a tela de Administradores |
+| `ASSISTENTE_OPERACIONAL` | Início, Faixas, Polos e salas, Alunos, Relatórios; Agendamentos e Senhas **só para visualizar** |
+| `VISUALIZADOR_EXECUTIVO` | Só a tela inicial |
+
+⚠️ **O que muda no front é só o que ele MOSTRA.** A regra desta seção continua
+valendo inteira: esconder um item do menu, um botão ou uma tela é **UX**, não
+segurança. Quem recusa é o backend, rota por rota (`@NiveisPermitidos`), e uma
+chamada que o nível não abre responde **403** — não importa o que a tela tenha
+escondido.
+
+Três coisas que evitam retrabalho:
+
+- **Compare o nível num lugar só.** Neste front é `podeAdmin`
+  (`stores/adminAuth.ts`), e as telas perguntam "posso cancelar este
+  agendamento?", nunca "qual é o meu nível?". Com a comparação espalhada, o
+  próximo nível teria de ser caçado em dezenas de `v-if`.
+- **Menu e guarda de rota leem a MESMA permissão.** Com duas listas, um item do
+  menu acaba levando a uma tela que a guarda devolve para o Início, e ninguém
+  entende por quê.
+- **O nível viaja no access token.** Trocar o nível de alguém vale na renovação
+  seguinte da sessão dela (no máximo 15 min), não no instante do clique — avise
+  isso na tela, senão parece que a mudança não pegou.
+
+Enquanto `/auth/me` não responde, trate o nível como desconhecido e não mostre
+nada: melhor a tela nascer vazia por um instante do que piscar um botão que será
+escondido em seguida.
 
 ---
 

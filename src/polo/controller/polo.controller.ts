@@ -21,7 +21,12 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import type { AdminJwtPayload } from '../../auth/jwt/jwt.types';
-import { AdminLogado, SomenteAdmin } from '../../auth/roles.decorator';
+import {
+  AdminLogado,
+  NiveisPermitidos,
+  SomenteAdmin,
+} from '../../auth/roles.decorator';
+import { NivelAdmin } from '../../generated/prisma/client';
 import { TAGS } from '../../config/swagger';
 import {
   AtualizarPoloDto,
@@ -40,6 +45,10 @@ export class PoloController {
   constructor(private readonly poloService: PoloService) {}
 
   @Get()
+  @NiveisPermitidos(
+    NivelAdmin.ASSISTENTE_OPERACIONAL,
+    NivelAdmin.VISUALIZADOR_EXECUTIVO,
+  )
   @ApiOperation({
     summary: 'Lista os polos',
     description:
@@ -64,6 +73,7 @@ export class PoloController {
 
   /** Antes de `:id` de proposito: senao "fusos" cairia no ParseIntPipe. */
   @Get('fusos')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'Fusos aceitos para um polo',
     description:
@@ -77,6 +87,7 @@ export class PoloController {
   }
 
   @Get(':id')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({ summary: 'Detalha um polo' })
   @ApiParam({ name: 'id', type: Number, example: 6 })
   @ApiOkResponse({ type: PoloComContagensDto })
@@ -86,6 +97,7 @@ export class PoloController {
   }
 
   @Post()
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'Cadastra (ou reativa) um polo',
     description:
@@ -102,6 +114,7 @@ export class PoloController {
   }
 
   @Patch(':id')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'Atualiza cidade, situacao e fuso do polo',
     description:
@@ -123,6 +136,7 @@ export class PoloController {
   }
 
   @Delete(':id')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'Remove um polo sem sala, faixa nem aluno',
     description:

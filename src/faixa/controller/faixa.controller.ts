@@ -22,7 +22,12 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import type { AdminJwtPayload } from '../../auth/jwt/jwt.types';
-import { AdminLogado, SomenteAdmin } from '../../auth/roles.decorator';
+import {
+  AdminLogado,
+  NiveisPermitidos,
+  SomenteAdmin,
+} from '../../auth/roles.decorator';
+import { NivelAdmin } from '../../generated/prisma/client';
 import { TAGS } from '../../config/swagger';
 import {
   AtualizarFaixaDto,
@@ -47,6 +52,7 @@ export class FaixaController {
   constructor(private readonly faixaService: FaixaService) {}
 
   @Get()
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'Lista as faixas com a ocupacao de cada sala',
     description:
@@ -94,6 +100,7 @@ export class FaixaController {
   }
 
   @Get(':id')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({ summary: 'Detalha uma faixa e sua ocupacao' })
   @ApiParam({ name: 'id', type: Number, example: 14 })
   @ApiOkResponse({ type: FaixaDetalheDto })
@@ -103,6 +110,7 @@ export class FaixaController {
   }
 
   @Post()
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'Cria a faixa e monta a oferta de vagas',
     description:
@@ -134,6 +142,7 @@ export class FaixaController {
   }
 
   @Patch(':id')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'Ajusta data, horario ou situacao da faixa',
     description:
@@ -161,6 +170,7 @@ export class FaixaController {
   }
 
   @Post('desativar-em-lote')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'Desativa de uma vez as faixas ate uma data (a virada de periodo)',
     description:
@@ -191,6 +201,7 @@ export class FaixaController {
   }
 
   @Post(':id/salas')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'Adiciona uma sala a uma faixa existente',
     description:
@@ -218,6 +229,7 @@ export class FaixaController {
   }
 
   @Delete(':id')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
   @ApiOperation({
     summary: 'Remove uma faixa sem agendamentos',
     description:

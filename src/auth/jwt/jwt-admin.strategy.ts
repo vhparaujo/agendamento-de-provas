@@ -28,6 +28,18 @@ export class JwtAdminStrategy extends PassportStrategy(
       );
     }
 
+    /**
+     * Token emitido ANTES de o nivel existir (21/09/2026).
+     *
+     * Recusar aqui, e nao tratar como superadmin, e o que impede um access
+     * token de 15 minutos de continuar abrindo o sistema inteiro logo depois do
+     * deploy que criou os niveis. O custo e zero para o usuario: 401 e o sinal
+     * que o front ja usa para renovar, e o refresh le o nivel do banco.
+     */
+    if (!payload.nivel) {
+      throw new UnauthorizedException('Sua sessão expirou. Entre novamente.');
+    }
+
     return payload;
   }
 }
