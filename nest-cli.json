@@ -4,7 +4,7 @@
   "sourceRoot": "src",
   "compilerOptions": {
     "deleteOutDir": true,
-    "//assets": "O nest build so copia .ts compilado. Sem esta linha o logo da lista de presenca ficaria fora do dist/ e o PDF sairia sempre sem marca. Ver src/relatorio/service/pdf-lista-presenca.ts.",
+    "//assets": "O nest build so copia .ts compilado. Sem esta linha o timbrado da lista de presenca e o modelo da declaracao ficariam fora do dist/ e os PDFs sairiam sem papel e sem titulo. Ver src/relatorio/service/pdf-lista-presenca.ts.",
     "assets": ["**/*.png"],
     "plugins": [
       {

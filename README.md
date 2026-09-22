@@ -949,8 +949,8 @@ Cada página traz o cabeçalho (formato, polo, data, horário, sala) e a tabela:
 - **Ordem alfabética por nome** dentro da página (é por ele que o fiscal procura
   a pessoa na frente dele); as páginas saem por **dia → horário → polo → sala**,
   de modo que a pilha já sai separável por campus.
-- **Sala grande continua na página seguinte**, com o cabeçalho repetido e marcado
-  `(cont.)`, e a numeração seguindo de onde parou.
+- **Sala grande continua na página seguinte**, com a identificação repetida e
+  marcada `(cont.)`, e a numeração seguindo de onde parou.
 - **A coluna `Assinatura` é uma célula vazia com borda** — a linha da tabela é a
   linha em que se assina. Não há linha em branco no fim: a folha é a relação de
   quem tem lugar ali.
@@ -959,10 +959,13 @@ Cada página traz o cabeçalho (formato, polo, data, horário, sala) e a tabela:
   **O polo entra no nome**: as folhas de dois campi vão para lugares físicos
   diferentes, e sala homônima em dois polos é comum.
 
-**O logo é opcional.** Coloque um `logo.png` em `src/relatorio/assets/` e ele
-passa a aparecer no canto superior esquerdo de toda página — nada mais precisa
-mudar. Sem o arquivo, o PDF sai só com o cabeçalho de texto, que já identifica a
-folha. Detalhes de tamanho em `src/relatorio/assets/LEIA-ME.md`.
+**A folha é o timbrado da instituição** (`src/relatorio/assets/modelo-lista-presenca.png`),
+a mesma arte da declaração de agendamento: o título **LISTA DE PRESENÇA** já vem
+impresso nela, na fonte da marca, e o código desenha apenas a identificação da
+sala, a tabela e o total. Como a arte ocupa o topo e o pé da página, **cabem ~20
+alunos por folha** — uma sala de 40 lugares sai em duas. Sem o arquivo o PDF
+continua saindo, só que sem título e sem papel. Medidas e regras em
+`src/relatorio/assets/LEIA-ME.md`.
 
 O PDF é gerado com **`pdfkit`**, usando a Helvetica padrão do formato
 (`WinAnsiEncoding` cobre todo acento do português, sem embutir arquivo de fonte).

@@ -1,3 +1,4 @@
+import { inflateSync } from 'node:zlib';
 import {
   ordemDaPilha,
   porNome,
@@ -140,6 +141,53 @@ describe('o PDF', () => {
   const paginas = (pdf: Buffer) =>
     Number(/\/Count\s+(\d+)/.exec(pdf.toString('latin1'))?.[1]);
 
+  /**
+   * O texto de cada pagina, ja descomprimido. O `pdfkit` escreve as strings em
+   * HEXADECIMAL (`<53414c41...> TJ`), entao ler o PDF cru nao acha palavra
+   * nenhuma — a conversao esta aqui para que o teste fale de texto, e nao de
+   * bytes.
+   */
+  const textoDasPaginas = (pdf: Buffer): string[] => {
+    const paginas: string[] = [];
+
+    let i = 0;
+
+    while ((i = pdf.indexOf('stream', i)) !== -1) {
+      if (pdf.subarray(i - 3, i).toString('latin1') === 'end') {
+        i += 6;
+        continue;
+      }
+
+      let inicio = i + 6;
+      while (pdf[inicio] === 0x0d || pdf[inicio] === 0x0a) inicio++;
+
+      const fim = pdf.indexOf('endstream', inicio);
+
+      try {
+        const conteudo = inflateSync(pdf.subarray(inicio, fim)).toString(
+          'latin1',
+        );
+
+        // ⚠️ O PNG do timbrado TAMBEM e um stream deflate, e inflar sai byte de
+        // imagem. So o conteudo de pagina tem operador de texto (`BT` + `Tf`).
+        if (/\bBT\b/.test(conteudo) && /\bTf\b/.test(conteudo)) {
+          // Cada `<hex>` vira o texto que ele representa.
+          paginas.push(
+            conteudo.replace(/<([0-9a-f]+)>/g, (_, hex: string) =>
+              Buffer.from(hex, 'hex').toString('latin1'),
+            ),
+          );
+        }
+      } catch {
+        // Nao e um stream deflate.
+      }
+
+      i = fim + 9;
+    }
+
+    return paginas;
+  };
+
   it('da uma pagina por sala, mesmo com pouca gente', async () => {
     // Duas salas nunca dividem folha: elas vao para dois fiscais diferentes.
     expect(paginas(await pdfDeListasDePresenca([pagina(3), pagina(1)]))).toBe(
@@ -148,7 +196,52 @@ describe('o PDF', () => {
   });
 
   it('continua na pagina seguinte quando a sala nao cabe numa folha', async () => {
-    expect(paginas(await pdfDeListasDePresenca([pagina(34)]))).toBe(2);
+    // A area branca do timbrado comporta 19 linhas de nome curto. O numero em si
+    // nao e promessa nenhuma — o que o teste trava e que a quebra EXISTE e que
+    // ela nao e disparada uma linha cedo demais, deixando folha pela metade.
+    //
+    // ⚠️ Eram 20 ate a arte ganhar o bloco de endereco no pe, que subiu o rodape
+    // impresso em 25,6pt. Se este teste comecar a falhar depois de alguem trocar
+    // o `.png`, a causa provavel e essa: as medidas de `AREA_UTIL` sao da ARTE, e
+    // arte nova pede remedicao — ver o LEIA-ME de `assets/`.
+    expect(paginas(await pdfDeListasDePresenca([pagina(19)]))).toBe(1);
+    expect(paginas(await pdfDeListasDePresenca([pagina(20)]))).toBe(2);
+  });
+
+  it('repete a identificacao da sala em toda pagina, e marca a continuacao', async () => {
+    // A folha solta que nao diz de que sala ela e nao serve para nada: elas vao
+    // empilhadas para o campus e sao distribuidas uma a uma. O `(cont.)` e o que
+    // impede o fiscal de contar a mesma sala duas vezes.
+    const texto = textoDasPaginas(await pdfDeListasDePresenca([pagina(25)]));
+
+    const folhas = texto.filter((t) => t.includes('SALA 1 EAD'));
+
+    expect(folhas).toHaveLength(2);
+    expect(folhas[0]).not.toContain('cont.');
+    expect(folhas[1]).toContain('cont.');
+  });
+
+  it('nao desenha o titulo — ele vem impresso no timbrado', async () => {
+    // Redesenha-lo por cima duplicaria o texto na folha.
+    const [primeira] = textoDasPaginas(
+      await pdfDeListasDePresenca([pagina(3)]),
+    );
+
+    expect(primeira).not.toContain('LISTA DE PRESEN');
+    expect(primeira).toContain('Assinatura');
+  });
+
+  it('embute o timbrado UMA vez, e nao uma por pagina', async () => {
+    // O `pdfkit` so deduplica imagem quando a origem e o CAMINHO do arquivo;
+    // passando `Buffer` ele reembutiria as centenas de KB da arte em cada folha,
+    // e um semestre de listas viraria um download de dezenas de MB.
+    const uma = (await pdfDeListasDePresenca([pagina(1)])).length;
+    const cinco = (
+      await pdfDeListasDePresenca(Array.from({ length: 5 }, () => pagina(1)))
+    ).length;
+
+    // A arte passa de 400KB; quatro paginas a mais nao podem custar isso.
+    expect(cinco - uma).toBeLessThan(20_000);
   });
 
   it('nao gera pagina em branco quando nao ha sala nenhuma', async () => {

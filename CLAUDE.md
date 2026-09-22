@@ -1007,7 +1007,7 @@ src/
   periodo/     ✅ CRUD do admin + leitura usada pelo portal
   relatorio/   ✅ lista de presença por sala (lista-presenca.service.ts,
                pdf-lista-presenca.ts puro, nome-de-arquivo.ts,
-               assets/logo.png opcional)
+               assets/modelo-lista-presenca.png — o timbrado da folha)
   d2l/         ✅ autorização OAuth (d2l-oauth) · canal HTTP compartilhado
                (d2l-http) · leitura de matrículas (d2l-enrollments) · cliente de
                questionários (d2l-quizzes) · condições de liberação e grupos
@@ -1990,20 +1990,58 @@ dita cada decisão abaixo.
   não a matrícula. Quem não tem nome no CSV vai para o fim, ordenado por RA.
 - **A ordem das páginas é dia → horário → polo → sala**: a pilha já sai da
   impressora separável por campus, sem ninguém reordenar folha a folha.
-- **O cabeçalho se repete em toda página**, inclusive na continuação de uma sala
-  grande, marcado `(cont.)`. Folha solta que não diz de que sala, dia e horário
-  ela é não serve para nada — e as folhas são distribuídas uma a uma.
+- **A identificação se repete em toda página**, inclusive na continuação de uma
+  sala grande, marcada `(cont.)`. Folha solta que não diz de que sala, dia e
+  horário ela é não serve para nada — e as folhas são distribuídas uma a uma.
+  São **duas linhas**: `SALA — Câmpus` em negrito azul (é o que o fiscal procura
+  na pilha) e `Formato · data · horário` abaixo. As duas recebem `height` de uma
+  linha + `ellipsis`: `Sala.nome` e `Polo.nome` são cadastro livre, e sem teto um
+  nome longo quebraria por cima da linha de baixo ou do cabeçalho da tabela.
 - **Nome do arquivo:**
   `Lista de presenca - 11-06-2026 09h00-12h00 - Campus Asa Sul - SALA 1 EAD.pdf`.
   **O polo entra no nome** porque as folhas de dois campi no mesmo dia e horário
   vão para lugares físicos diferentes, e sala com o mesmo nome em dois polos é
   comum. Os acentos caem para dispensar o `filename*=UTF-8''` do RFC 5987 no
   `Content-Disposition` (`relatorio/service/nome-de-arquivo.ts`).
-- **O logo é OPCIONAL.** `src/relatorio/assets/logo.png` é lido se existir e
-  ignorado se não — basta colocar o arquivo lá, nada mais muda
-  (`src/relatorio/assets/LEIA-ME.md`). Fazer o relatório inteiro falhar por causa
-  de uma imagem ausente seria trocar um documento imperfeito por documento
-  nenhum. O `nest build` copia `**/*.png` para o `dist` (`nest-cli.json`).
+- **O layout é o TIMBRADO DA INSTITUIÇÃO** (22/09/2026),
+  `src/relatorio/assets/modelo-lista-presenca.png` — a mesma arte da declaração,
+  com outro título. Substituiu o `logo.png` opcional no canto: a marca agora vem
+  na arte, e o arquivo **vai versionado** (era opcional e nunca chegou a existir).
+  ⚠️ **O TÍTULO "LISTA DE PRESENÇA" VEM IMPRESSO NELA**, na fonte da marca, e por
+  isso o código não desenha título nenhum — redesenhá-lo duplicaria o texto na
+  folha. O `pdfkit` imprime só a identificação da sala, a tabela e o total.
+- **As medidas saem da arte, não de um gosto** (estão todas no `LEIA-ME.md` de
+  `assets/`): margem **69pt** (a banda azul ocupa os primeiros 44,2pt), coluna de
+  texto terminando em **525pt**, área branca de **191,5pt** (fim do risco do
+  título) a **708,1pt** (topo do bloco de emissão). A página é declarada em
+  **595,276 × 841,89**. ⚠️ **A tabela não pode crescer para a direita** mesmo
+  havendo papel ali: as curvas do canto inferior entram a partir de 629pt e nunca
+  passam de 530pt.
+- ⚠️ **TROCAR A ARTE EXIGE REMEDIR.** Nada no código percebe que o rodapé mudou
+  de altura — a tabela simplesmente passa a escrever por cima dele. Aconteceu:
+  a arte entregue em PNG trouxe um **bloco de endereço** no pé ("QS 07 - Lote 01
+  - EPCT … ucb.catolica.edu.br", de 750,6 a 829,3pt) que a versão em PDF não
+  tinha, e ele empurrou o bloco de emissão 25,6pt para cima — de 733,7 para
+  708,1. O teste da quebra de página é a rede que pega isso.
+- ⚠️ **Cabem ~19 alunos por página, contra ~30 no layout antigo** — a arte ocupa
+  topo e pé. Uma sala de 40 lugares sai em três folhas. As colunas encolheram
+  59pt no total, quase tudo tirado de `Nº` e `RA`, que sobravam: `Nome` perdeu
+  15pt (nome que quebra em duas linhas encomprida a folha) e `Formato` ficou em
+  70pt, o que ainda cabe "Semipresencial" (61,5pt) numa linha só.
+- **O asset é 1414 × 2000 px (171 dpi), truecolor, sem alfa — 369 KB.** A
+  resolução é a da arte entregue e **não dá para melhorar ampliando**; o script
+  avisa quando a origem fica abaixo de 200 dpi. Truecolor e não paleta indexada:
+  em 256 cores as curvas finas do canto saem **pontilhadas**, porque elas vivem
+  quase só do antialiasing.
+- ⚠️ **A arte é passada pelo CAMINHO do arquivo, nunca como `Buffer`.** O
+  `pdfkit` só deduplica imagem quando a origem é uma `string` (`_imageRegistry`);
+  com `Buffer` ele reembutiria os ~370KB da arte em **cada folha**, e um semestre
+  de listas viraria um download de dezenas de MB. Há teste travando isso.
+- **O timbrado continua OPCIONAL.** É lido de `dist/` ou de `src/` e ignorado se
+  não estiver em nenhum dos dois — fazer o relatório inteiro falhar por causa de
+  uma imagem ausente seria trocar um documento imperfeito por documento nenhum.
+  Só que agora a folha sem ele sai **sem título**, não apenas sem o papel. O
+  `nest build` copia `**/*.png` para o `dist` (`nest-cli.json`).
 - **Fonte Helvetica padrão do PDF**, com `WinAnsiEncoding`: cobre Latin-1 inteiro
   e com ele todo acento do português ("VINÍCIUS", "ALARÇÃO", "Câmpus"), sem
   embutir arquivo de fonte no repositório. Caractere fora do Latin-1 exigiria uma
@@ -2149,7 +2187,7 @@ botão que só produz 403 num banco recém-migrado.
   cliente: apontavam para o `ValidacaoCertificados` do fornecedor antigo, que não
   existe deste lado. QR que leva a lugar nenhum é pior que nenhum QR, porque
   convida a conferir. O espaço está livre se um dia houver validação própria.
-- **A arte vai versionada**, ao contrário do logo da lista de presença, porque é
+- **A arte vai versionada**, como a da lista de presença, porque é
   a identidade visual que o cliente pediu. A leitura continua tolerante à
   ausência: derrubar o download por causa de um `.png` faltando trocaria um papel
   imperfeito por papel nenhum. ⚠️ Só que agora a folha sem a arte sai **sem
