@@ -6,6 +6,7 @@ import {
   Param,
   ParseIntPipe,
   Post,
+  Query,
   Res,
 } from '@nestjs/common';
 import {
@@ -17,6 +18,7 @@ import {
   ApiOperation,
   ApiParam,
   ApiProduces,
+  ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
 import type { Response } from 'express';
@@ -27,15 +29,17 @@ import {
   AndamentoDoCompulsorioDto,
   ExecucaoIniciadaDto,
   IniciarCompulsorioDto,
+  PaginaDeExecucoesCompulsorioDto,
 } from '../dto/compulsorio.dto';
 import { CompulsorioService } from '../service/compulsorio.service';
 
 /**
- * O lote que agenda por quem nao agendou. Tres rotas: dispara, acompanha, baixa
- * o relatorio de quem ficou de fora.
+ * O lote que agenda por quem nao agendou. Quatro rotas: dispara, lista o
+ * historico, acompanha uma execucao, baixa o relatorio de quem ficou de fora.
  *
- * Sao tres e nao uma porque o lote demora dezenas de minutos — nenhum navegador
- * segura a conexao aberta ate o fim.
+ * Sao varias e nao uma porque o lote demora dezenas de minutos — nenhum navegador
+ * segura a conexao aberta ate o fim, e o id que o POST devolve nao sobrevive a
+ * aba fechada (dai o historico, cuja primeira linha e a execucao mais recente).
  */
 @ApiTags(TAGS.AGENDAMENTOS)
 @Controller('agendamentos/compulsorio')
@@ -78,6 +82,47 @@ export class CompulsorioController {
       { simulacao: dto.simulacao ?? true, poloId: dto.poloId },
       admin.email,
     );
+  }
+
+  @Get()
+  @ApiOperation({
+    summary: 'O historico de execucoes, da mais recente para a mais antiga',
+    description:
+      'O `id` do POST so existe para quem disparou e so enquanto a aba estiver ' +
+      'aberta — e a propria tela manda fechar a aba, porque o lote leva dezenas ' +
+      'de minutos. Sem esta rota, um F5, um colega em outra maquina ou a volta ' +
+      'no dia seguinte encontravam a tela em branco, com o resultado de horas de ' +
+      'processamento visivel so no log do servidor. **A primeira linha e a ' +
+      'execucao mais recente**, e e por ela que a tela abre.\n\n' +
+      'A outra pergunta e de **comparacao**: a simulacao ' +
+      'disse "130 sem vaga", a administracao abriu sala, rodou de novo — ' +
+      'melhorou? Com so a ultima execucao visivel, o lote anterior (que e a base ' +
+      'da comparacao) so existia no log do servidor.\n\n' +
+      'Cada item tem o **mesmo formato** de `GET /:id`, contagem de excecoes ' +
+      'inclusive: a tela mostra a linha escolhida no cartao de detalhe sem ' +
+      'buscar de novo.',
+  })
+  @ApiQuery({
+    name: 'pagina',
+    required: false,
+    type: Number,
+    example: 1,
+    description: 'Padrao 1.',
+  })
+  @ApiQuery({
+    name: 'porPagina',
+    required: false,
+    type: Number,
+    example: 10,
+    description: 'Padrao 10, maximo 50.',
+  })
+  @ApiOkResponse({ type: PaginaDeExecucoesCompulsorioDto })
+  listar(
+    @Query('pagina', new ParseIntPipe({ optional: true })) pagina?: number,
+    @Query('porPagina', new ParseIntPipe({ optional: true }))
+    porPagina?: number,
+  ) {
+    return this.service.listar({ pagina, porPagina });
   }
 
   @Get(':id')

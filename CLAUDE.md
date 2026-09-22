@@ -547,7 +547,7 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `GET /agendamentos/estatisticas` | admin | A tela de Início: adesão da rodada (a **vigente** por padrão; `periodoId` olha outra janela, com a base continuando a de hoje) sobre os vínculos **ativos**, por formato e por origem (aluno/compulsório/admin — a mesma regra do "Agendado por" da exportação), por dia de criação, e vagas livres nas faixas futuras x pendentes por polo + formato (o mesmo recorte de faixas do compulsório) |
 | `GET /relatorios/listas-de-presenca` · `/pdf` · `/:salaFaixaId/pdf` | admin | Lista de presença: um PDF com **uma página por sala** de aplicação |
 | `PATCH /agendamentos/:id/remanejar` · `DELETE /agendamentos/:id` | admin | Mover de sala/horário e cancelar |
-| `POST /agendamentos/compulsorio` · `GET /:id` · `/:id/relatorio` | admin | Agenda por quem não agendou; acompanha o lote e baixa o CSV de exceções |
+| `POST /agendamentos/compulsorio` · `GET /` · `GET /:id` · `/:id/relatorio` | admin | Agenda por quem não agendou; lista o histórico paginado (a tela abre pela primeira linha), acompanha o lote e baixa o CSV de exceções |
 | `POST /agendamentos` | admin | Agenda a prova de **um** aluno, escolhendo a sala ou deixando a alocação escolher |
 | `PATCH /portal/agendamentos/:id` | aluno | Trocar de horário (atômico). **Não há cancelamento pelo aluno** — só o admin, em `DELETE /agendamentos/:id` |
 | `GET /portal/agendamentos/:id/declaracao` | aluno | Declaração de agendamento em PDF — **só depois de o prazo encerrar** |
@@ -2281,7 +2281,8 @@ mora em `test/setup-e2e.ts` porque o guard a lê quando a aplicação sobe.
 
 Fechado o prazo, **quem não agendou não fica sem prova**: a administração dispara um
 lote que aloca todo mundo automaticamente. `POST /agendamentos/compulsorio`,
-acompanhado por `GET /agendamentos/compulsorio/:id`.
+acompanhado por `GET /agendamentos/compulsorio/:id` — e, ao abrir a tela, pelo
+histórico em `GET /agendamentos/compulsorio`.
 
 **As duas dimensões de preenchimento**, nesta ordem: as **datas** da mais próxima
 para a mais distante (`ordenarPorProximidade`, em `alocacao.ts`) e, dentro de cada
@@ -2357,6 +2358,34 @@ junto os outros cinco.
 aberta 25 minutos; "faltaram 130 vagas em Taguatinga/EaD" é o que faz abrir sala e
 não pode sumir num F5; e é o registro de que o compulsório aconteceu, com quem
 mandou.
+
+**A tela precisa enxergar o lote que não foi dela** (22/09/2026). O `id` que o
+POST devolve vive na memória da aba, e a própria tela manda fechar a aba — o lote
+leva dezenas de minutos. Quem fechava, dava F5 ou abria de outra máquina voltava
+para uma tela **em branco**: uma execução de horas terminava e o resultado só
+existia no log do servidor (`COMPULSORIO_CONCLUIDO`), sem relatório para baixar.
+
+`GET /agendamentos/compulsorio` é a rota disso: o **histórico paginado** (10 por
+página, máximo 50), da mais recente para a mais antiga. Duas perguntas em uma —
+a primeira linha é "qual foi a última?", e por ela a tela abre; a lista inteira é
+"o que mudou de uma para a outra?", que é a pergunta real da administração: a
+simulação disse 130 sem vaga, abriram sala, rodaram de novo — melhorou? Por isso
+**não existe um `/ultima` aqui**, ao contrário de `/senhas-de-prova/execucoes` e
+`/special-access/execucoes`, que não têm histórico.
+
+Cada item vem no **mesmo formato do `GET /:id`**, contagem de exceções inclusive
+— trocar de execução na tela não custa requisição, e as exceções da página inteira
+saem num `groupBy` só, não num `consultar` por linha. Do lado da tela,
+`acompanhar(id, anunciar)`: ao abrir, `anunciar: false`, porque o lote que
+terminou ontem não pode dar o toast de "concluído" como se fosse agora; se ainda
+estiver rodando, a vigia continua, o fim é anunciado e a linha do histórico é
+recarregada (senão ela ficaria no último número lido antes do fim).
+
+`test/compulsorio-historico.e2e-spec.ts` guarda as quatro coisas que erram
+caladas aqui: a ordem (a mais recente primeiro — invertida, a tela abriria o lote
+mais velho como se fosse o de agora), a contagem de exceções por execução (é por
+ela que se decide abrir sala), o teto do `porPagina` e o `interrompida` valendo na
+lista, não só no acompanhamento.
 
 `atualizadoEm` é batido a cada fatia — é o que distingue **lote lento de lote
 morto**. Sem isso um restart deixaria `EM_ANDAMENTO` para sempre e bloquearia todo

@@ -14,6 +14,7 @@ import {
   StatusAgendamento,
   StatusExecucao,
 } from '../../generated/prisma/client';
+import type { ExecucaoCompulsorio } from '../../generated/prisma/client';
 import { PeriodoService } from '../../periodo/service/periodo.service';
 import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 import { ocuparVagaSimulada, ordenarPorProximidade } from './alocacao';
@@ -73,6 +74,17 @@ const CONCORRENCIA = 6;
  * agressiva do sistema inteiro — e um 429 aqui atrasa mais do que a espera.
  */
 const ATRASO_ENTRE_TURMAS_MS = 200;
+
+/**
+ * Quantas execucoes por pagina no historico.
+ *
+ * Dez e generoso: sao poucas por rodada (uma simulacao, um lote real, e as que
+ * foram repetidas depois de abrir sala). O teto existe pelo mesmo motivo de
+ * sempre — nada de uma tela pedir "todas" e o processo montar a resposta inteira
+ * em memoria.
+ */
+const PADRAO_POR_PAGINA = 10;
+const MAXIMO_POR_PAGINA = 50;
 
 /**
  * Silencio maior que isto significa lote MORTO, nao lote lento.
@@ -137,6 +149,26 @@ interface JanelaDoLote {
   principal: string;
   ids: string[];
   rodada: string;
+}
+
+/**
+ * O andamento de uma execucao: a linha da tabela mais o que so se sabe contando
+ * (`excecoes`) ou olhando o relogio (`interrompida`). E o mesmo objeto no
+ * acompanhamento e em cada linha do historico — a tela mostra um no cartao e os
+ * outros na lista, sem precisar de dois formatos.
+ */
+export interface Andamento extends ExecucaoCompulsorio {
+  interrompida: boolean;
+  excecoes: Partial<Record<MotivoExcecao, number>>;
+}
+
+/** Uma pagina do historico de execucoes. Mesmo formato do resto do admin. */
+export interface PaginaDeExecucoes {
+  total: number;
+  pagina: number;
+  porPagina: number;
+  totalPaginas: number;
+  itens: Andamento[];
 }
 
 /** Uma linha do relatorio de quem NAO entrou (ou entrou com ressalva). */
@@ -272,7 +304,7 @@ export class CompulsorioService {
   }
 
   /** O andamento, para a tela perguntar de tempos em tempos. */
-  async consultar(id: number) {
+  async consultar(id: number): Promise<Andamento> {
     const execucao = await this.prisma.execucaoCompulsorio.findUnique({
       where: { id },
     });
@@ -297,6 +329,83 @@ export class CompulsorioService {
       excecoes: Object.fromEntries(
         porMotivo.map((linha) => [linha.motivo, linha._count._all]),
       ),
+    };
+  }
+
+  /**
+   * O historico, da mais recente para a mais antiga. E como a tela acha o lote
+   * que nao foi dela.
+   *
+   * Ate aqui o unico caminho para o andamento era o id que o POST devolveu — e a
+   * propria tela manda fechar a aba, porque o lote leva dezenas de minutos. Quem
+   * fechava (ou rodava de outra maquina, ou so apertava F5) voltava para uma tela
+   * em branco, e o resultado de uma execucao de horas so existia no log do
+   * servidor. A tabela sempre teve o registro; faltava a rota para perguntar.
+   *
+   * A primeira linha e a mais recente, entao a tela nao precisa de uma rota
+   * separada para "qual foi a ultima?" — diferente de
+   * `/senhas-de-prova/execucoes/ultima`, que existe porque la nao ha historico.
+   *
+   * A outra pergunta que ele responde e de **comparacao**.
+   *
+   * A simulacao disse "130 sem vaga", abriram sala, rodou de novo — deu certo?
+   * Com so a ultima execucao na tela, o lote anterior, que e a base da
+   * comparacao, tinha sumido.
+   *
+   * As excecoes da pagina inteira saem num `groupBy` so, e nao num `consultar`
+   * por linha: dez linhas seriam onze idas ao banco para montar uma tabela que
+   * cabe numa tela.
+   */
+  async listar(filtro: {
+    pagina?: number;
+    porPagina?: number;
+  }): Promise<PaginaDeExecucoes> {
+    const porPagina = Math.min(
+      Math.max(filtro.porPagina ?? PADRAO_POR_PAGINA, 1),
+      MAXIMO_POR_PAGINA,
+    );
+    const pagina = Math.max(filtro.pagina ?? 1, 1);
+
+    const [total, registros] = await Promise.all([
+      this.prisma.execucaoCompulsorio.count(),
+      this.prisma.execucaoCompulsorio.findMany({
+        // Por `id`, e nao por `iniciadoEm`: duas execucoes do mesmo minuto
+        // (uma que falhou na largada e a repetida em seguida) precisam sair na
+        // ordem em que aconteceram, sem empate.
+        orderBy: { id: 'desc' },
+        skip: (pagina - 1) * porPagina,
+        take: porPagina,
+      }),
+    ]);
+
+    const porMotivo =
+      registros.length > 0
+        ? await this.prisma.excecaoCompulsorio.groupBy({
+            by: ['execucaoId', 'motivo'],
+            where: { execucaoId: { in: registros.map((e) => e.id) } },
+            _count: { _all: true },
+          })
+        : [];
+
+    const excecoes = new Map<number, Partial<Record<MotivoExcecao, number>>>();
+
+    for (const linha of porMotivo) {
+      const daExecucao = excecoes.get(linha.execucaoId) ?? {};
+
+      daExecucao[linha.motivo] = linha._count._all;
+      excecoes.set(linha.execucaoId, daExecucao);
+    }
+
+    return {
+      total,
+      pagina,
+      porPagina,
+      totalPaginas: Math.max(1, Math.ceil(total / porPagina)),
+      itens: registros.map((execucao) => ({
+        ...execucao,
+        interrompida: this.pareceMorta(execucao),
+        excecoes: excecoes.get(execucao.id) ?? {},
+      })),
     };
   }
 

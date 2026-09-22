@@ -124,3 +124,27 @@ export class AndamentoDoCompulsorioDto {
   })
   atualizadoEm!: Date;
 }
+
+/**
+ * O historico de execucoes. Cada item e o MESMO objeto do acompanhamento: a tela
+ * mostra a linha escolhida no cartao de detalhe sem ir buscar de novo.
+ */
+export class PaginaDeExecucoesCompulsorioDto {
+  @ApiProperty({ example: 7, description: 'Total de execucoes ja disparadas.' })
+  total!: number;
+
+  @ApiProperty({ example: 1 })
+  pagina!: number;
+
+  @ApiProperty({ example: 10, description: 'Padrao 10, maximo 50.' })
+  porPagina!: number;
+
+  @ApiProperty({ example: 1 })
+  totalPaginas!: number;
+
+  @ApiProperty({
+    type: [AndamentoDoCompulsorioDto],
+    description: 'Da mais recente para a mais antiga.',
+  })
+  itens!: AndamentoDoCompulsorioDto[];
+}
