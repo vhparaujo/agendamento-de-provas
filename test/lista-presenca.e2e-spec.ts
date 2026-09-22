@@ -124,6 +124,10 @@ describe('Lista de presenca (e2e)', () => {
     await agendar(poloA, salaSegundaId, '005', PERIODO_LETIVO);
 
     await agendar(poloB, salaOutroPoloId, '006', PERIODO_LETIVO);
+
+    // A SUBSTITUTIVA do mesmo semestre, na mesma sala: mesmo `periodoLetivoId`,
+    // outra prova. So a rodada a separa da regular.
+    await agendar(poloA, salaCheiaId, '007', PERIODO_LETIVO, { rodada: 'SUB' });
   }, 60_000);
 
   afterAll(async () => {
@@ -178,7 +182,7 @@ describe('Lista de presenca (e2e)', () => {
     salaFaixaId: number,
     sufixo: string,
     periodoLetivoId: string,
-    opcoes: { curso?: string; cancelado?: boolean } = {},
+    opcoes: { curso?: string; cancelado?: boolean; rodada?: string } = {},
   ) {
     const matricula = `${PREFIXO_MATRICULA}${sufixo}`;
 
@@ -201,7 +205,7 @@ describe('Lista de presenca (e2e)', () => {
         matricula,
         userIdD2L: '99999',
         periodoLetivoId,
-        rodada: 'N2',
+        rodada: opcoes.rodada ?? 'N2',
         // Fotografia do vinculo, como o service grava.
         modalidadeId: ead.id,
         poloId,
@@ -232,6 +236,7 @@ describe('Lista de presenca (e2e)', () => {
 
   const recorte = {
     periodoLetivoId: PERIODO_LETIVO,
+    rodada: 'N2',
     de: DATA_PROVA,
     ate: DATA_PROVA,
   };
@@ -271,6 +276,24 @@ describe('Lista de presenca (e2e)', () => {
       // prova por faixa) e assina UMA vez; 002 e a outra linha. O cancelado e o
       // do semestre passado ficam de fora.
       expect(daSala(await listar(), salaCheiaId).totalAlunos).toBe(2);
+    });
+
+    it('separa a regular da substitutiva do mesmo semestre pela rodada', async () => {
+      const daRodada = async (rodada?: string) =>
+        (
+          await comoAdmin(api().get('/api/relatorios/listas-de-presenca'))
+            .query({ ...recorte, rodada })
+            .expect(200)
+        ).body;
+
+      const sub = await daRodada('SUB');
+      expect(sub.map((l: any) => l.salaFaixaId)).toEqual([salaCheiaId]);
+      expect(daSala(sub, salaCheiaId).totalAlunos).toBe(1);
+
+      // Periodo sem rodada = as rodadas daquele semestre juntas (URL antiga).
+      expect(daSala(await daRodada(undefined), salaCheiaId).totalAlunos).toBe(
+        3,
+      );
     });
 
     it('nao mistura a folha da sala ao lado', async () => {

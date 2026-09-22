@@ -24,6 +24,14 @@ export interface FiltroRelatorio {
    * inteira; um id sozinho continua valendo, e recorta aquela grade.
    */
   periodoLetivoId?: string[];
+  /**
+   * QUAL prova do semestre ("N2", "SUB"...). A regular e a substitutiva
+   * compartilham o `periodoLetivoId`; sem a rodada, a folha da substitutiva
+   * traria tambem quem so agendou a regular (e vice-versa). Vazia com
+   * `periodoLetivoId` informado = as rodadas daquele semestre juntas; vazia sem
+   * ele = a rodada VIGENTE, como o periodo.
+   */
+  rodada?: string;
 }
 
 export interface ArquivoGerado {
@@ -68,9 +76,10 @@ export interface ArquivoGerado {
  *    linha. A divergencia e o sintoma do dado velho, nao um erro de contagem —
  *    o certo e cancelar o agendamento duplicado, nao voltar a imprimir duas
  *    linhas.
- * 3. **So `CONFIRMADO`, e so o periodo letivo do recorte.** Quem cancelou
- *    devolveu a vaga e nao pode aparecer na folha; sem o recorte de periodo, a
- *    sala da prova do semestre passado entraria na pilha deste.
+ * 3. **So `CONFIRMADO`, e so a PROVA do recorte (periodo letivo + rodada).**
+ *    Quem cancelou devolveu a vaga e nao pode aparecer na folha; sem o recorte
+ *    de periodo, a sala da prova do semestre passado entraria na pilha deste, e
+ *    sem a rodada a substitutiva viria misturada com a regular.
  *
  * A ordem dentro da pagina e ALFABETICA POR NOME, nao por matricula nem por
  * ordem de agendamento: o fiscal procura pela pessoa que esta na frente dele, e
@@ -116,7 +125,7 @@ export class ListaPresencaService {
     // Data e polo nao valem aqui de proposito, pelo mesmo motivo do CSV de um
     // grupo: quem pediu ESTA sala ja escolheu o horario, e um `?de=` esquecido
     // na URL devolveria 404 em vez do arquivo. O periodo letivo continua
-    // valendo — e ele que separa os semestres.
+    // valendo, e a rodada tambem — sao eles que separam as provas.
     const [lista] = await this.montarListas({ id: salaFaixaId }, filtro);
 
     if (!lista) {
@@ -144,12 +153,13 @@ export class ListaPresencaService {
     ondeSalaFaixa: Prisma.SalaFaixaWhereInput,
     filtro: FiltroRelatorio,
   ): Promise<SalaComPagina[]> {
-    const periodoLetivoId = await this.periodosDoRecorte(filtro);
+    const { periodoLetivoId, rodada } = await this.provaDoRecorte(filtro);
 
     const agendamentos = await this.prisma.agendamento.findMany({
       where: {
         status: StatusAgendamento.CONFIRMADO,
         periodoLetivoId,
+        rodada,
         salaFaixa: ondeSalaFaixa,
       },
       select: {
@@ -252,23 +262,38 @@ export class ListaPresencaService {
   }
 
   /**
-   * O recorte por periodo letivo: o da URL, ou a JANELA VIGENTE INTEIRA.
+   * O recorte por PROVA: periodo(s) letivo(s) + rodada — os da URL, ou os da
+   * JANELA VIGENTE.
    *
-   * Devolve um filtro (`{ in: [...] }`) e nao uma string porque a janela cobre
-   * mais de um org unit ao mesmo tempo — a grade modular e a semestral correm em
-   * paralelo. Um id so deixaria de fora as provas dos presenciais, e o relatorio
-   * sairia com metade da sala.
+   * O periodo e um filtro (`{ in: [...] }`) e nao uma string porque a janela
+   * cobre mais de um org unit ao mesmo tempo — a grade modular e a semestral
+   * correm em paralelo. Um id so deixaria de fora as provas dos presenciais, e o
+   * relatorio sairia com metade da sala.
+   *
+   * A rodada segue a mesma regra da exportacao de agendamentos: sem periodo na
+   * URL, vale a da janela vigente — a regular e a substitutiva do mesmo semestre
+   * tem o mesmo `periodoLetivoId`, e so ela as separa. Com periodo e sem rodada,
+   * as rodadas daquele semestre vem juntas (URL antiga continua funcionando).
    *
    * `undefined` = sem recorte (nenhum periodo cadastrado), como antes.
    */
-  private async periodosDoRecorte(
-    filtro: FiltroRelatorio,
-  ): Promise<{ in: string[] } | undefined> {
-    if (filtro.periodoLetivoId?.length) return { in: filtro.periodoLetivoId };
+  private async provaDoRecorte(filtro: FiltroRelatorio): Promise<{
+    periodoLetivoId: { in: string[] } | undefined;
+    rodada: string | undefined;
+  }> {
+    if (filtro.periodoLetivoId?.length) {
+      return {
+        periodoLetivoId: { in: filtro.periodoLetivoId },
+        rodada: filtro.rodada,
+      };
+    }
 
     const janela = await this.periodo.janelaVigente();
 
-    return janela ? { in: janela.periodoLetivoIds } : undefined;
+    return {
+      periodoLetivoId: janela ? { in: janela.periodoLetivoIds } : undefined,
+      rodada: filtro.rodada ?? janela?.rodada,
+    };
   }
 }
 

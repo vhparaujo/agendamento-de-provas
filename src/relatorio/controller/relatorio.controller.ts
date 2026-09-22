@@ -30,6 +30,14 @@ const FILTROS = [
   { name: 'poloId', type: Number, example: 6 },
   { name: 'periodoLetivoId', type: String, example: '103' },
   {
+    name: 'rodada',
+    type: String,
+    example: 'SUB',
+    description:
+      'Qual prova do semestre. Sem ela e sem `periodoLetivoId`, vale a rodada ' +
+      'vigente; com `periodoLetivoId` e sem ela, as rodadas daquele semestre juntas.',
+  },
+  {
     name: 'de',
     type: String,
     example: '2026-08-01',
@@ -77,8 +85,8 @@ export class RelatorioController {
       '**Sala sem ninguem agendado nao aparece**: nao havera aplicacao ali, e ' +
       'uma folha em branco no meio da pilha so faz procurar o erro. Para ver a ' +
       'oferta montada, cheia ou vazia, use `GET /agendamentos/resumo`.\n\n' +
-      'O recorte e **um periodo letivo** — o de `periodoLetivoId` ou, sem ele, o ' +
-      'vigente.',
+      'O recorte e **uma prova** — `periodoLetivoId` + `rodada`, os da URL ou, ' +
+      'sem eles, os da janela vigente.',
   })
   @aplicarFiltros()
   @ApiOkResponse({ type: [SalaComListaDto] })
@@ -142,8 +150,8 @@ export class RelatorioController {
       'Mesmo conteudo de uma pagina do PDF completo.\n\n' +
       '`de`, `ate` e `poloId` sao **ignorados** aqui: quem pediu esta sala ja ' +
       'escolheu o horario, e um filtro esquecido na URL devolveria 404 em vez ' +
-      'do arquivo. `periodoLetivoId` continua valendo — e ele que separa os ' +
-      'semestres.',
+      'do arquivo. `periodoLetivoId` e `rodada` continuam valendo — sao eles ' +
+      'que separam as provas.',
   })
   @ApiParam({
     name: 'salaFaixaId',
@@ -199,6 +207,7 @@ export class RelatorioController {
         .split(',')
         .map((v) => v.trim())
         .filter(Boolean),
+      rodada: query.rodada?.trim() || undefined,
       de: query.de || undefined,
       ate: query.ate || undefined,
     };
