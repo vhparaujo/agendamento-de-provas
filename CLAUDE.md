@@ -544,7 +544,7 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `GET/POST /portal/agendamentos` | aluno | Confirmar a prova e consultar o que já marcou |
 | `GET/POST /periodos` · `GET/PATCH/DELETE /periodos/:id` | admin | Abrir/fechar a janela de agendamento |
 | `GET /agendamentos` · `/resumo` · `/exportacao` · `/:id` | admin | Relatório: consulta, ocupação por sala e o CSV de **todos os alunos** |
-| `GET /agendamentos/estatisticas` | admin | A tela de Início: adesão da rodada vigente sobre os vínculos **ativos**, por formato e por origem (aluno/compulsório/admin — a mesma regra do "Agendado por" da exportação), por dia de criação, e vagas livres nas faixas futuras x pendentes por polo + formato (o mesmo recorte de faixas do compulsório) |
+| `GET /agendamentos/estatisticas` | admin | A tela de Início: adesão da rodada (a **vigente** por padrão; `periodoId` olha outra janela, com a base continuando a de hoje) sobre os vínculos **ativos**, por formato e por origem (aluno/compulsório/admin — a mesma regra do "Agendado por" da exportação), por dia de criação, e vagas livres nas faixas futuras x pendentes por polo + formato (o mesmo recorte de faixas do compulsório) |
 | `GET /relatorios/listas-de-presenca` · `/pdf` · `/:salaFaixaId/pdf` | admin | Lista de presença: um PDF com **uma página por sala** de aplicação |
 | `PATCH /agendamentos/:id/remanejar` · `DELETE /agendamentos/:id` | admin | Mover de sala/horário e cancelar |
 | `POST /agendamentos/compulsorio` · `GET /:id` · `/:id/relatorio` | admin | Agenda por quem não agendou; acompanha o lote e baixa o CSV de exceções |

@@ -1029,13 +1029,24 @@ export class AgendamentoAdminService {
    * fotografia do agendamento: a pergunta e "quanto da base atual ja tem
    * prova", e numerador e denominador precisam cortar pelo mesmo campo.
    *
-   * O recorte e a janela vigente inteira + a rodada, como na exportacao: sem a
+   * O recorte e a janela inteira + a rodada, como na exportacao: sem a
    * rodada, quem fez a N2 contaria como agendado durante a substitutiva.
+   *
+   * ⚠️ **`periodoId` troca A RODADA OLHADA, nunca a BASE.** Os vinculos
+   * ativos sao sempre os de HOJE — `AlunoImportado` guarda so o estado atual, e
+   * a importacao o sobrescreve, entao nao existe "quantos vinculos estavam
+   * ativos em agosto". Num periodo passado o numerador e historico e o
+   * denominador e de agora: a adesao daquela rodada so e comparavel com ela
+   * mesma, e a tela diz isso em vez de deixar o numero passar por exato.
    */
   async estatisticas(filtro: {
     poloId?: number;
+    /** A janela olhada. Ausente = a vigente, que e a pergunta do dia a dia. */
+    periodoId?: number;
   }): Promise<EstatisticasDaJanela> {
-    const janela = await this.periodo.janelaVigente();
+    const janela = filtro.periodoId
+      ? await this.periodo.janelaDoPeriodo(filtro.periodoId)
+      : await this.periodo.janelaVigente();
 
     const [modalidades, vinculos] = await Promise.all([
       this.prisma.modalidade.findMany({
@@ -1049,7 +1060,7 @@ export class AgendamentoAdminService {
       }),
     ]);
 
-    // Sem periodo cadastrado ninguem tem prova "da rodada vigente".
+    // Sem periodo cadastrado ninguem tem prova na rodada — tudo zera.
     const reservas = janela
       ? await this.prisma.agendamento.findMany({
           where: {

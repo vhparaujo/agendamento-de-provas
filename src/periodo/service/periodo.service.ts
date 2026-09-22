@@ -349,30 +349,37 @@ export class PeriodoService {
    * enxergar a reserva do outro — e a pessoa marcaria duas provas no mesmo
    * horario, em duas salas.
    */
-  async janelaVigente(): Promise<
-    | {
-        /** Todos os org units cobertos, sem repetir. Para `{ in: ... }`. */
-        periodoLetivoIds: string[];
-        /** O principal — o rotulo da janela, nao o de nenhum aluno especifico. */
-        principal: string;
-        rodada: string;
-        filtroDeNota: FiltroDeNota | null;
-      }
-    | undefined
-  > {
+  async janelaVigente(): Promise<Janela | undefined> {
     const periodo = await this.prisma.periodoAgendamento.findFirst({
       orderBy: { createdAt: 'desc' },
       include: MAPA_DA_JANELA,
     });
 
-    if (!periodo) return undefined;
+    return periodo ? montarJanela(periodo) : undefined;
+  }
 
-    return {
-      periodoLetivoIds: idsDaJanela(periodo),
-      principal: periodo.periodoLetivoId,
-      rodada: periodo.rodada,
-      filtroDeNota: lerFiltroDeNota(periodo),
-    };
+  /**
+   * A mesma janela, so que de um periodo ESCOLHIDO — o recorte das telas que
+   * olham para tras (as estatisticas do Inicio por periodo).
+   *
+   * E um metodo separado de `janelaVigente()`, e nao um parametro opcional
+   * dela, pela razao de sempre nesta classe: quem conta, lista ou trava precisa
+   * do VIGENTE, e um argumento opcional passaria batido numa chamada dessas. O
+   * nome diz qual das duas perguntas esta sendo feita.
+   *
+   * 404 quando o periodo nao existe mais: a tela precisa saber que o filtro
+   * dela ficou velho, e nao receber uma contagem zerada que parece um semestre
+   * em que ninguem agendou.
+   */
+  async janelaDoPeriodo(id: number): Promise<Janela> {
+    const periodo = await this.prisma.periodoAgendamento.findUnique({
+      where: { id },
+      include: MAPA_DA_JANELA,
+    });
+
+    if (!periodo) throw new NotFoundException(PERIODO_NAO_ENCONTRADO);
+
+    return montarJanela(periodo);
   }
 
   /**
@@ -1094,6 +1101,33 @@ type JanelaComMapa = {
     modalidade: { id: number; codigo: string; nome: string };
   }[];
 };
+
+/**
+ * UMA janela de agendamento como quem CONTA precisa dela: os org units que ela
+ * cobre e a rodada que separa a N2 da SUB dentro do mesmo semestre.
+ */
+export interface Janela {
+  /** Todos os org units cobertos, sem repetir. Para `{ in: ... }`. */
+  periodoLetivoIds: string[];
+  /** O principal — o rotulo da janela, nao o de nenhum aluno especifico. */
+  principal: string;
+  rodada: string;
+  filtroDeNota: FiltroDeNota | null;
+}
+
+function montarJanela(
+  periodo: JanelaComMapa & {
+    notaMinimaN1: Prisma.Decimal | null;
+    notaMaximaFinal: Prisma.Decimal | null;
+  },
+): Janela {
+  return {
+    periodoLetivoIds: idsDaJanela(periodo),
+    principal: periodo.periodoLetivoId,
+    rodada: periodo.rodada,
+    filtroDeNota: lerFiltroDeNota(periodo),
+  };
+}
 
 /**
  * Todos os periodos letivos que a janela cobre, sem repetir.

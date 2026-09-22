@@ -186,20 +186,35 @@ export class AgendamentoAdminController {
     NivelAdmin.VISUALIZADOR_EXECUTIVO,
   )
   @ApiOperation({
-    summary: 'Como esta indo o agendamento da rodada vigente',
+    summary: 'Como esta indo o agendamento de uma rodada',
     description:
       'Os numeros da tela de Inicio: quantos vinculos **ativos** ja tem prova ' +
-      'na rodada vigente, a mesma adesao por formato, e quem criou cada ' +
+      'na rodada (a vigente por padrao), a mesma adesao por formato, e quem criou cada ' +
       'reserva (aluno, compulsorio ou admin — a mesma regra da coluna ' +
       '"Agendado por" da exportacao).\n\n' +
       'Formato e polo sao os de hoje do vinculo, para o numerador e o ' +
-      'denominador cortarem pelo mesmo campo.',
+      'denominador cortarem pelo mesmo campo.\n\n' +
+      '`periodoId` olha OUTRA janela (uma rodada anterior) em vez da vigente. ' +
+      'Ele troca so a rodada contada: a base continua sendo os vinculos ' +
+      '**ativos hoje**, porque o cadastro guarda apenas o estado atual — numa ' +
+      'rodada passada o numerador e historico e o denominador e de agora.',
   })
   @ApiQuery({ name: 'poloId', required: false, type: Number, example: 6 })
+  @ApiQuery({
+    name: 'periodoId',
+    required: false,
+    type: Number,
+    example: 3,
+    description: 'Id do periodo de agendamento. Ausente = o vigente.',
+  })
+  @ApiNotFoundResponse({ description: 'Periodo nao encontrado' })
   @ApiOkResponse({ type: EstatisticasDaJanelaDto })
   estatisticas(@Query() query: Record<string, string>) {
+    const filtro = this.lerFiltro(query);
+
     return this.service.estatisticas({
-      poloId: this.lerFiltro(query).poloId,
+      poloId: filtro.poloId,
+      periodoId: filtro.periodoId,
     });
   }
 
@@ -362,6 +377,10 @@ export class AgendamentoAdminController {
 
     return {
       poloId: inteiro(query.poloId),
+      // A JANELA (`PeriodoAgendamento.id`), nao o periodo letivo do
+      // Brightspace: o par que identifica a rodada e resolvido no service, a
+      // partir do cadastro. Hoje so as estatisticas do Inicio o usam.
+      periodoId: inteiro(query.periodoId),
       faixaId: inteiro(query.faixaId),
       salaId: inteiro(query.salaId),
       modalidadeId: inteiro(query.modalidadeId),

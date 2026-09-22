@@ -669,7 +669,7 @@ telas mandam a janela inteira. Sem ele, o recorte é a janela vigente completa.
 |---|---|---|
 | `GET` | `/agendamentos` | Listagem paginada (50/pág, máx. 200), com busca por matrícula, nome ou curso |
 | `GET` | `/agendamentos/resumo` | Ocupação por sala: quais abrir, quantos fiscais, quais ficaram vazias |
-| `GET` | `/agendamentos/estatisticas` | A tela de Início: adesão da rodada vigente (vínculos ativos com prova), por formato e por quem agendou (aluno, compulsório, admin) e agendamentos por dia |
+| `GET` | `/agendamentos/estatisticas` | A tela de Início: adesão da rodada (vínculos ativos com prova), por formato e por quem agendou (aluno, compulsório, admin) e agendamentos por dia. `poloId` e `periodoId` recortam; sem `periodoId`, a rodada vigente |
 | `GET` | `/agendamentos/exportacao` | **CSV de TODOS os alunos** — agendados ou não |
 | `GET` | `/agendamentos/:id` | Detalhe |
 | `GET` | `/agendamentos/:id/historico` | **Quem alterou**: o próprio aluno ou qual administrador |

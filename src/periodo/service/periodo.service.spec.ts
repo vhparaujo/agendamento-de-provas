@@ -911,6 +911,46 @@ describe('PeriodoService — o mapa por formato', () => {
   });
 
   /**
+   * O recorte das telas que olham para tras (as estatisticas do Inicio por
+   * periodo): a janela pedida, e nao a mais recente. Sem isto, escolher a
+   * rodada anterior no filtro devolveria os numeros da vigente — plausiveis e
+   * errados, que e o pior resultado possivel.
+   */
+  it('janelaDoPeriodo devolve a janela PEDIDA, nao a vigente', async () => {
+    const { service } = montar([
+      JANELA_DUAS_GRADES,
+      {
+        id: 7,
+        periodoLetivoId: 'MODULO-2026-3',
+        rodada: 'SUB',
+        descricao: 'Substitutiva anterior',
+        createdAt: new Date('2026-06-01T12:00:00Z'),
+      },
+    ]);
+
+    const janela = await service.janelaDoPeriodo(7);
+
+    expect(janela.principal).toBe('MODULO-2026-3');
+    expect(janela.rodada).toBe('SUB');
+    // A vigente e a outra: a escolha do chamador e que decide, nao a data.
+    await expect(service.janelaVigente()).resolves.toMatchObject({
+      principal: 'MODULO-2026-4',
+    });
+  });
+
+  /**
+   * 404, e nao uma janela vazia: a tela precisa saber que o filtro dela ficou
+   * velho. Contagem zerada pareceria um semestre em que ninguem agendou.
+   */
+  it('janelaDoPeriodo recusa periodo inexistente', async () => {
+    const { service } = montar([JANELA_DUAS_GRADES]);
+
+    await expect(service.janelaDoPeriodo(999)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+
+  /**
    * Formato sem linha no mapa cai no principal — e o que segura o sistema de
    * pe quando um formato novo e semeada depois da janela. Nao e erro: e a
    * alternativa a derrubar o agendamento das outras quatro.
