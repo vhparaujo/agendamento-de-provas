@@ -950,10 +950,12 @@ Cada página traz o cabeçalho (formato, polo, data, horário, sala) e a tabela:
   a pessoa na frente dele); as páginas saem por **dia → horário → polo → sala**,
   de modo que a pilha já sai separável por campus.
 - **Sala grande continua na página seguinte**, com a identificação repetida e
-  marcada `(cont.)`, e a numeração seguindo de onde parou.
-- **A coluna `Assinatura` é uma célula vazia com borda** — a linha da tabela é a
-  linha em que se assina. Não há linha em branco no fim: a folha é a relação de
-  quem tem lugar ali.
+  marcada `(cont.)`.
+- **Três colunas: `RA · Nome · Assinatura`.** A de assinatura é uma célula vazia
+  com borda — a linha da tabela é a linha em que se assina — e tem ~7,4cm, o
+  bastante para o nome completo. O formato da sala fica no cabeçalho da folha,
+  não numa coluna. Não há linha em branco no fim: a folha é a relação de quem
+  tem lugar ali.
 - Nome do arquivo:
   **`Lista de presenca - 11-06-2026 09h00-12h00 - Campus Asa Sul - SALA 1 EAD.pdf`**.
   **O polo entra no nome**: as folhas de dois campi vão para lugares físicos

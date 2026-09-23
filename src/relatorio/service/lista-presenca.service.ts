@@ -165,10 +165,6 @@ export class ListaPresencaService {
       select: {
         matricula: true,
         salaFaixaId: true,
-        // O formato do AGENDAMENTO, nao a do vinculo de hoje: e a fotografia
-        // do que o aluno era quando reservou, e e ela que combina com a duracao
-        // da prova que ele vai fazer nesta sala.
-        modalidade: { select: { nome: true } },
         aluno: { select: { nome: true } },
       },
     });
@@ -213,7 +209,6 @@ export class ListaPresencaService {
         alunos.set(agendamento.matricula, {
           matricula: agendamento.matricula,
           nome: agendamento.aluno.nome,
-          modalidade: agendamento.modalidade.nome,
         });
       }
 
@@ -321,7 +316,6 @@ export interface SalaComLista {
 export interface AlunoDaLista {
   matricula: string;
   nome: string | null;
-  modalidade: string;
 }
 
 interface SalaComPagina {

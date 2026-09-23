@@ -68,8 +68,6 @@ import { dataDaProva } from '../../agendamento/service/csv-relatorio';
 export interface AlunoNaLista {
   matricula: string;
   nome: string | null;
-  /** Do agendamento (fotografia), nao do vinculo de hoje. */
-  modalidade: string;
 }
 
 /** Tudo que uma pagina precisa dizer sobre si mesma. */
@@ -144,19 +142,31 @@ const LIMITE_DAS_LINHAS = AREA_UTIL.base - ESPACO_DO_TOTAL;
  * (525 - 69 = 456pt); e por isso que elas sao declaradas juntas, num lugar so —
  * mexer numa sem mexer noutra desalinharia a moldura da tabela do conteudo dela.
  *
- * ⚠️ SAO 59pt MAIS ESTREITAS QUE NO LAYOUT ANTIGO, porque a banda azul da arte
- * comeu a margem esquerda. O corte saiu quase todo de `Nº` e `RA`, que sobravam
- * (um RA e "UC26420": 38pt de texto em 85pt de coluna), para que `Nome` perdesse
- * so 15pt — e o nome que quebra em duas linhas e encompridar a folha — e
- * `Formato` continuasse cabendo "Semipresencial" (61,5pt) numa linha so.
+ * ⚠️ SAO TRES, E NAO CINCO (23/09/2026). `Nº` e `Formato` sairam a pedido do
+ * cliente porque a Assinatura, com 100pt (~3,5cm), era curta demais para o aluno
+ * escrever o nome completo — e a tabela nao pode alargar, a arte a trava em
+ * 456pt. A Assinatura foi de 100 para 210pt (~7,4cm): os 94pt das duas colunas
+ * mais 16pt tirados do `Nome`.
+ *
+ * - `Formato` repetia o mesmo valor em toda linha: a sala e travada num formato
+ *   so, que ja esta no cabecalho da folha. O preco, aceito: a coluna vinha do
+ *   AGENDAMENTO e o cabecalho vem da OFERTA, e era essa redundancia que faria uma
+ *   divergencia entre os dois aparecer no papel. A alocacao ja so aceita oferta
+ *   do formato do aluno, entao so dado antigo ou corrompido a produziria.
+ * - `Nº` so numerava; o total da sala continua no pe da ultima folha.
+ *
+ * `RA` fica em 62pt porque o RA real tem 10 caracteres ("UC24424289", ~53pt de
+ * texto). `Nome` cedeu 16pt (200 -> 184): cada ponto dele e um ponto a menos de
+ * assinatura, e nome longo quebra em duas linhas sem cortar nada.
  */
 const COLUNAS = [
-  { titulo: 'Nº', largura: 24 },
   { titulo: 'RA', largura: 62 },
-  { titulo: 'Nome', largura: 200 },
-  { titulo: 'Formato', largura: 70 },
-  { titulo: 'Assinatura', largura: 100 },
+  { titulo: 'Nome', largura: 184 },
+  { titulo: 'Assinatura', largura: 210 },
 ] as const;
+
+/** A coluna que decide a altura da linha — ver `alturaDaLinha`. */
+const COLUNA_DO_NOME = COLUNAS[1];
 
 /** Onde uma mao consegue assinar. Nao e o tamanho da fonte. */
 const ALTURA_MINIMA = 22;
@@ -268,7 +278,7 @@ function desenharLista(
 
   let y = desenharCabecalhoDaTabela(doc, IDENTIFICACAO.topoDaTabela);
 
-  lista.alunos.forEach((aluno, indice) => {
+  lista.alunos.forEach((aluno) => {
     const altura = alturaDaLinha(doc, aluno);
 
     // A quebra e decidida ANTES de desenhar: uma linha cortada ao meio pela
@@ -278,13 +288,7 @@ function desenharLista(
       y = desenharCabecalhoDaTabela(doc, IDENTIFICACAO.topoDaTabela);
     }
 
-    y = desenharLinha(doc, y, altura, [
-      String(indice + 1),
-      aluno.matricula,
-      aluno.nome ?? '—',
-      aluno.modalidade,
-      '',
-    ]);
+    y = desenharLinha(doc, y, altura, [aluno.matricula, aluno.nome ?? '—', '']);
   });
 
   desenharTotal(doc, y, lista);
@@ -431,7 +435,7 @@ function desenharLinha(
  * assinou.
  */
 function alturaDaLinha(doc: Doc, aluno: AlunoNaLista): number {
-  const coluna = COLUNAS[2];
+  const coluna = COLUNA_DO_NOME;
 
   const alturaDoNome = doc
     .font(REGULAR)

@@ -14,7 +14,6 @@ import {
 const aluno = (nome: string | null, matricula = 'UC1'): AlunoDaLista => ({
   matricula,
   nome,
-  modalidade: 'EaD',
 });
 
 const ordenar = (alunos: AlunoDaLista[]) =>
@@ -132,7 +131,6 @@ describe('o PDF', () => {
     alunos: Array.from({ length: alunos }, (_, i) => ({
       matricula: `UC2642${i}`,
       nome: `ALUNO ${i}`,
-      modalidade: 'EaD',
     })),
     ...p,
   });
@@ -219,6 +217,20 @@ describe('o PDF', () => {
     expect(folhas).toHaveLength(2);
     expect(folhas[0]).not.toContain('cont.');
     expect(folhas[1]).toContain('cont.');
+  });
+
+  it('tem so RA, Nome e Assinatura — o espaco de assinar e o que importa', async () => {
+    // `Nº` e `Formato` sairam para a Assinatura caber um nome completo. O formato
+    // continua na folha, no cabecalho da sala, que e onde ele vale para todos.
+    const [primeira] = textoDasPaginas(
+      await pdfDeListasDePresenca([pagina(3)]),
+    );
+
+    expect(primeira).toContain('RA');
+    expect(primeira).toContain('Nome');
+    expect(primeira).toContain('Assinatura');
+    expect(primeira).not.toContain('Formato');
+    expect(primeira).not.toMatch(/N\xba/);
   });
 
   it('nao desenha o titulo — ele vem impresso no timbrado', async () => {

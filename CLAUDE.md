@@ -1763,7 +1763,7 @@ perguntas diferentes e recortam a mesma base de jeitos incompatíveis:
 | Quem lê | **Pessoa**, no Excel pt-BR | **Pessoa**, no papel: o fiscal da sala |
 | Responde | "com quem a administração precisa falar" | "quem senta nesta sala" |
 | Base | Todos os vínculos, agendados ou não | Só quem tem prova **confirmada** |
-| Formato | CSV, 14 colunas, `;` + BOM UTF-8 | PDF A4, 5 colunas |
+| Formato | CSV, 14 colunas, `;` + BOM UTF-8 | PDF A4, 3 colunas |
 | Uma linha é | um vínculo | uma **pessoa** (RA distinto) |
 | Recorte | **nenhum** — a prova vigente inteira | uma **sala + uma faixa** + um período letivo |
 
@@ -1973,17 +1973,26 @@ dita cada decisão abaixo.
 - **Sala sem ninguém agendado não vira página.** Não haverá aplicação ali, e uma
   folha em branco no meio da pilha só faz procurar o erro. Para ver a oferta
   montada, cheia ou vazia, use `GET /agendamentos/resumo`.
-- **As colunas são `Nº · RA · Nome · Modalidade · Assinatura`.** A de assinatura
+- **As colunas são `RA · Nome · Assinatura`** (eram cinco até 23/09/2026 — ver
+  abaixo). A de assinatura
   é uma célula **vazia com borda**: a própria linha da tabela é a linha em que se
   assina — por isso a altura mínima da linha (`ALTURA_MINIMA`) é o espaço que uma
   mão precisa, e não o tamanho da fonte. Nome longo quebra em duas linhas e a
   linha cresce; cortá-lo tiraria justamente o campo pelo qual se confere quem
   assinou. **Não há linha em branco no fim**: a folha é a relação de quem TEM
   lugar ali, e uma linha vazia convida a escrever nela quem não deveria estar.
-- **A `Modalidade` da coluna vem do AGENDAMENTO** (fotografia), a do cabeçalho
-  vem da OFERTA. São iguais por construção — a alocação só aceita oferta do
-  formato do aluno —, e é essa redundância que faz a divergência aparecer no
-  papel se algum dia existir, em vez de ficar escondida.
+- ⚠️ **`Nº` e `Formato` SAÍRAM em 23/09/2026, a pedido do cliente**: com 100pt
+  (~3,5cm) a Assinatura era curta demais para o aluno escrever o nome completo,
+  e a tabela não pode alargar — a arte a trava em 456pt. A Assinatura foi para
+  **210pt (~7,4cm)**: os 94pt das duas colunas mais 16pt do `Nome` (200 → 184).
+  O formato continua na folha, no cabeçalho da sala (a sala é travada num
+  formato só, então a coluna repetia o mesmo valor em toda linha). **O preço,
+  aceito conscientemente:** a coluna vinha do AGENDAMENTO e o cabeçalho vem da
+  OFERTA, e era essa redundância que faria uma divergência entre os dois
+  aparecer no papel. Como a alocação só aceita oferta do formato do aluno, só
+  dado antigo ou corrompido a produziria. Com a coluna foi embora também a
+  consulta do formato do agendamento em `lista-presenca.service.ts`, que só
+  existia para ela. `Nº` só numerava; o total da sala continua no pé.
 - **A ordem dentro da página é alfabética por nome** (`localeCompare` com
   `pt-BR`, senão "ÁLVARO" cairia depois de todo o alfabeto). O fiscal procura
   pela pessoa que está na frente dele, e o que ela sabe dizer é o próprio nome —
@@ -2024,10 +2033,8 @@ dita cada decisão abaixo.
   tinha, e ele empurrou o bloco de emissão 25,6pt para cima — de 733,7 para
   708,1. O teste da quebra de página é a rede que pega isso.
 - ⚠️ **Cabem ~19 alunos por página, contra ~30 no layout antigo** — a arte ocupa
-  topo e pé. Uma sala de 40 lugares sai em três folhas. As colunas encolheram
-  59pt no total, quase tudo tirado de `Nº` e `RA`, que sobravam: `Nome` perdeu
-  15pt (nome que quebra em duas linhas encomprida a folha) e `Formato` ficou em
-  70pt, o que ainda cabe "Semipresencial" (61,5pt) numa linha só.
+  topo e pé. Uma sala de 40 lugares sai em três folhas. `RA` fica em 62pt
+  porque o RA real tem 10 caracteres ("UC24424289", ~53pt de texto).
 - **O asset é 1414 × 2000 px (171 dpi), truecolor, sem alfa — 369 KB.** A
   resolução é a da arte entregue e **não dá para melhorar ampliando**; o script
   avisa quando a origem fica abaixo de 200 dpi. Truecolor e não paleta indexada:

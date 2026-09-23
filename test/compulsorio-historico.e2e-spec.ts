@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import * as bcrypt from 'bcrypt';
 import request from 'supertest';
 import { App } from 'supertest/types';
+import { type Andamento } from './../src/agendamento/service/compulsorio.service';
 import { AppModule } from './../src/app.module';
 import { PrismaService } from './../src/database/prisma.service';
 
@@ -111,8 +112,18 @@ describe('Compulsorio — historico de execucoes (e2e)', () => {
 
     await prisma.excecaoCompulsorio.createMany({
       data: [
-        { execucaoId: simulacao, alunoId, matricula: MATRICULA, motivo: 'SEM_VAGA' },
-        { execucaoId: simulacao, alunoId, matricula: MATRICULA, motivo: 'SEM_VAGA' },
+        {
+          execucaoId: simulacao,
+          alunoId,
+          matricula: MATRICULA,
+          motivo: 'SEM_VAGA',
+        },
+        {
+          execucaoId: simulacao,
+          alunoId,
+          matricula: MATRICULA,
+          motivo: 'SEM_VAGA',
+        },
         {
           execucaoId: simulacao,
           alunoId,
@@ -195,8 +206,15 @@ describe('Compulsorio — historico de execucoes (e2e)', () => {
     await prisma.polo.deleteMany({ where: { nome: POLO } });
   }
 
-  /** So as execucoes deste teste: o banco do e2e e compartilhado. */
-  const doTeste = (itens: { periodoLetivoId: string }[]) =>
+  /**
+   * So as execucoes deste teste: o banco do e2e e compartilhado.
+   *
+   * Tipado com `Andamento` — a linha que a rota realmente devolve — e nao com
+   * `{ periodoLetivoId: string }`: com o tipo estreito, o retorno do filtro
+   * herdava so esse campo, os testes deixavam de enxergar `id`, `excecoes` e
+   * `status`, e o `tsc` recusava o arquivo inteiro.
+   */
+  const doTeste = (itens: Andamento[]) =>
     itens.filter((i) => i.periodoLetivoId === PERIODO);
 
   it('lista da mais recente para a mais antiga', async () => {
@@ -259,7 +277,9 @@ describe('Compulsorio — historico de execucoes (e2e)', () => {
     );
 
     const segunda = await comoAdmin(
-      api().get('/api/agendamentos/compulsorio').query({ porPagina: 1, pagina: 2 }),
+      api()
+        .get('/api/agendamentos/compulsorio')
+        .query({ porPagina: 1, pagina: 2 }),
     ).expect(200);
 
     expect(segunda.body.itens[0].id).toBeLessThan(primeira.body.itens[0].id);
