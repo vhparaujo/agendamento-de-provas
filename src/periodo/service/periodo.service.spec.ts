@@ -68,6 +68,14 @@ interface Reserva {
  */
 function montar(periodos: Periodo[], reservas: Reserva[] = []) {
   const eventos: { evento: string; detalhe?: string }[] = [];
+  /** A linha unica de `configuracao_senha_quiz`; `null` = nunca gravada. */
+  const config: {
+    atual: {
+      periodoDosDisparosId: number | null;
+      periodoDosDisparosPor: string | null;
+      periodoDosDisparosEm: Date | null;
+    } | null;
+  } = { atual: null };
 
   const servico = {
     $transaction: (fn: (tx: unknown) => unknown) => fn(servico),
@@ -218,6 +226,23 @@ function montar(periodos: Periodo[], reservas: Reserva[] = []) {
     modalidade: {
       findMany: () => Promise.resolve(MODALIDADES),
     },
+    configuracaoSenhaQuiz: {
+      findUnique: () => Promise.resolve(config.atual),
+      count: ({ where }: { where: { periodoDosDisparosId: number } }) =>
+        Promise.resolve(
+          config.atual?.periodoDosDisparosId === where.periodoDosDisparosId
+            ? 1
+            : 0,
+        ),
+      upsert: ({
+        update,
+      }: {
+        update: NonNullable<(typeof config)['atual']>;
+      }) => {
+        config.atual = { ...update };
+        return Promise.resolve(config.atual);
+      },
+    },
     periodoLetivoModalidade: {
       deleteMany: ({ where }: { where: { periodoAgendamentoId: number } }) => {
         const alvo = periodos.find((p) => p.id === where.periodoAgendamentoId);
@@ -260,6 +285,7 @@ function montar(periodos: Periodo[], reservas: Reserva[] = []) {
     service: new PeriodoService(servico, auditoria),
     periodos,
     eventos,
+    config,
   };
 }
 
@@ -1191,5 +1217,101 @@ describe('PeriodoService — o mapa por formato', () => {
       periodoLetivoId: 'SEMESTRE-2026-2',
       herdadoDoPrincipal: false,
     });
+  });
+});
+
+/**
+ * O filtro de periodo dos disparos (23/09/2026). O que ele precisa garantir e
+ * uma coisa so: cadastrar um periodo novo NAO muda as turmas de um disparo que
+ * ja tem periodo escolhido — e sem escolha, tudo continua como antes.
+ */
+describe('PeriodoService — o periodo dos disparos', () => {
+  it('sem escolha, os disparos seguem o vigente (o comportamento de antes)', async () => {
+    const { service } = montar([
+      { ...DOIS_MIL_E_VINTE_SEIS_UM },
+      { ...SUBSTITUTIVA_DE_2026_1 },
+    ]);
+
+    await expect(service.janelaDosDisparos()).resolves.toMatchObject({
+      principal: '132035',
+      rodada: 'SUB',
+    });
+
+    const lido = await service.lerPeriodoDosDisparos();
+    expect(lido.periodoId).toBeNull();
+    expect(lido.emUso).toMatchObject({ id: 81, vigente: true });
+  });
+
+  it('com escolha, um periodo cadastrado DEPOIS nao rouba os disparos', async () => {
+    const { service, periodos } = montar([{ ...DOIS_MIL_E_VINTE_SEIS_UM }]);
+
+    await service.definirPeriodoDosDisparos(80, 'admin@ucb.br');
+
+    // O cadastro antecipado da substitutiva: vira o vigente...
+    periodos.push({ ...SUBSTITUTIVA_DE_2026_1 });
+    await expect(service.janelaVigente()).resolves.toMatchObject({
+      rodada: 'SUB',
+    });
+
+    // ...e os disparos continuam na N2 escolhida.
+    await expect(service.janelaDosDisparos()).resolves.toMatchObject({
+      principal: '132035',
+      rodada: 'N2',
+    });
+
+    const lido = await service.lerPeriodoDosDisparos();
+    expect(lido).toMatchObject({
+      periodoId: 80,
+      atualizadoPor: 'admin@ucb.br',
+    });
+    expect(lido.emUso).toMatchObject({ id: 80, vigente: false });
+  });
+
+  it('null volta ao vigente, e a troca e auditada nos dois sentidos', async () => {
+    const { service, eventos } = montar([
+      { ...DOIS_MIL_E_VINTE_SEIS_UM },
+      { ...SUBSTITUTIVA_DE_2026_1 },
+    ]);
+
+    await service.definirPeriodoDosDisparos(80, 'admin@ucb.br');
+    await service.definirPeriodoDosDisparos(null, 'admin@ucb.br');
+
+    await expect(service.janelaDosDisparos()).resolves.toMatchObject({
+      rodada: 'SUB',
+    });
+    expect(
+      eventos.filter((e) => e.evento === 'PERIODO_DOS_DISPAROS_ALTERADO'),
+    ).toHaveLength(2);
+  });
+
+  it('recusa periodo inexistente sem gravar nada', async () => {
+    const { service, config } = montar([{ ...DOIS_MIL_E_VINTE_SEIS_UM }]);
+
+    await expect(
+      service.definirPeriodoDosDisparos(999, 'admin@ucb.br'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(config.atual).toBeNull();
+  });
+
+  /**
+   * Apagar o escolhido voltaria os disparos ao vigente em silencio — o sintoma
+   * que o filtro existe para evitar. A FK e RESTRICT; esta e a frase que diz
+   * como destravar, antes de a FK responder com um erro que ninguem entende.
+   */
+  it('recusa apagar o periodo escolhido para os disparos', async () => {
+    const { service, periodos } = montar([
+      { ...DOIS_MIL_E_VINTE_SEIS_UM },
+      { ...DOIS_MIL_E_VINTE_SEIS_DOIS },
+    ]);
+
+    await service.definirPeriodoDosDisparos(80, 'admin@ucb.br');
+
+    await expect(service.remover(80, 'admin@ucb.br')).rejects.toThrow(
+      /escolhido como o período das senhas/,
+    );
+    expect(periodos.map((p) => p.id)).toContain(80);
+
+    // O outro continua apagavel.
+    await expect(service.remover(79, 'admin@ucb.br')).resolves.toBeDefined();
   });
 });

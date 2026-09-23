@@ -33,10 +33,12 @@ import { LIMITE_AUTENTICACAO } from '../../config/throttler.config';
 import {
   AlvoDoQuizDto,
   CelulaDaGradeDto,
+  DefinirPeriodoDosDisparosDto,
   DefinirSenhaDto,
   EscolherModalidadeDaTurmaDto,
   GerarSenhasDto,
   JanelasDeProvaDto,
+  PeriodoDosDisparosDto,
   SalvarAlvoDto,
   SalvarJanelasDto,
   SenhaReveladaDto,
@@ -317,7 +319,9 @@ export class GradeSenhasController {
   }
 
   /**
-   * A janela vigente, ou a recusa com o motivo — a mesma frase de `turmas`.
+   * A janela dos disparos (a do filtro; sem escolha, a vigente), ou a recusa
+   * com o motivo — a mesma frase de `turmas`. Tem de ser a MESMA do lote: um
+   * desempate gravado numa rodada que o lote nao le nao desempata nada.
    *
    * Sem periodo cadastrado nao ha rodada, e sem rodada a decisao nao teria a
    * que se aplicar: ela e gravada por `(orgUnitId, rodada)`.
@@ -327,7 +331,7 @@ export class GradeSenhasController {
     rodada: string;
   }> {
     const { periodoLetivoIds, rodada } =
-      (await this.periodo.janelaVigente()) ?? {};
+      (await this.periodo.janelaDosDisparos()) ?? {};
 
     if (!periodoLetivoIds || !rodada) {
       throw new BadRequestException(
@@ -353,6 +357,42 @@ export class GradeSenhasController {
   @ApiOkResponse({ type: AlvoDoQuizDto })
   lerAlvo() {
     return this.grade.lerAlvo();
+  }
+
+  @Get('periodo-dos-disparos')
+  @ApiOperation({
+    summary: 'De qual periodo de agendamento os disparos tiram turmas e alunos',
+    description:
+      'Vale para senhas, datas, grupos e acesso especial — manuais **e do ' +
+      'cron**. `periodoId` nulo = sem escolha fixa, e os disparos seguem o ' +
+      'vigente (o cadastrado por ultimo), que era o unico comportamento antes ' +
+      'deste filtro.\n\n' +
+      'Fica no banco, e nao na tela, porque o cron nao tem tela: cadastrar o ' +
+      'proximo periodo com antecedencia nao pode mudar o que o disparo das ' +
+      '22:01 de hoje toca.',
+  })
+  @ApiOkResponse({ type: PeriodoDosDisparosDto })
+  lerPeriodoDosDisparos() {
+    return this.periodo.lerPeriodoDosDisparos();
+  }
+
+  @Put('periodo-dos-disparos')
+  @ApiOperation({
+    summary: 'Escolhe o periodo de agendamento dos disparos',
+    description:
+      'Vale a partir do proximo disparo, inclusive o do cron; um lote ja em ' +
+      'andamento continua no periodo com que comecou. `periodoId: null` volta ' +
+      'ao vigente. Auditado (`PERIODO_DOS_DISPAROS_ALTERADO`).\n\n' +
+      'O periodo escolhido nao pode ser apagado enquanto estiver aqui.',
+  })
+  @ApiOkResponse({ type: PeriodoDosDisparosDto })
+  @ApiBadRequestResponse({ description: 'periodoId ausente ou invalido' })
+  @ApiNotFoundResponse({ description: 'Periodo de agendamento inexistente' })
+  definirPeriodoDosDisparos(
+    @Body() dto: DefinirPeriodoDosDisparosDto,
+    @AdminLogado() admin: AdminJwtPayload,
+  ) {
+    return this.periodo.definirPeriodoDosDisparos(dto.periodoId, admin.email);
   }
 
   @Get('janelas')

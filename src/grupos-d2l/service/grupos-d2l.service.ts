@@ -62,7 +62,8 @@ import { ehPendencia } from './resultado';
  * criado, nada acontece" que o cliente pediu. `forcar` confere no Brightspace
  * mesmo assim, para quando alguem mexeu direto la.
  *
- * O recorte e a JANELA VIGENTE inteira (`periodoLetivoIds` + `rodada`) e o
+ * O recorte e a JANELA DOS DISPAROS inteira (`periodoLetivoIds` + `rodada`:
+ * a do filtro da aba Senhas e datas, ou a vigente sem escolha) e o
  * intervalo de dias de prova da tela, nos tres blocos (EaD, Semi/Modular e
  * Presencial).
  */
@@ -206,7 +207,7 @@ export class GruposD2lService {
       );
     }
 
-    const vigente = await this.periodo.janelaVigente();
+    const vigente = await this.periodo.janelaDosDisparos();
 
     if (!vigente) {
       throw new BadRequestException(

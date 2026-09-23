@@ -13,6 +13,7 @@ import {
   Matches,
   MaxLength,
   Min,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import {
@@ -21,6 +22,7 @@ import {
   Turno,
 } from '../../generated/prisma/client';
 import type { SituacaoDaCelula } from '../service/grade-senhas.service';
+import type { PeriodoDosDisparos } from '../../periodo/service/periodo.service';
 
 const SITUACOES: SituacaoDaCelula[] = [
   'SALVA',
@@ -275,6 +277,76 @@ export class AlvoDoQuizDto {
     description: 'false = ninguem escolheu ainda, e o lote recusa comecar.',
   })
   configurado!: boolean;
+}
+
+export class DefinirPeriodoDosDisparosDto {
+  @ApiProperty({
+    example: 7,
+    nullable: true,
+    type: Number,
+    description:
+      'O periodo de agendamento cujas turmas e alunos os disparos usam. ' +
+      '`null` = sem periodo fixo: segue o vigente (o cadastrado por ultimo). ' +
+      'Obrigatorio no corpo, inclusive quando nulo — omitir nao pode ser lido ' +
+      'como "voltar ao vigente" por engano.',
+  })
+  @ValidateIf((o: { periodoId?: unknown }) => o.periodoId !== null)
+  @IsInt({ message: 'Escolha um período de agendamento da lista.' })
+  @Min(1, { message: 'Escolha um período de agendamento da lista.' })
+  periodoId!: number | null;
+}
+
+export class PeriodoEmUsoDto {
+  @ApiProperty({ example: 7, description: 'Id do periodo de agendamento.' })
+  id!: number;
+
+  @ApiProperty({ example: '6606', description: 'Periodo letivo principal.' })
+  periodoLetivoId!: string;
+
+  @ApiProperty({ example: 'SUB', description: 'Qual prova do semestre.' })
+  rodada!: string;
+
+  @ApiProperty({
+    example: '2026/3 - Substitutiva',
+    nullable: true,
+    type: String,
+  })
+  descricao!: string | null;
+
+  @ApiProperty({
+    example: false,
+    description: 'true = e o vigente (o cadastrado por ultimo).',
+  })
+  vigente!: boolean;
+}
+
+export class PeriodoDosDisparosDto implements PeriodoDosDisparos {
+  @ApiProperty({
+    example: 7,
+    nullable: true,
+    type: Number,
+    description: '`null` = sem periodo fixo: os disparos seguem o vigente.',
+  })
+  periodoId!: number | null;
+
+  @ApiProperty({
+    type: PeriodoEmUsoDto,
+    nullable: true,
+    description:
+      'O periodo que os disparos usam AGORA — o escolhido, ou o vigente. ' +
+      'Nulo so quando nao ha periodo cadastrado.',
+  })
+  emUso!: PeriodoEmUsoDto | null;
+
+  @ApiProperty({ example: 'admin@ucb.br', nullable: true, type: String })
+  atualizadoPor!: string | null;
+
+  @ApiProperty({
+    example: '2026-09-23T12:00:00.000Z',
+    nullable: true,
+    type: Date,
+  })
+  atualizadoEm!: Date | null;
 }
 
 export class CandidataDeModalidadeDto {

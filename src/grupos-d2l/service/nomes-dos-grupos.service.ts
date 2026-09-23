@@ -160,26 +160,34 @@ export class NomesDosGruposService {
    * Tudo que a tela precisa numa ida: nomes por bloco, horarios validos,
    * pendencias de horario e as ultimas execucoes dos dois botoes.
    *
-   * Sem intervalo, usa o dos DIAS DE PROVA ja agendados na rodada vigente — e o
+   * Sem intervalo, usa o dos DIAS DE PROVA ja agendados no periodo dos
+   * disparos (o do filtro da aba Senhas e datas; sem escolha, o vigente) — e o
    * que o admin quer ver depois do fim do prazo, que e quando os grupos sao
    * montados.
    */
   async painel(de?: string, ate?: string): Promise<PainelDeGrupos> {
-    const vigente = await this.periodo.janelaVigente();
+    const vigente = await this.periodo.janelaDosDisparos();
 
     const intervalo =
       de || ate
         ? intervaloDeDias(de, ate)
         : await this.intervaloPadrao(vigente);
 
-    const [janelas, ofertas, situacao, ultimaCriacao, ultimaInscricao] =
-      await Promise.all([
-        this.janelasComGrupo(),
-        this.ofertasDoIntervalo(intervalo),
-        this.periodo.situacaoAtual(),
-        this.ultimaExecucao(TipoExecucaoGruposD2L.CRIAR_GRUPOS),
-        this.ultimaExecucao(TipoExecucaoGruposD2L.INSCREVER_ALUNOS),
-      ]);
+    const [
+      janelas,
+      ofertas,
+      situacao,
+      disparos,
+      ultimaCriacao,
+      ultimaInscricao,
+    ] = await Promise.all([
+      this.janelasComGrupo(),
+      this.ofertasDoIntervalo(intervalo),
+      this.periodo.situacaoAtual(),
+      this.periodo.lerPeriodoDosDisparos(),
+      this.ultimaExecucao(TipoExecucaoGruposD2L.CRIAR_GRUPOS),
+      this.ultimaExecucao(TipoExecucaoGruposD2L.INSCREVER_ALUNOS),
+    ]);
 
     const celulas = await this.prisma.grupoDaJanela.findMany({
       where: {
@@ -225,7 +233,10 @@ export class NomesDosGruposService {
       ate: intervalo.ate,
       rodada: vigente?.rodada ?? null,
       periodoLetivoIds: vigente?.periodoLetivoIds ?? [],
-      agendamentoAberto: situacao.aberto,
+      // O prazo aberto e o do VIGENTE, e so os alunos dele ainda trocam de
+      // horario. Com um periodo anterior escolhido no filtro, o aviso seria
+      // sobre alunos que o lote nem vai tocar.
+      agendamentoAberto: situacao.aberto && (disparos.emUso?.vigente ?? true),
       blocos,
       pendenciasDeHorario: pendenciasDeHorario(ofertas, janelas),
       ultimaCriacaoId: ultimaCriacao,
@@ -557,7 +568,7 @@ export class NomesDosGruposService {
   }
 
   private async intervaloPadrao(
-    vigente: Awaited<ReturnType<PeriodoService['janelaVigente']>>,
+    vigente: Awaited<ReturnType<PeriodoService['janelaDosDisparos']>>,
   ): Promise<IntervaloDeDias> {
     if (vigente) {
       const extremos = await this.prisma.faixa.aggregate({

@@ -196,7 +196,7 @@ export class SpecialAccessService {
       );
     }
 
-    const vigente = await this.periodo.janelaVigente();
+    const vigente = await this.periodo.janelaDosDisparos();
 
     if (!vigente) {
       throw new BadRequestException(
@@ -303,7 +303,7 @@ export class SpecialAccessService {
    * turmas ANTES de gastar requisicao, que e a razao de o seletor existir.
    */
   async turmasDisponiveis(): Promise<TurmasDoSpecialAccess> {
-    const vigente = await this.periodo.janelaVigente();
+    const vigente = await this.periodo.janelaDosDisparos();
 
     if (!vigente) {
       throw new BadRequestException(

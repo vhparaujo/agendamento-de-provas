@@ -54,6 +54,10 @@ export type EventoSeguranca =
   // mais recente entrega o portal ao anterior, e a mudanca nao aparece em
   // lugar nenhum alem daqui.
   | 'PERIODO_REMOVIDO'
+  // O periodo de que os disparos (senhas, datas, grupos, acesso especial, e o
+  // cron) tiram as turmas e os alunos. Auditavel porque muda o que o proximo
+  // disparo automatico toca, sem nada no resultado do lote denunciar a troca.
+  | 'PERIODO_DOS_DISPAROS_ALTERADO'
   // Um corte de data tirou VARIAS faixas do portal de uma vez (a virada de
   // periodo). Auditavel porque muda, numa tacada, o que TODO aluno enxerga como
   // horario disponivel — e o estrago de um corte de data errado so aparece pelo

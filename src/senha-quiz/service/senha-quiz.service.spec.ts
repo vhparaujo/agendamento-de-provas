@@ -282,7 +282,7 @@ describe('SenhaQuizService', () => {
     } as unknown as GradeSenhasService;
 
     const periodo = {
-      janelaVigente: jest.fn().mockResolvedValue({
+      janelaDosDisparos: jest.fn().mockResolvedValue({
         periodoLetivoIds: ['103'],
         principal: '103',
         rodada: 'N2',

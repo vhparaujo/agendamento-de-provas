@@ -1000,6 +1000,7 @@ diferentes. Ver "Senha das provas" no `CLAUDE.md` para o raciocínio inteiro.
 | `GET` | `/senhas-de-prova/:id/revelar` | O valor de uma célula. **Auditado e com throttle apertado** |
 | `DELETE` | `/senhas-de-prova/:id` | Retenção: apaga a senha, preservando o histórico da execução |
 | `GET`/`PUT` | `/senhas-de-prova/alvo` | Qual questionário o lote procura (nome + `EXATO`/`CONTEM`) |
+| `GET`/`PUT` | `/senhas-de-prova/periodo-dos-disparos` | De qual **período de agendamento** senhas, datas, grupos e acesso especial tiram turmas e alunos — manuais **e cron**. `periodoId: null` = o vigente |
 | `GET`/`PUT` | `/senhas-de-prova/janelas` | O calendário das sessões por formato — é dele que saem os horários de disparo |
 | `GET` | `/senhas-de-prova/turmas` | Pré-visualiza **quais turmas serão tocadas**, e quais não resolveram |
 | `PUT`/`DELETE` | `/senhas-de-prova/turmas/:turmaId/modalidade` | Desempata a turma **ambígua** — e só ela. Ver abaixo |
@@ -1080,6 +1081,14 @@ grade fica aberta num monitor compartilhado.
 tela, `GET /senhas-de-prova/alvo` devolve `nomeQuiz: null` e o lote **recusa**
 começar. Um default plausível ("Prova") seria pior que a ausência: ele rodaria,
 casaria com o que estivesse por perto e ninguém saberia até o dia da prova.
+
+**O período dos disparos também vem da tela** (23/09/2026). O filtro "Período
+de agendamento" das abas Senhas e datas, Grupos e Acesso especial grava em
+`configuracao_senha_quiz.periodoDosDisparosId` de qual período saem as turmas e
+os alunos de **todo** disparo, inclusive o do cron. Sem escolha, é o vigente,
+como sempre foi. Com escolha, cadastrar o período seguinte com antecedência não
+muda mais nada nos disparos até alguém trocar o filtro. O período escolhido não
+pode ser apagado (409, e FK `RESTRICT`).
 
 **Os horários também vêm da tela.** Um tick de um minuto compara o relógio de São
 Paulo com as janelas cadastradas, então corrigir o horário às 15:25 já vale às

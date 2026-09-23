@@ -558,6 +558,7 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `GET/PUT /senhas-de-prova` · `GET /:id/revelar` · `DELETE /:id` | admin | A grade **dia × sessão** das senhas das provas. **A listagem nunca devolve o valor** |
 | `POST /senhas-de-prova/gerar` · `GET /senhas-de-prova/revelar` | admin | Sorteia as senhas do período (6 dígitos, nenhum repetido >3×, únicas no dia), e o "Mostrar senhas" da tela — auditado numa linha por intervalo |
 | `GET/PUT /senhas-de-prova/alvo` · `GET /senhas-de-prova/turmas` | admin | Questionário-alvo e quais turmas o lote vai tocar |
+| `GET/PUT /senhas-de-prova/periodo-dos-disparos` | admin | O **período de agendamento** de senhas, datas, grupos e acesso especial — manuais e cron. `null` = o vigente |
 | `PUT/DELETE /senhas-de-prova/turmas/:turmaId/modalidade` | admin | Desempata a turma **ambígua** (alunos de dois formatos). Só nesse caso |
 | `GET/PUT /senhas-de-prova/janelas` | admin | O calendário de abertura/fechamento do questionário, por formato |
 | `GET/PUT /senhas-de-prova/grupos` | admin | A grade **dia × janela** do grupo que libera a prova. PUT em lote; nome vazio apaga a célula |
@@ -1494,8 +1495,9 @@ foi o checklist da migração:
 | o período DESTE aluno (disciplinas, agendar, trocar, importar) | `periodoLetivoDaModalidade(modalidade)` |
 | todos os períodos DESTA janela (contar, listar, exportar, relatar) | `janelaVigente()` + `{ in: periodoLetivoIds }` |
 | **trava por PESSOA** (uma prova por matrícula em cada faixa) | `janelaVigente()` — **obrigatoriamente** |
+| os **disparos** no AVA (senhas, datas, grupos, acesso especial — manual e cron) | `janelaDosDisparos()` — ver "O período dos disparos" |
 
-⚠️ **A última linha é a que não pode errar.** Um mesmo RA pode ter um vínculo EaD
+⚠️ **A trava por pessoa é a que não pode errar.** Um mesmo RA pode ter um vínculo EaD
 e um Presencial, e as duas reservas dele ficam sob org units DIFERENTES na mesma
 janela. Recortar pelo período de um vínculo faria a trava não enxergar a reserva
 do outro — e a pessoa sairia com **duas provas no mesmo horário, em duas salas**.
@@ -3269,6 +3271,38 @@ lista os grupos que existem naquela turma, para distinguir os dois casos.
   `PATCH` num microserviço Siren separado (`quizzes.api.brightspace.com`), com o
   host tirado do claim `tenantid` do JWT. Segunda integração, e o cliente não
   pediu.
+
+## O período dos disparos (23/09/2026)
+
+Até aqui senhas, datas, grupos e acesso especial recortavam pela janela
+**vigente**, e vigente é o período cadastrado por último. Cadastrar o próximo
+período com antecedência (ou por teste) mudava **na hora** as turmas e os alunos
+de todo disparo, inclusive o do cron daquela noite. Aconteceu.
+
+Agora o admin escolhe o período num filtro "Período de agendamento", o mesmo
+das outras telas, no topo de **Senhas e datas**, **Grupos** e **Acesso
+especial**. As três mostram o mesmo valor. A escolha fica **gravada**
+(`configuracao_senha_quiz.periodoDosDisparosId`) porque o cron não tem tela para
+perguntar.
+
+| Decisão | Por quê |
+|---|---|
+| `null` = o vigente, e é o padrão | Quem nunca mexeu no filtro não percebe diferença nenhuma; a migration não muda comportamento |
+| Um método novo, `janelaDosDisparos()`, e não um parâmetro de `janelaVigente()` | A mesma regra da classe: a pergunta tem de estar no nome da chamada. Portal, compulsório, relatórios e travas por pessoa **continuam** no vigente |
+| Os seis pontos que usam: o lote de senhas/datas/preparo, o desempate e a conferência de turmas (`janelaOuRecusar`), os dois lotes de grupos e o painel deles, e o acesso especial (lote e lista de turmas) | O desempate tem de ler a MESMA rodada do lote: uma decisão gravada numa rodada que o lote não lê não desempata nada |
+| FK `RESTRICT`, e `remover` recusa antes com a frase de como destravar | Apagar o escolhido voltaria os disparos ao vigente em silêncio: o sintoma que o filtro existe para evitar |
+| Autor e data em colunas próprias (`periodoDosDisparosPor/Em`) | `atualizadoPor/Em` são do questionário-alvo, e a tela mostra os dois |
+| Auditado (`PERIODO_DOS_DISPAROS_ALTERADO`) | Muda o que o próximo disparo automático toca, e nada no resultado do lote denuncia a troca |
+| O aviso "prazo ainda aberto" da tela de Grupos só aparece se o período escolhido for o vigente | O prazo aberto é o do vigente; com um período anterior, o aviso seria sobre alunos que o lote nem toca |
+
+Um lote já em andamento continua no período com que começou: todos leem o
+contexto uma vez, no início.
+
+Do lado do front é `FiltroPeriodoDosDisparos.vue`. Trocar o período apaga a
+conferência de turmas da aba Senhas e datas (refazê-la custa uma chamada ao AVA
+por turma, então ela não se refaz sozinha), recarrega o painel de Grupos no
+intervalo padrão do novo período e recarrega a lista de turmas do Acesso
+especial.
 
 ## Special access por agendamento (15/09/2026)
 

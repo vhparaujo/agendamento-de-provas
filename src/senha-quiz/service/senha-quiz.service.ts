@@ -66,7 +66,8 @@ import { rotuloDoTurno } from './turno';
  * O LOTE QUE TROCA A SENHA DAS PROVAS
  * ============================================================================
  * Uma execucao = UMA celula da grade (dia + SESSAO). Aplica a senha daquela
- * celula nas turmas do CSV **daquele formato**, no periodo letivo vigente.
+ * celula nas turmas do CSV **daquele formato**, no periodo dos disparos (o do
+ * filtro da aba; sem escolha, o vigente — `PeriodoService.janelaDosDisparos`).
  *
  * ⚠️ **As duas metades desta frase mudaram em 21/09/2026.** Antes era "dia +
  * turno" em TODAS as turmas do CSV, tres vezes por dia. Duas consequencias do
@@ -316,7 +317,7 @@ export class SenhaQuizService {
       periodoLetivoIds,
       principal: periodoLetivoId,
       rodada,
-    } = (await this.periodo.janelaVigente()) ?? {};
+    } = (await this.periodo.janelaDosDisparos()) ?? {};
 
     if (!periodoLetivoIds || !periodoLetivoId || !rodada) {
       throw new BadRequestException(

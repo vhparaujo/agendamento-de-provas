@@ -652,6 +652,10 @@ model PeriodoAgendamento {
   /// formato cadastrado; ver `PeriodoLetivoModalidade`.
   letivosPorModalidade PeriodoLetivoModalidade[]
 
+  /// Lado inverso de `ConfiguracaoSenhaQuiz.periodoDosDisparos`. Na pratica
+  /// zero ou uma linha: a configuracao e singleton.
+  disparos ConfiguracaoSenhaQuiz[]
+
   @@map("periodo_agendamento")
 }
 
@@ -987,9 +991,29 @@ model ConfiguracaoSenhaQuiz {
   // `JanelaDeProva.horaDisparo`. Manter as colunas mortas seria manter dois
   // calendarios, e o errado e o que alguem acabaria editando.
 
+  /// O PERIODO DE AGENDAMENTO QUE OS DISPAROS USAM — senhas, datas, grupos e
+  /// acesso especial, manuais e do cron (23/09/2026).
+  ///
+  /// NULO = o vigente (o cadastrado mais recentemente), que era a unica opcao
+  /// antes desta coluna. Preenchido = aquele periodo, mesmo que outro tenha sido
+  /// cadastrado depois: cadastrar o proximo semestre com antecedencia nao pode
+  /// mudar as turmas e os alunos que o cron vai tocar no dia seguinte.
+  ///
+  /// RESTRICT, e nao SetNull: apagar o periodo escolhido voltaria os disparos ao
+  /// vigente em silencio — exatamente o sintoma que a coluna existe para evitar.
+  /// `PeriodoService.remover` recusa antes, com a frase de como destravar.
+  periodoDosDisparosId Int?
+  periodoDosDisparos   PeriodoAgendamento? @relation(fields: [periodoDosDisparosId], references: [id], onDelete: Restrict)
+  /// Quem escolheu e quando — separados de `atualizadoPor`/`atualizadoEm`,
+  /// que sao do questionario-alvo: a tela mostra os dois, e um autor so
+  /// atribuiria a troca de um a quem mexeu no outro.
+  periodoDosDisparosPor String?
+  periodoDosDisparosEm  DateTime?
+
   atualizadoPor String?
   atualizadoEm  DateTime @updatedAt
 
+  @@index([periodoDosDisparosId])
   @@map("configuracao_senha_quiz")
 }
 

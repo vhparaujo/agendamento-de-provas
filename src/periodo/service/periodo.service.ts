@@ -383,6 +383,136 @@ export class PeriodoService {
   }
 
   /**
+   * ==========================================================================
+   * A JANELA DOS DISPAROS — senhas, datas, grupos e acesso especial
+   * ==========================================================================
+   * Terceira pergunta, ao lado de `janelaVigente()` e `janelaDoPeriodo(id)`:
+   * "de qual prova sao as turmas e os alunos que o AVA vai receber?". Vale para
+   * os disparos manuais E para o cron (23/09/2026).
+   *
+   * Ate aqui a resposta era sempre o vigente, e isso tinha um efeito colateral
+   * que custou caro: cadastrar o proximo periodo com antecedencia (ou por
+   * teste) mudava NA HORA as turmas de todo disparo, inclusive o das 22:01 de
+   * hoje. Agora o admin escolhe o periodo num filtro da aba Senhas e datas, e a
+   * escolha fica gravada — o cron nao tem tela para perguntar.
+   *
+   * Sem escolha gravada, continua o vigente: quem nunca mexeu no filtro nao
+   * percebe diferenca nenhuma.
+   *
+   * ⚠️ So os DISPAROS usam isto. Portal, compulsorio, relatorios e as travas por
+   * pessoa continuam no vigente — ver a tabela em `janelaVigente()`.
+   */
+  async janelaDosDisparos(): Promise<Janela | undefined> {
+    const escolhido = await this.idDoPeriodoDosDisparos();
+
+    // `janelaDoPeriodo` responde 404 se a linha sumiu, mas ela nao some: a FK e
+    // RESTRICT e `remover` recusa antes. Cair no vigente aqui seria o sintoma
+    // que a escolha existe para evitar.
+    return escolhido === null
+      ? this.janelaVigente()
+      : this.janelaDoPeriodo(escolhido);
+  }
+
+  /** O que o filtro da tela mostra: a escolha gravada e o periodo em uso. */
+  async lerPeriodoDosDisparos(): Promise<PeriodoDosDisparos> {
+    const [config, vigente] = await Promise.all([
+      this.prisma.configuracaoSenhaQuiz.findUnique({
+        where: { id: 1 },
+        select: {
+          periodoDosDisparosId: true,
+          periodoDosDisparosPor: true,
+          periodoDosDisparosEm: true,
+        },
+      }),
+      this.prisma.periodoAgendamento.findFirst({
+        orderBy: { createdAt: 'desc' },
+        select: { id: true },
+      }),
+    ]);
+
+    const periodoId = config?.periodoDosDisparosId ?? null;
+    const idEmUso = periodoId ?? vigente?.id ?? null;
+
+    const emUso =
+      idEmUso === null
+        ? null
+        : await this.prisma.periodoAgendamento.findUnique({
+            where: { id: idEmUso },
+            select: {
+              id: true,
+              periodoLetivoId: true,
+              rodada: true,
+              descricao: true,
+            },
+          });
+
+    return {
+      periodoId,
+      emUso: emUso ? { ...emUso, vigente: emUso.id === vigente?.id } : null,
+      atualizadoPor: config?.periodoDosDisparosPor ?? null,
+      atualizadoEm: config?.periodoDosDisparosEm ?? null,
+    };
+  }
+
+  /**
+   * Grava a escolha. `null` volta ao vigente.
+   *
+   * Auditavel pelo mesmo motivo do questionario-alvo: decide QUAIS turmas e
+   * alunos o proximo disparo toca, inclusive o do cron, e nada no resultado do
+   * lote denuncia a troca.
+   */
+  async definirPeriodoDosDisparos(
+    periodoId: number | null,
+    porAdmin: string,
+  ): Promise<PeriodoDosDisparos> {
+    const periodo =
+      periodoId === null
+        ? null
+        : await this.prisma.periodoAgendamento.findUnique({
+            where: { id: periodoId },
+            select: { id: true, periodoLetivoId: true, rodada: true },
+          });
+
+    if (periodoId !== null && !periodo) {
+      throw new NotFoundException(PERIODO_NAO_ENCONTRADO);
+    }
+
+    const dados = {
+      periodoDosDisparosId: periodoId,
+      periodoDosDisparosPor: porAdmin,
+      periodoDosDisparosEm: new Date(),
+    };
+
+    await this.prisma.configuracaoSenhaQuiz.upsert({
+      where: { id: 1 },
+      create: { id: 1, ...dados },
+      update: dados,
+    });
+
+    this.logger.log(
+      `Periodo dos disparos: ${periodo ? `${periodo.id} (letivo ${periodo.periodoLetivoId}, rodada ${periodo.rodada})` : 'o vigente'}, por ${porAdmin}.`,
+    );
+
+    this.auditoria.registrar('PERIODO_DOS_DISPAROS_ALTERADO', {
+      ator: porAdmin,
+      detalhe: periodo
+        ? `periodo ${periodo.id} (letivo ${periodo.periodoLetivoId}, rodada ${periodo.rodada})`
+        : 'o vigente (sem periodo fixo)',
+    });
+
+    return this.lerPeriodoDosDisparos();
+  }
+
+  private async idDoPeriodoDosDisparos(): Promise<number | null> {
+    const config = await this.prisma.configuracaoSenhaQuiz.findUnique({
+      where: { id: 1 },
+      select: { periodoDosDisparosId: true },
+    });
+
+    return config?.periodoDosDisparosId ?? null;
+  }
+
+  /**
    * O periodo letivo de um formato dentro de UMA janela ja carregada.
    *
    * O fallback para o principal e deliberado e ruidoso: um formato semeado
@@ -970,6 +1100,20 @@ export class PeriodoService {
         },
       });
 
+      // Antes da FK: ela tambem recusaria, mas com um erro que ninguem entende.
+      const usadoNosDisparos = await tx.configuracaoSenhaQuiz.count({
+        where: { periodoDosDisparosId: id },
+      });
+
+      if (usadoNosDisparos > 0) {
+        throw new ConflictException(
+          `O período letivo ${periodo.periodoLetivoId} (rodada ${periodo.rodada}) ` +
+            'está escolhido como o período das senhas, datas e grupos, e não pode ' +
+            'ser apagado. Em Senhas e datas, escolha outro período (ou o vigente) ' +
+            'no filtro do topo e tente de novo.',
+        );
+      }
+
       if (agendamentos > 0) {
         throw new ConflictException(
           `O período letivo ${periodo.periodoLetivoId} (rodada ${periodo.rodada}) ` +
@@ -1106,6 +1250,22 @@ type JanelaComMapa = {
  * UMA janela de agendamento como quem CONTA precisa dela: os org units que ela
  * cobre e a rodada que separa a N2 da SUB dentro do mesmo semestre.
  */
+/** A escolha do filtro de periodo dos disparos, como a tela a le. */
+export interface PeriodoDosDisparos {
+  /** `null` = sem escolha fixa: os disparos seguem o vigente. */
+  periodoId: number | null;
+  /** O periodo que os disparos usam AGORA. `null` so sem periodo cadastrado. */
+  emUso: {
+    id: number;
+    periodoLetivoId: string;
+    rodada: string;
+    descricao: string | null;
+    vigente: boolean;
+  } | null;
+  atualizadoPor: string | null;
+  atualizadoEm: Date | null;
+}
+
 export interface Janela {
   /** Todos os org units cobertos, sem repetir. Para `{ in: ... }`. */
   periodoLetivoIds: string[];

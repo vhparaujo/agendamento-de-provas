@@ -40,6 +40,7 @@ const ROTULOS: Record<string, string> = {
   duracaoMinutos: 'duração (minutos)',
   periodoLetivoId: 'período letivo',
   periodoLetivoIds: 'períodos letivos',
+  periodoId: 'período de agendamento',
   modalidadeId: 'formato',
   modalidade: 'formato',
   pagina: 'página',
