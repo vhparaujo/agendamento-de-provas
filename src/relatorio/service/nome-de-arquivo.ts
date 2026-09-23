@@ -96,3 +96,36 @@ export function nomeDaListaDePresenca(
 
   return `${partes.join(' - ')}.pdf`;
 }
+
+/**
+ * `Lista da porta - 11-06-2026 09h00-12h00 - Campus Asa Sul - SALA 1 EAD.pdf`
+ *
+ * Mesmo desenho do nome da lista de presenca, com outro prefixo: as duas folhas
+ * da mesma sala costumam ser baixadas juntas, e cair com o mesmo nome faria uma
+ * sobrescrever a outra na pasta de downloads.
+ */
+export function nomeDaListaDaPorta(
+  pagina: FaixaDoArquivo & { polo: string; sala: string },
+): string {
+  return nomeDaListaDePresenca(pagina).replace(
+    /^Lista de presenca/,
+    'Lista da porta',
+  );
+}
+
+/**
+ * `Identificacao - 11-06-2026 09h00 - Campus Asa Sul.pdf`
+ *
+ * A folha de identificacao e de um HORARIO, nao de uma sala: sem sala no nome,
+ * e so com a hora de inicio, que e a unica que ela mostra.
+ */
+export function nomeDaIdentificacao(folha: {
+  data: Date;
+  horaInicio: string;
+  polo: string;
+}): string {
+  const dia = dataDaProva(folha.data).replace(/\//g, '-');
+  const hora = folha.horaInicio.replace(':', 'h');
+
+  return `Identificacao - ${dia} ${hora} - ${sanear(folha.polo)}.pdf`;
+}

@@ -915,6 +915,10 @@ pediu aquela folha já escolheu o horário.
 | `GET` | `/relatorios/listas-de-presenca` | Lista as salas que terão aplicação e quantos assinam em cada |
 | `GET` | `/relatorios/listas-de-presenca/pdf` | O PDF do recorte, uma página por sala |
 | `GET` | `/relatorios/listas-de-presenca/:salaFaixaId/pdf` | A folha avulsa de uma sala |
+| `GET` | `/relatorios/listas-da-porta/pdf` | A lista da porta (Nº · RA · Nome, sem assinatura) de todas as salas do recorte |
+| `GET` | `/relatorios/listas-da-porta/:salaFaixaId/pdf` | A lista da porta de uma sala |
+| `GET` | `/relatorios/identificacao/pdf` | As folhas de identificação (polo, dia e hora de início), uma por horário do recorte |
+| `GET` | `/relatorios/identificacao/:faixaId/pdf` | A folha de identificação de um horário |
 
 Cada página traz o cabeçalho (formato, polo, data, horário, sala) e a tabela:
 

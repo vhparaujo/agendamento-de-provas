@@ -51,7 +51,10 @@ const aplicarFiltros = () =>
 
 /**
  * As **listas de presenca** (`listas-de-presenca`): o PDF que o fiscal leva
- * para a sala e devolve assinado. Consumido por PESSOA, em papel.
+ * para a sala e devolve assinado. Consumido por PESSOA, em papel. E as **listas
+ * da porta** (`listas-da-porta`), a mesma folha sem assinatura, colada do lado
+ * de fora para o aluno conferir a sala. E as **folhas de identificacao**
+ * (`identificacao`), um cartaz por horario com polo, dia e hora.
  *
  * Nao se confunde com `GET /agendamentos/exportacao`, que e a lista de cobranca
  * da administracao (todos os vinculos, agendados ou nao, em Excel) e sai sem
@@ -176,6 +179,171 @@ export class RelatorioController {
       salaFaixaId,
       this.lerFiltro(query),
     );
+
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${nomeArquivo}"`,
+    );
+
+    return new StreamableFile(conteudo as Buffer);
+  }
+
+  /**
+   * A LISTA DA PORTA: a mesma folha da presenca, colada do lado de fora da sala
+   * para o aluno conferir que esta no lugar certo. Mesmo recorte e mesmas salas
+   * de `GET listas-de-presenca` — a tabela da tela serve as duas —, so a tabela
+   * do PDF muda.
+   */
+  @Get('listas-da-porta/pdf')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
+  @ApiOperation({
+    summary: 'Baixa o PDF com a lista da porta de todas as salas do recorte',
+    description:
+      'A folha que vai colada na **porta** da sala, para o aluno conferir que ' +
+      'esta no lugar certo. Mesmo recorte, mesma ordem e mesmo cabecalho da ' +
+      'lista de presenca; a tabela traz **Nº · RA · Nome**, sem assinatura.',
+  })
+  @aplicarFiltros()
+  @ApiProduces('application/pdf')
+  @ApiOkResponse({
+    description: 'Arquivo PDF',
+    schema: { type: 'string', format: 'binary' },
+  })
+  @ApiNotFoundResponse({
+    description: 'Nenhuma sala com aluno confirmado neste recorte',
+  })
+  @Header('Content-Type', 'application/pdf')
+  async pdfDasListasDaPorta(
+    @Query() query: Record<string, string>,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { nomeArquivo, conteudo } = await this.listas.pdfDoRecorte(
+      this.lerFiltro(query),
+      'porta',
+    );
+
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${nomeArquivo}"`,
+    );
+
+    return new StreamableFile(conteudo as Buffer);
+  }
+
+  @Get('listas-da-porta/:salaFaixaId/pdf')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
+  @ApiOperation({
+    summary: 'Baixa a lista da porta de UMA sala',
+    description:
+      'A folha avulsa da porta. Mesmas regras de ' +
+      '`GET listas-de-presenca/:salaFaixaId/pdf`: `de`, `ate` e `poloId` sao ' +
+      'ignorados; `periodoLetivoId` e `rodada` continuam valendo.',
+  })
+  @ApiParam({
+    name: 'salaFaixaId',
+    type: Number,
+    example: 31,
+    description: 'A oferta (`SalaFaixa`): sala + horario + polo num id so.',
+  })
+  @aplicarFiltros()
+  @ApiProduces('application/pdf')
+  @ApiOkResponse({
+    description: 'Arquivo PDF',
+    schema: { type: 'string', format: 'binary' },
+  })
+  @ApiNotFoundResponse({ description: 'Nenhum aluno confirmado nesta sala' })
+  @Header('Content-Type', 'application/pdf')
+  async pdfDaPortaDeUmaSala(
+    @Param('salaFaixaId', ParseIntPipe) salaFaixaId: number,
+    @Query() query: Record<string, string>,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { nomeArquivo, conteudo } = await this.listas.pdfDeUmaSala(
+      salaFaixaId,
+      this.lerFiltro(query),
+      'porta',
+    );
+
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${nomeArquivo}"`,
+    );
+
+    return new StreamableFile(conteudo as Buffer);
+  }
+
+  /**
+   * A FOLHA DE IDENTIFICACAO: um cartaz deitado por horario, com so o polo, o
+   * dia e a hora de inicio. Mesmo recorte das listas; o que muda e que a pagina
+   * e da FAIXA, e nao da sala.
+   */
+  @Get('identificacao/pdf')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
+  @ApiOperation({
+    summary: 'Baixa as folhas de identificacao de todos os horarios do recorte',
+    description:
+      'Uma pagina **deitada por horario** (polo + dia + hora de inicio) que ' +
+      'tenha aluno confirmado, no modelo da instituicao: marca no alto e as ' +
+      'tres linhas em letra grande, para ler de longe. Nao traz sala: as salas ' +
+      'do mesmo horario teriam folhas identicas.',
+  })
+  @aplicarFiltros()
+  @ApiProduces('application/pdf')
+  @ApiOkResponse({
+    description: 'Arquivo PDF',
+    schema: { type: 'string', format: 'binary' },
+  })
+  @ApiNotFoundResponse({
+    description: 'Nenhum horario com aluno confirmado neste recorte',
+  })
+  @Header('Content-Type', 'application/pdf')
+  async pdfDasIdentificacoes(
+    @Query() query: Record<string, string>,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { nomeArquivo, conteudo } =
+      await this.listas.pdfDeIdentificacaoDoRecorte(this.lerFiltro(query));
+
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${nomeArquivo}"`,
+    );
+
+    return new StreamableFile(conteudo as Buffer);
+  }
+
+  @Get('identificacao/:faixaId/pdf')
+  @NiveisPermitidos(NivelAdmin.ASSISTENTE_OPERACIONAL)
+  @ApiOperation({
+    summary: 'Baixa a folha de identificacao de UM horario',
+    description:
+      '`de`, `ate` e `poloId` sao ignorados — quem pediu este horario ja o ' +
+      'escolheu; `periodoLetivoId` e `rodada` continuam valendo.',
+  })
+  @ApiParam({
+    name: 'faixaId',
+    type: Number,
+    example: 14,
+    description: 'A faixa: polo + dia + horario.',
+  })
+  @aplicarFiltros()
+  @ApiProduces('application/pdf')
+  @ApiOkResponse({
+    description: 'Arquivo PDF',
+    schema: { type: 'string', format: 'binary' },
+  })
+  @ApiNotFoundResponse({ description: 'Nenhum aluno confirmado neste horario' })
+  @Header('Content-Type', 'application/pdf')
+  async pdfDaIdentificacaoDeUmaFaixa(
+    @Param('faixaId', ParseIntPipe) faixaId: number,
+    @Query() query: Record<string, string>,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { nomeArquivo, conteudo } =
+      await this.listas.pdfDeIdentificacaoDaFaixa(
+        faixaId,
+        this.lerFiltro(query),
+      );
 
     res.setHeader(
       'Content-Disposition',

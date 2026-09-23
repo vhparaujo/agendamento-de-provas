@@ -3,10 +3,19 @@ import { janelaDeDatas } from '../../agendamento/service/agendamento-admin.servi
 import { PrismaService } from '../../database/prisma.service';
 import { Prisma, StatusAgendamento } from '../../generated/prisma/client';
 import { PeriodoService } from '../../periodo/service/periodo.service';
-import { nomeDaListaDePresenca } from './nome-de-arquivo';
+import {
+  nomeDaIdentificacao,
+  nomeDaListaDaPorta,
+  nomeDaListaDePresenca,
+} from './nome-de-arquivo';
+import {
+  pdfDeIdentificacao,
+  type FolhaDeIdentificacao,
+} from './pdf-identificacao';
 import {
   pdfDeListasDePresenca,
   type ListaDePresenca,
+  type TipoDeLista,
 } from './pdf-lista-presenca';
 
 export interface FiltroRelatorio {
@@ -84,6 +93,12 @@ export interface ArquivoGerado {
  * A ordem dentro da pagina e ALFABETICA POR NOME, nao por matricula nem por
  * ordem de agendamento: o fiscal procura pela pessoa que esta na frente dele, e
  * o que ela sabe dizer e o proprio nome.
+ *
+ * A **lista da porta** sai deste mesmo calculo, com outro `TipoDeLista`: e a
+ * folha colada do lado de fora da sala para o aluno conferir que esta no lugar
+ * certo. Mesmo recorte, mesmas salas, mesmas pessoas na mesma ordem — se uma
+ * dissesse que o aluno esta na sala 1 e a outra na sala 2, ele entraria na
+ * errada e nao estaria na folha do fiscal.
  */
 @Injectable()
 export class ListaPresencaService {
@@ -102,7 +117,10 @@ export class ListaPresencaService {
   }
 
   /** O PDF com TODAS as salas do recorte, uma pagina cada. */
-  async pdfDoRecorte(filtro: FiltroRelatorio): Promise<ArquivoGerado> {
+  async pdfDoRecorte(
+    filtro: FiltroRelatorio,
+    tipo: TipoDeLista = 'presenca',
+  ): Promise<ArquivoGerado> {
     const listas = await this.montarListas(this.ondeSalaFaixa(filtro), filtro);
 
     if (listas.length === 0) {
@@ -112,8 +130,11 @@ export class ListaPresencaService {
     }
 
     return {
-      nomeArquivo: `Listas de presenca-${carimboDeHora()}.pdf`,
-      conteudo: await pdfDeListasDePresenca(listas.map((l) => l.pagina)),
+      nomeArquivo: `${tipo === 'porta' ? 'Listas da porta' : 'Listas de presenca'}-${carimboDeHora()}.pdf`,
+      conteudo: await pdfDeListasDePresenca(
+        listas.map((l) => l.pagina),
+        tipo,
+      ),
     };
   }
 
@@ -121,6 +142,7 @@ export class ListaPresencaService {
   async pdfDeUmaSala(
     salaFaixaId: number,
     filtro: FiltroRelatorio,
+    tipo: TipoDeLista = 'presenca',
   ): Promise<ArquivoGerado> {
     // Data e polo nao valem aqui de proposito, pelo mesmo motivo do CSV de um
     // grupo: quem pediu ESTA sala ja escolheu o horario, e um `?de=` esquecido
@@ -133,8 +155,55 @@ export class ListaPresencaService {
     }
 
     return {
-      nomeArquivo: lista.linha.nomeArquivo,
-      conteudo: await pdfDeListasDePresenca([lista.pagina]),
+      nomeArquivo:
+        tipo === 'porta'
+          ? lista.linha.nomeArquivoDaPorta
+          : lista.linha.nomeArquivo,
+      conteudo: await pdfDeListasDePresenca([lista.pagina], tipo),
+    };
+  }
+
+  /**
+   * As FOLHAS DE IDENTIFICACAO do recorte: uma por horario (polo + dia + hora)
+   * que tera prova. Saem das mesmas salas das listas, agrupadas pela faixa — o
+   * cartaz nao traz sala, e as salas do mesmo horario teriam folhas identicas.
+   */
+  async pdfDeIdentificacaoDoRecorte(
+    filtro: FiltroRelatorio,
+  ): Promise<ArquivoGerado> {
+    const folhas = porFaixa(
+      await this.montarListas(this.ondeSalaFaixa(filtro), filtro),
+    );
+
+    if (folhas.length === 0) {
+      throw new NotFoundException(
+        'Nenhum horário com aluno confirmado neste filtro.',
+      );
+    }
+
+    return {
+      nomeArquivo: `Identificacao das salas-${carimboDeHora()}.pdf`,
+      conteudo: await pdfDeIdentificacao(folhas),
+    };
+  }
+
+  /**
+   * A folha de UM horario. Data e polo nao valem, pelo mesmo motivo da folha
+   * avulsa de uma sala: quem pediu este horario ja o escolheu.
+   */
+  async pdfDeIdentificacaoDaFaixa(
+    faixaId: number,
+    filtro: FiltroRelatorio,
+  ): Promise<ArquivoGerado> {
+    const [folha] = porFaixa(await this.montarListas({ faixaId }, filtro));
+
+    if (!folha) {
+      throw new NotFoundException('Nenhum aluno confirmado neste horário.');
+    }
+
+    return {
+      nomeArquivo: nomeDaIdentificacao(folha),
+      conteudo: await pdfDeIdentificacao([folha]),
     };
   }
 
@@ -245,6 +314,8 @@ export class ListaPresencaService {
           vagas: oferta.vagas,
           totalAlunos: alunos.length,
           nomeArquivo: nomeDaListaDePresenca(pagina),
+          nomeArquivoDaPorta: nomeDaListaDaPorta(pagina),
+          nomeArquivoDaIdentificacao: nomeDaIdentificacao(pagina),
         };
 
         return { linha, pagina };
@@ -311,6 +382,10 @@ export interface SalaComLista {
   totalAlunos: number;
   /** Nome com que a folha avulsa desta sala e baixada. */
   nomeArquivo: string;
+  /** Idem, para a lista da porta — as duas nao podem ter o mesmo nome. */
+  nomeArquivoDaPorta: string;
+  /** Nome da folha de identificacao do HORARIO — igual nas salas da faixa. */
+  nomeArquivoDaIdentificacao: string;
 }
 
 export interface AlunoDaLista {
@@ -358,6 +433,26 @@ export function ordemDaPilha(a: SalaComLista, b: SalaComLista): number {
     a.polo.localeCompare(b.polo, 'pt-BR') ||
     a.sala.localeCompare(b.sala, 'pt-BR')
   );
+}
+
+/**
+ * Uma folha por FAIXA, na ordem em que as salas ja vieram (dia, horario, polo):
+ * a primeira sala de cada horario da o lugar dele na pilha.
+ */
+function porFaixa(listas: SalaComPagina[]): FolhaDeIdentificacao[] {
+  const folhas = new Map<number, FolhaDeIdentificacao>();
+
+  for (const { linha } of listas) {
+    if (!folhas.has(linha.faixaId)) {
+      folhas.set(linha.faixaId, {
+        polo: linha.polo,
+        data: linha.data,
+        horaInicio: linha.horaInicio,
+      });
+    }
+  }
+
+  return [...folhas.values()];
 }
 
 /** Dois downloads no mesmo dia nao se confundem na pasta de downloads. */

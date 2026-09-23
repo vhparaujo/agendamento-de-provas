@@ -68,13 +68,13 @@ As medidas de [`../service/pdf-lista-presenca.ts`](../service/pdf-lista-presenca
 foram tiradas **desta imagem**, e trocá-la por outra arte sem refazê-las
 desalinha o documento:
 
-| na arte | no código |
-|---|---|
-| coluna de texto: x 69 → 525 pt | `MARGEM`, e a soma de `COLUNAS` |
-| risco do título termina em y 191,5 pt | `AREA_UTIL.topo`, `IDENTIFICACAO` |
-| bloco de emissão começa em y 708,1 pt | `AREA_UTIL.base`, `LIMITE_DAS_LINHAS` |
-| endereço ocupa de y 750,6 a 829,3 pt | é ele que empurrou a emissão para cima |
-| curvas do canto nunca passam de x 530 pt | por que a tabela não cresce à direita |
+| na arte                                  | no código                              |
+| ---------------------------------------- | -------------------------------------- |
+| coluna de texto: x 69 → 525 pt           | `MARGEM`, e a soma de `COLUNAS`        |
+| risco do título termina em y 191,5 pt    | `AREA_UTIL.topo`, `IDENTIFICACAO`      |
+| bloco de emissão começa em y 708,1 pt    | `AREA_UTIL.base`, `LIMITE_DAS_LINHAS`  |
+| endereço ocupa de y 750,6 a 829,3 pt     | é ele que empurrou a emissão para cima |
+| curvas do canto nunca passam de x 530 pt | por que a tabela não cresce à direita  |
 
 O título **não é desenhado pelo código** — ele vem impresso na arte, na fonte da
 marca. O `pdfkit` escreve só a identificação da sala (sala, câmpus, formato, dia
@@ -92,3 +92,18 @@ nenhum.
 ⚠️ Sem a arte a folha sai **sem título e sem papel** — a identificação e a
 tabela continuam lá, e o fiscal ainda consegue usar a folha. É razão para o
 `.png` estar sempre no lugar, não para o download falhar quando ele não estiver.
+
+# Marca da folha de identificação
+
+**`logo-catolica-ead.png`** é a marca Católica EAD que vai no alto à esquerda da
+folha de identificação (`../service/pdf-identificacao.ts`). Foi **extraída do
+próprio modelo da instituição** ("07\_ FOLHA DE IDENTIFICAÇÃO.pdf", onde ela é
+uma imagem embutida de 555 × 219 px) e achatada sobre branco — sem canal alfa,
+pelo mesmo motivo do timbrado acima.
+
+- Vai desenhada em **200,12 × 79,05 pt** a partir de (19,94; 9,32), a posição
+  exata do modelo. Trocar por uma arte de outra proporção a distorce.
+- É **opcional** como o timbrado: sem ela a folha sai sem a marca, mas com polo,
+  dia e hora — que é tudo que ela precisa dizer.
+- Não é o `logo-catolica.png` do front: aquele é **branco**, feito para o fundo
+  escuro da barra do topo, e some numa folha branca.

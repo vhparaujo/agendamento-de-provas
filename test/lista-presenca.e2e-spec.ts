@@ -395,4 +395,110 @@ describe('Lista de presenca (e2e)', () => {
         .expect(404);
     });
   });
+
+  describe('a lista da porta', () => {
+    it('baixa o PDF do recorte, com nome proprio', async () => {
+      const res = await comoAdmin(
+        api().get('/api/relatorios/listas-da-porta/pdf'),
+      )
+        .query(recorte)
+        .buffer()
+        .parse((r, cb) => {
+          const pedacos: Buffer[] = [];
+          r.on('data', (p: Buffer) => pedacos.push(p));
+          r.on('end', () => cb(null, Buffer.concat(pedacos)));
+        })
+        .expect(200);
+
+      expect(res.headers['content-type']).toContain('application/pdf');
+      expect(res.headers['content-disposition']).toContain('Listas da porta-');
+      expect((res.body as Buffer).subarray(0, 5).toString()).toBe('%PDF-');
+    });
+
+    it('baixa a folha avulsa de uma sala', async () => {
+      const res = await comoAdmin(
+        api().get(`/api/relatorios/listas-da-porta/${salaCheiaId}/pdf`),
+      )
+        .query({ periodoLetivoId: PERIODO_LETIVO })
+        .buffer()
+        .parse((r, cb) => {
+          const pedacos: Buffer[] = [];
+          r.on('data', (p: Buffer) => pedacos.push(p));
+          r.on('end', () => cb(null, Buffer.concat(pedacos)));
+        })
+        .expect(200);
+
+      expect(res.headers['content-disposition']).toContain('Lista da porta - ');
+      expect(res.headers['content-disposition']).toContain('PRE-101.pdf');
+    });
+
+    it('devolve 404 na sala sem ninguem confirmado', async () => {
+      await comoAdmin(
+        api().get(`/api/relatorios/listas-da-porta/${salaVaziaId}/pdf`),
+      )
+        .query({ periodoLetivoId: PERIODO_LETIVO })
+        .expect(404);
+    });
+
+    it('a listagem traz o nome do arquivo da porta', async () => {
+      expect(daSala(await listar(), salaCheiaId).nomeArquivoDaPorta).toBe(
+        `Lista da porta - 13-11-2026 09h00-12h00 - ${POLO_A} - PRE-101.pdf`,
+      );
+    });
+  });
+
+  describe('a folha de identificacao', () => {
+    const baixar = (url: string, query: object) =>
+      comoAdmin(api().get(url))
+        .query(query)
+        .buffer()
+        .parse((r, cb) => {
+          const pedacos: Buffer[] = [];
+          r.on('data', (p: Buffer) => pedacos.push(p));
+          r.on('end', () => cb(null, Buffer.concat(pedacos)));
+        });
+
+    const paginas = (pdf: Buffer) =>
+      Number(/\/Count\s+(\d+)/.exec(pdf.toString('latin1'))?.[1]);
+
+    it('da UMA pagina por horario, e nao por sala', async () => {
+      // As duas salas com gente no mesmo horario do polo A viram uma folha so:
+      // o cartaz nao traz sala.
+      const faixas = new Set(
+        (await listar()).map((l: { faixaId: number }) => l.faixaId),
+      );
+
+      const res = await baixar(
+        '/api/relatorios/identificacao/pdf',
+        recorte,
+      ).expect(200);
+
+      expect(res.headers['content-disposition']).toContain(
+        'Identificacao das salas-',
+      );
+      expect(paginas(res.body as Buffer)).toBe(faixas.size);
+    });
+
+    it('baixa a folha de um horario, com dia, hora e polo no nome', async () => {
+      const { faixaId } = daSala(await listar(), salaCheiaId);
+
+      const res = await baixar(`/api/relatorios/identificacao/${faixaId}/pdf`, {
+        periodoLetivoId: PERIODO_LETIVO,
+      }).expect(200);
+
+      expect(res.headers['content-disposition']).toContain(
+        `Identificacao - 13-11-2026 09h00 - ${POLO_A}.pdf`,
+      );
+      expect(
+        daSala(await listar(), salaCheiaId).nomeArquivoDaIdentificacao,
+      ).toBe(`Identificacao - 13-11-2026 09h00 - ${POLO_A}.pdf`);
+      expect(paginas(res.body as Buffer)).toBe(1);
+    });
+
+    it('devolve 404 quando nenhum horario do recorte tem gente', async () => {
+      await comoAdmin(api().get('/api/relatorios/identificacao/pdf'))
+        .query({ ...recorte, de: '2026-11-20', ate: '2026-11-20' })
+        .expect(404);
+    });
+  });
 });

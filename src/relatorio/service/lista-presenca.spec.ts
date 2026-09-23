@@ -5,7 +5,7 @@ import {
   type AlunoDaLista,
   type SalaComLista,
 } from './lista-presenca.service';
-import { nomeDaListaDePresenca } from './nome-de-arquivo';
+import { nomeDaListaDaPorta, nomeDaListaDePresenca } from './nome-de-arquivo';
 import {
   pdfDeListasDePresenca,
   type ListaDePresenca,
@@ -73,6 +73,8 @@ describe('ordem da pilha de folhas', () => {
     vagas: 40,
     totalAlunos: 3,
     nomeArquivo: 'x.pdf',
+    nomeArquivoDaPorta: 'y.pdf',
+    nomeArquivoDaIdentificacao: 'z.pdf',
     ...p,
   });
 
@@ -117,6 +119,20 @@ describe('nome do arquivo da folha avulsa', () => {
     expect(
       nomeDaListaDePresenca({ ...folha, polo: 'Câmpus Taguatinga' }),
     ).not.toBe(nomeDaListaDePresenca({ ...folha, polo: 'Câmpus Asa Sul' }));
+  });
+
+  it('a lista da porta tem outro prefixo — baixada junto, nao sobrescreve a de presenca', () => {
+    const folha = {
+      data: new Date('2026-06-11T00:00:00.000Z'),
+      horaInicio: '09:00',
+      horaFim: '12:00',
+      sala: 'SALA 1 EAD',
+      polo: 'Câmpus Asa Sul',
+    };
+
+    expect(nomeDaListaDaPorta(folha)).toBe(
+      'Lista da porta - 11-06-2026 09h00-12h00 - Campus Asa Sul - SALA 1 EAD.pdf',
+    );
   });
 });
 
@@ -231,6 +247,42 @@ describe('o PDF', () => {
     expect(primeira).toContain('Assinatura');
     expect(primeira).not.toContain('Formato');
     expect(primeira).not.toMatch(/N\xba/);
+  });
+
+  describe('a lista da porta', () => {
+    it('tem Nº, RA e Nome — e nao tem Assinatura', async () => {
+      // Ela vai colada do lado de fora: o aluno so confere que esta na sala.
+      const [primeira] = textoDasPaginas(
+        await pdfDeListasDePresenca([pagina(3)], 'porta'),
+      );
+
+      expect(primeira).toMatch(/N\xba/);
+      expect(primeira).toContain('RA');
+      expect(primeira).toContain('Nome');
+      expect(primeira).not.toContain('Assinatura');
+    });
+
+    it('numera seguido de uma pagina para a outra', async () => {
+      // A continuacao de uma sala grande nao recomeca no 1.
+      const texto = textoDasPaginas(
+        await pdfDeListasDePresenca([pagina(25)], 'porta'),
+      );
+
+      const [primeira, segunda] = texto.filter((t) => t.includes('SALA 1 EAD'));
+
+      expect(primeira).toContain('ALUNO 0');
+      expect(segunda).toContain('cont.');
+      expect(segunda).toMatch(/\b25\b/);
+    });
+
+    it('mantem a identificacao e a paginacao da lista de presenca', async () => {
+      expect(paginas(await pdfDeListasDePresenca([pagina(19)], 'porta'))).toBe(
+        1,
+      );
+      expect(
+        paginas(await pdfDeListasDePresenca([pagina(3), pagina(1)], 'porta')),
+      ).toBe(2);
+    });
   });
 
   it('nao desenha o titulo — ele vem impresso no timbrado', async () => {

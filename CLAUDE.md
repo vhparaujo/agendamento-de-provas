@@ -546,6 +546,8 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `GET /agendamentos` · `/resumo` · `/exportacao` · `/:id` | admin | Relatório: consulta, ocupação por sala e o CSV de **todos os alunos** |
 | `GET /agendamentos/estatisticas` | admin | A tela de Início: adesão da rodada (a **vigente** por padrão; `periodoId` olha outra janela, com a base continuando a de hoje) sobre os vínculos **ativos**, por formato e por origem (aluno/compulsório/admin — a mesma regra do "Agendado por" da exportação), por dia de criação, e vagas livres nas faixas futuras x pendentes por polo + formato (o mesmo recorte de faixas do compulsório) |
 | `GET /relatorios/listas-de-presenca` · `/pdf` · `/:salaFaixaId/pdf` | admin | Lista de presença: um PDF com **uma página por sala** de aplicação |
+| `GET /relatorios/listas-da-porta/pdf` · `/:salaFaixaId/pdf` | admin | Lista da porta: a mesma folha, com `Nº · RA · Nome` e sem assinatura |
+| `GET /relatorios/identificacao/pdf` · `/:faixaId/pdf` | admin | Folha de identificação: página deitada com polo, dia e hora — **uma por horário**, não por sala |
 | `PATCH /agendamentos/:id/remanejar` · `DELETE /agendamentos/:id` | admin | Mover de sala/horário e cancelar |
 | `POST /agendamentos/compulsorio` · `GET /` · `GET /:id` · `/:id/relatorio` | admin | Agenda por quem não agendou; lista o histórico paginado (a tela abre pela primeira linha), acompanha o lote e baixa o CSV de exceções |
 | `POST /agendamentos` | admin | Agenda a prova de **um** aluno, escolhendo a sala ou deixando a alocação escolher |
@@ -2055,6 +2057,27 @@ dita cada decisão abaixo.
   TTF embutida.
 - **A listagem não devolve os alunos**, só a contagem — mesma razão do relatório
   de grupos: milhares de nomes no navegador para exibir um número por linha.
+
+### A lista da porta e a folha de identificação (23/09/2026)
+
+Saem do **mesmo recorte** da lista de presença (`montarListas`), e é de
+propósito: se uma folha dissesse que o aluno está na sala 1 e outra na sala 2,
+ele entraria na errada.
+
+- **Lista da porta** (`/relatorios/listas-da-porta`): a mesma folha, colada do
+  lado de fora da sala. Colunas `Nº · RA · Nome`, sem assinatura; o resto
+  (timbrado, identificação, ordem, `(cont.)`) é o mesmo. É um `TipoDeLista` do
+  mesmo `pdf-lista-presenca.ts`, não um segundo gerador — arte nova vale para as
+  duas sem ninguém lembrar de copiar. A numeração segue entre páginas.
+- **Folha de identificação** (`/relatorios/identificacao`,
+  `pdf-identificacao.ts`): o modelo "07_ FOLHA DE IDENTIFICAÇÃO" da instituição,
+  um slide 16:9 (960×540pt) com a marca no alto e **polo, dia e hora de início**
+  no centro. **Uma página por FAIXA, não por sala**: o modelo não traz sala, e as
+  salas do mesmo horário teriam folhas idênticas — a tela mostra quantas salas
+  cada horário tem, para saber quantas cópias imprimir. A marca
+  (`assets/logo-catolica-ead.png`) foi extraída do PDF do modelo e achatada
+  sobre branco. Nome de polo longo encolhe até 48pt numa linha e, se não couber,
+  quebra em duas crescendo para cima — data e hora não saem do lugar.
 
 O desenho do PDF está isolado em `relatorio/service/pdf-lista-presenca.ts`
 (módulo puro, recebe dados e devolve `Buffer`); as consultas ficam em

@@ -69,4 +69,21 @@ export class SalaComListaDto implements SalaComLista {
       'Sai sem acento de proposito — ver `nome-de-arquivo.ts`.',
   })
   nomeArquivo!: string;
+
+  @ApiProperty({
+    example:
+      'Lista da porta - 11-06-2026 09h00-12h00 - Campus Asa Sul - SALA 1 EAD.pdf',
+    description:
+      'Idem `nomeArquivo`, para a lista da porta. Prefixo diferente para que ' +
+      'as duas folhas da mesma sala nao se sobrescrevam na pasta de downloads.',
+  })
+  nomeArquivoDaPorta!: string;
+
+  @ApiProperty({
+    example: 'Identificacao - 11-06-2026 09h00 - Campus Asa Sul.pdf',
+    description:
+      'Nome da folha de identificacao do HORARIO (`faixaId`) — o mesmo em ' +
+      'todas as salas da faixa, porque a folha nao traz sala.',
+  })
+  nomeArquivoDaIdentificacao!: string;
 }

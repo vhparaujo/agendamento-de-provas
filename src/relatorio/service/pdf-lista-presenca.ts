@@ -27,6 +27,12 @@ import { dataDaProva } from '../../agendamento/service/csv-relatorio';
  * lista e a relacao de quem TEM lugar naquela sala, e uma linha vazia convida a
  * escrever nela o nome de quem nao deveria estar ali.
  *
+ * A LISTA DA PORTA (23/09/2026) sai daqui tambem: a mesma folha, colada do lado
+ * de fora da sala para o aluno conferir que esta no lugar certo. Troca so a
+ * tabela — `Nº · RA · Nome`, sem Assinatura (ver `TipoDeLista` e `COLUNAS`). A
+ * altura minima da linha continua a da presenca: nao ha o que assinar, mas a
+ * folha e lida de pe, a um passo de distancia, e linha apertada ali atrapalha.
+ *
  * ---------------------------------------------------------------------------
  * O TIMBRADO MANDA NA GEOMETRIA
  * ---------------------------------------------------------------------------
@@ -138,15 +144,33 @@ const ESPACO_DO_TOTAL = 26;
 const LIMITE_DAS_LINHAS = AREA_UTIL.base - ESPACO_DO_TOTAL;
 
 /**
- * As colunas, na ordem, com a largura de cada. A soma tem que dar a largura util
- * (525 - 69 = 456pt); e por isso que elas sao declaradas juntas, num lugar so —
- * mexer numa sem mexer noutra desalinharia a moldura da tabela do conteudo dela.
+ * QUAL folha: a de **presenca**, que o fiscal leva para dentro da sala e volta
+ * assinada, ou a da **porta**, que e colada do lado de fora para o aluno
+ * conferir que esta na sala certa antes de entrar.
  *
- * ⚠️ SAO TRES, E NAO CINCO (23/09/2026). `Nº` e `Formato` sairam a pedido do
- * cliente porque a Assinatura, com 100pt (~3,5cm), era curta demais para o aluno
- * escrever o nome completo — e a tabela nao pode alargar, a arte a trava em
- * 456pt. A Assinatura foi de 100 para 210pt (~7,4cm): os 94pt das duas colunas
- * mais 16pt tirados do `Nome`.
+ * As duas saem do MESMO recorte, com o mesmo timbrado, a mesma identificacao e
+ * a mesma ordem — so a tabela muda. E por isso que sao um parametro deste
+ * modulo, e nao um segundo gerador: um ajuste de geometria (arte nova, rodape
+ * que desceu) vale para as duas sem que alguem precise lembrar de copiar.
+ */
+export type TipoDeLista = 'presenca' | 'porta';
+
+interface Coluna {
+  titulo: string;
+  largura: number;
+}
+
+/**
+ * As colunas de cada folha, na ordem, com a largura de cada. A soma tem que dar
+ * a largura util (525 - 69 = 456pt); e por isso que elas sao declaradas juntas,
+ * num lugar so — mexer numa sem mexer noutra desalinharia a moldura da tabela
+ * do conteudo dela.
+ *
+ * PRESENCA — ⚠️ SAO TRES, E NAO CINCO (23/09/2026). `Nº` e `Formato` sairam a
+ * pedido do cliente porque a Assinatura, com 100pt (~3,5cm), era curta demais
+ * para o aluno escrever o nome completo — e a tabela nao pode alargar, a arte a
+ * trava em 456pt. A Assinatura foi de 100 para 210pt (~7,4cm): os 94pt das duas
+ * colunas mais 16pt tirados do `Nome`.
  *
  * - `Formato` repetia o mesmo valor em toda linha: a sala e travada num formato
  *   so, que ja esta no cabecalho da folha. O preco, aceito: a coluna vinha do
@@ -158,15 +182,43 @@ const LIMITE_DAS_LINHAS = AREA_UTIL.base - ESPACO_DO_TOTAL;
  * `RA` fica em 62pt porque o RA real tem 10 caracteres ("UC24424289", ~53pt de
  * texto). `Nome` cedeu 16pt (200 -> 184): cada ponto dele e um ponto a menos de
  * assinatura, e nome longo quebra em duas linhas sem cortar nada.
+ *
+ * PORTA — sem Assinatura, o `Nº` volta: e por ele que o aluno diz "sou o 12" a
+ * quem esta na porta, e ele nao custa espaco de ninguem. O `Nome` fica com o
+ * que sobra, e nome longo raramente quebra.
  */
-const COLUNAS = [
-  { titulo: 'RA', largura: 62 },
-  { titulo: 'Nome', largura: 184 },
-  { titulo: 'Assinatura', largura: 210 },
-] as const;
+const COLUNAS: Record<TipoDeLista, readonly Coluna[]> = {
+  presenca: [
+    { titulo: 'RA', largura: 62 },
+    { titulo: 'Nome', largura: 184 },
+    { titulo: 'Assinatura', largura: 210 },
+  ],
+  porta: [
+    { titulo: 'Nº', largura: 32 },
+    { titulo: 'RA', largura: 70 },
+    { titulo: 'Nome', largura: 354 },
+  ],
+};
 
 /** A coluna que decide a altura da linha — ver `alturaDaLinha`. */
-const COLUNA_DO_NOME = COLUNAS[1];
+function colunaDoNome(tipo: TipoDeLista): Coluna {
+  return COLUNAS[tipo].find((c) => c.titulo === 'Nome')!;
+}
+
+/** O que vai em cada celula, na ordem de `COLUNAS`. */
+function celulasDoAluno(
+  tipo: TipoDeLista,
+  aluno: AlunoNaLista,
+  indice: number,
+): string[] {
+  const nome = aluno.nome ?? '—';
+
+  // A numeracao segue de uma pagina para a outra: a continuacao de uma sala
+  // grande comeca no 20, nao de novo no 1.
+  return tipo === 'porta'
+    ? [String(indice + 1), aluno.matricula, nome]
+    : [aluno.matricula, nome, ''];
+}
 
 /** Onde uma mao consegue assinar. Nao e o tamanho da fonte. */
 const ALTURA_MINIMA = 22;
@@ -202,7 +254,8 @@ const BORDA = '#000000';
 /** Azul da marca, lido da propria arte — usado so na linha da sala. */
 const AZUL = '#1f3f80';
 
-const LARGURA_DA_TABELA = COLUNAS.reduce((soma, c) => soma + c.largura, 0);
+/** As duas folhas tem a mesma largura — a da arte. Ver `COLUNAS`. */
+const LARGURA_DA_TABELA = 456;
 
 // -------------------------------------------------------------------- fontes
 
@@ -231,7 +284,8 @@ type Doc = typeof PDFDocument extends new (...args: never[]) => infer T
   : never;
 
 /**
- * O PDF inteiro: uma pagina (ou mais) por sala, na ordem em que vierem.
+ * O PDF inteiro: uma pagina (ou mais) por sala, na ordem em que vierem. `tipo`
+ * escolhe a tabela — ver `TipoDeLista`.
  *
  * Devolve `Buffer` e nao stream porque o consumidor e um download HTTP de
  * arquivo pequeno (centenas de KB), e o `StreamableFile` do Nest precisa do
@@ -239,13 +293,16 @@ type Doc = typeof PDFDocument extends new (...args: never[]) => infer T
  */
 export function pdfDeListasDePresenca(
   listas: ListaDePresenca[],
+  tipo: TipoDeLista = 'presenca',
 ): Promise<Buffer> {
   const doc = new PDFDocument({
     size: [PAGINA.largura, PAGINA.altura],
     margin: 0,
     // Sem isto o pdfkit abre uma pagina em branco antes da primeira sala.
     autoFirstPage: false,
-    info: { Title: 'Lista de presença' },
+    info: {
+      Title: tipo === 'porta' ? 'Lista da porta' : 'Lista de presença',
+    },
   });
 
   const pedacos: Buffer[] = [];
@@ -257,7 +314,7 @@ export function pdfDeListasDePresenca(
 
   const arte = caminhoDoModelo();
 
-  for (const lista of listas) desenharLista(doc, lista, arte);
+  for (const lista of listas) desenharLista(doc, lista, arte, tipo);
 
   doc.end();
 
@@ -273,22 +330,31 @@ function desenharLista(
   doc: Doc,
   lista: ListaDePresenca,
   arte: string | null,
+  tipo: TipoDeLista,
 ): void {
+  const colunas = COLUNAS[tipo];
+
   abrirPagina(doc, lista, arte, false);
 
-  let y = desenharCabecalhoDaTabela(doc, IDENTIFICACAO.topoDaTabela);
+  let y = desenharCabecalhoDaTabela(doc, IDENTIFICACAO.topoDaTabela, colunas);
 
-  lista.alunos.forEach((aluno) => {
-    const altura = alturaDaLinha(doc, aluno);
+  lista.alunos.forEach((aluno, indice) => {
+    const altura = alturaDaLinha(doc, aluno, colunaDoNome(tipo));
 
     // A quebra e decidida ANTES de desenhar: uma linha cortada ao meio pela
     // borda da pagina deixaria uma assinatura sem nome do outro lado.
     if (y + altura > LIMITE_DAS_LINHAS) {
       abrirPagina(doc, lista, arte, true);
-      y = desenharCabecalhoDaTabela(doc, IDENTIFICACAO.topoDaTabela);
+      y = desenharCabecalhoDaTabela(doc, IDENTIFICACAO.topoDaTabela, colunas);
     }
 
-    y = desenharLinha(doc, y, altura, [aluno.matricula, aluno.nome ?? '—', '']);
+    y = desenharLinha(
+      doc,
+      y,
+      altura,
+      colunas,
+      celulasDoAluno(tipo, aluno, indice),
+    );
   });
 
   desenharTotal(doc, y, lista);
@@ -375,7 +441,11 @@ function desenharIdentificacao(
     );
 }
 
-function desenharCabecalhoDaTabela(doc: Doc, y: number): number {
+function desenharCabecalhoDaTabela(
+  doc: Doc,
+  y: number,
+  colunas: readonly Coluna[],
+): number {
   const altura = ALTURA_MINIMA;
 
   doc.rect(MARGEM, y, LARGURA_DA_TABELA, altura).fill(FUNDO_DO_CABECALHO);
@@ -384,7 +454,7 @@ function desenharCabecalhoDaTabela(doc: Doc, y: number): number {
 
   let x = MARGEM;
 
-  for (const coluna of COLUNAS) {
+  for (const coluna of colunas) {
     doc.text(coluna.titulo, x, y + PADDING + 2, {
       width: coluna.largura,
       align: 'center',
@@ -393,7 +463,7 @@ function desenharCabecalhoDaTabela(doc: Doc, y: number): number {
     x += coluna.largura;
   }
 
-  desenharMoldura(doc, y, altura);
+  desenharMoldura(doc, y, altura, colunas);
 
   return y + altura;
 }
@@ -402,13 +472,14 @@ function desenharLinha(
   doc: Doc,
   y: number,
   altura: number,
+  colunas: readonly Coluna[],
   celulas: readonly string[],
 ): number {
   doc.font(REGULAR).fontSize(FONTE_TEXTO).fillColor(BORDA);
 
   let x = MARGEM;
 
-  COLUNAS.forEach((coluna, indice) => {
+  colunas.forEach((coluna, indice) => {
     const texto = celulas[indice];
 
     // Tudo alinhado a esquerda (o default): a coluna do meio quebra em duas
@@ -423,7 +494,7 @@ function desenharLinha(
     x += coluna.largura;
   });
 
-  desenharMoldura(doc, y, altura);
+  desenharMoldura(doc, y, altura, colunas);
 
   return y + altura;
 }
@@ -434,9 +505,7 @@ function desenharLinha(
  * ALARÇÃO CARNEIRO") nao pode sair cortado, e e por ele que se confere quem
  * assinou.
  */
-function alturaDaLinha(doc: Doc, aluno: AlunoNaLista): number {
-  const coluna = COLUNA_DO_NOME;
-
+function alturaDaLinha(doc: Doc, aluno: AlunoNaLista, coluna: Coluna): number {
   const alturaDoNome = doc
     .font(REGULAR)
     .fontSize(FONTE_TEXTO)
@@ -448,7 +517,12 @@ function alturaDaLinha(doc: Doc, aluno: AlunoNaLista): number {
 }
 
 /** As bordas de uma faixa horizontal: o retangulo externo e os divisores. */
-function desenharMoldura(doc: Doc, y: number, altura: number): void {
+function desenharMoldura(
+  doc: Doc,
+  y: number,
+  altura: number,
+  colunas: readonly Coluna[],
+): void {
   doc.lineWidth(0.5).strokeColor(BORDA);
 
   doc.rect(MARGEM, y, LARGURA_DA_TABELA, altura).stroke();
@@ -456,7 +530,7 @@ function desenharMoldura(doc: Doc, y: number, altura: number): void {
   let x = MARGEM;
 
   // O ultimo divisor coincidiria com a borda direita do retangulo.
-  for (const coluna of COLUNAS.slice(0, -1)) {
+  for (const coluna of colunas.slice(0, -1)) {
     x += coluna.largura;
     doc
       .moveTo(x, y)
