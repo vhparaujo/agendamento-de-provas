@@ -460,6 +460,9 @@ model HistoricoAgendamento {
   autor         String // matricula (aluno) ou e-mail (admin)
   de            String? // situacao anterior, legivel
   para          String? // situacao nova, legivel
+  /// O motivo que o admin escreveu ao remanejar. Opcional: vazio quando ele nao
+  /// quis justificar, e sempre vazio nos eventos do aluno.
+  justificativa String?           @db.VarChar(500)
   createdAt     DateTime          @default(now())
 
   agendamento Agendamento @relation(fields: [agendamentoId], references: [id], onDelete: Cascade)

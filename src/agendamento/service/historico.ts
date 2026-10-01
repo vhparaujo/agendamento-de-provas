@@ -30,6 +30,7 @@ export async function registrarHistorico(
     autor: AutorDaOperacao;
     de?: string | null;
     para?: string | null;
+    justificativa?: string | null;
   },
 ): Promise<void> {
   await tx.historicoAgendamento.create({
@@ -40,6 +41,7 @@ export async function registrarHistorico(
       autor: dados.autor.identificacao,
       de: dados.de ?? null,
       para: dados.para ?? null,
+      justificativa: dados.justificativa || null,
     },
   });
 }

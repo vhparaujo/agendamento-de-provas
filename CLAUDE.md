@@ -157,6 +157,10 @@ regra de negócio ou estrutura, atualize os dois.
      caso de uso. Marca `alocadoManual = true`. Mas nem ele muda **polo** (aluno
      iria ao campus errado) ou **formato** (prova de outra duração): são os
      dois erros que o remanejo poderia esconder.
+   - **O remanejo aceita uma `justificativa`** (texto livre, até 500 caracteres,
+     **opcional** por decisão do cliente, 01/10/2026). Fica em
+     `HistoricoAgendamento.justificativa`, ao lado de quem remanejou; vazia vira
+     `NULL`.
    - **TODA alteração grava QUEM a fez** em `HistoricoAgendamento`, na mesma
      transação da mudança — `TROCADO`/`ALUNO` com a matrícula, `REMANEJADO`/`ADMIN`
      com o e-mail. Existe para a conversa no balcão: o aluno diz que mudaram a

@@ -102,6 +102,8 @@ export interface EventoDoHistorico {
   autor: string;
   de: string | null;
   para: string | null;
+  /** O motivo do remanejo, quando o admin escreveu um. */
+  justificativa: string | null;
   quando: Date;
 }
 
@@ -715,7 +717,11 @@ export class AgendamentoAdminService {
    */
   async remanejar(
     id: number,
-    destino: { salaFaixaId?: number; faixaId?: number },
+    destino: {
+      salaFaixaId?: number;
+      faixaId?: number;
+      justificativa?: string;
+    },
     ator?: string,
   ): Promise<AgendamentoAdmin> {
     if (!destino.salaFaixaId === !destino.faixaId) {
@@ -807,6 +813,7 @@ export class AgendamentoAdminService {
         autor: AUTOR_ADMIN(ator),
         de,
         para: await descreverOferta(tx, salaFaixaId),
+        justificativa: destino.justificativa,
       });
     }, OPCOES_DA_TRANSACAO);
 
@@ -886,6 +893,7 @@ export class AgendamentoAdminService {
       autor: l.autor,
       de: l.de,
       para: l.para,
+      justificativa: l.justificativa,
       quando: l.createdAt,
     }));
   }

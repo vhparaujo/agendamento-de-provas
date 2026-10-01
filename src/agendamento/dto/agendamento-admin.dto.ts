@@ -1,5 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsInt, IsOptional, Min } from 'class-validator';
+import { Transform } from 'class-transformer';
+import {
+  IsBoolean,
+  IsInt,
+  IsOptional,
+  IsString,
+  MaxLength,
+  Min,
+} from 'class-validator';
 import type {
   AdesaoDaModalidade,
   AgendamentosDoDia,
@@ -261,6 +269,23 @@ export class RemanejarDto {
   @IsInt()
   @Min(1)
   faixaId?: number;
+
+  @ApiPropertyOptional({
+    example: 'Sala 203 interditada para manutenção.',
+    maxLength: 500,
+    description:
+      'Motivo do remanejo, em texto livre. Opcional. Fica gravado no ' +
+      'historico do agendamento, ao lado de quem remanejou.',
+  })
+  @Transform(({ value }): unknown =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  @IsOptional()
+  @IsString()
+  @MaxLength(500, {
+    message: 'A justificativa pode ter no máximo 500 caracteres.',
+  })
+  justificativa?: string;
 }
 
 /**
@@ -392,6 +417,14 @@ export class EventoDoHistoricoDto implements EventoDoHistorico {
     description: 'Situacao nova. Vazio num cancelamento.',
   })
   para!: string | null;
+
+  @ApiProperty({
+    nullable: true,
+    example: 'Sala 203 interditada para manutenção.',
+    description:
+      'O motivo que o admin escreveu ao remanejar. Vazio quando nao houve.',
+  })
+  justificativa!: string | null;
 
   @ApiProperty({ type: String, format: 'date-time' })
   quando!: Date;

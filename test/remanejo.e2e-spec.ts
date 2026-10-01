@@ -776,6 +776,42 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
         autor: EMAIL,
       });
       expect(res.body[0].para).toMatch(/HIST-ADM/);
+      expect(res.body[0].justificativa).toBeNull();
+    });
+
+    it('grava a justificativa do remanejo, quando o admin escreve uma', async () => {
+      const aluno = await criarAluno('HIST-J');
+      const ag = await agendar(aluno.token, faixaHistorico);
+
+      const nova = await criarSala('HIST-JUST', 3);
+      const { ofertas } = await criarFaixa('2026-11-28', poloId, [
+        { salaId: nova.id, modalidadeId: ead.id, vagas: 3, ordem: 1 },
+      ]);
+
+      await comoAdmin(api().patch(`/api/agendamentos/${ag.id}/remanejar`))
+        .send({
+          salaFaixaId: ofertas[0],
+          justificativa: '  Sala interditada.  ',
+        })
+        .expect(200);
+
+      const res = await comoAdmin(
+        api().get(`/api/agendamentos/${ag.id}/historico`),
+      ).expect(200);
+
+      expect(res.body[0]).toMatchObject({
+        evento: 'REMANEJADO',
+        justificativa: 'Sala interditada.',
+      });
+    });
+
+    it('recusa justificativa longa demais', async () => {
+      const aluno = await criarAluno('HIST-L');
+      const ag = await agendar(aluno.token, faixaHistorico);
+
+      await comoAdmin(api().patch(`/api/agendamentos/${ag.id}/remanejar`))
+        .send({ faixaId: faixaB, justificativa: 'x'.repeat(501) })
+        .expect(400);
     });
 
     it('distingue os dois numa mesma linha do tempo', async () => {
