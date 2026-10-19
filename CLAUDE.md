@@ -559,6 +559,7 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `GET /portal/agendamentos/:id/declaracao` | aluno | Declaração de agendamento em PDF — **só depois de o prazo encerrar** |
 | `GET /agendamentos/:id/historico` | admin | Quem alterou: aluno ou administrador |
 | `GET /integracao/alunos/:matricula/agendamentos` | **API key** | Dados da prova por RA para o emissor da declaração assinada. `?periodo=atual` = só a janela vigente |
+| `GET /integracao/agendamentos` | **API key** | Todas as provas de um período, paginadas. `?periodo=atual` ou `?periodoLetivoId=…[&rodada=…]` |
 | `GET/PUT /senhas-de-prova` · `GET /:id/revelar` · `DELETE /:id` | admin | A grade **dia × sessão** das senhas das provas. **A listagem nunca devolve o valor** |
 | `POST /senhas-de-prova/gerar` · `GET /senhas-de-prova/revelar` | admin | Sorteia as senhas do período (6 dígitos, nenhum repetido >3×, únicas no dia), e o "Mostrar senhas" da tela — auditado numa linha por intervalo |
 | `GET/PUT /senhas-de-prova/alvo` · `GET /senhas-de-prova/turmas` | admin | Questionário-alvo e quais turmas o lote vai tocar |
@@ -2295,7 +2296,7 @@ isso ganhou credencial própria, que só abre `@SomenteIntegracao()`:
 |---|---|
 | **Histórico completo** do RA, só `CONFIRMADO` | Segunda via de declaração antiga. Cancelada não reserva cadeira — declará-la afirmaria prova que não existe |
 | `?periodo=atual` = **a janela vigente**, não o semestre | O mesmo `where` de `meusAgendamentos` (sem o filtro de vínculos do token). Durante a SUB, a N2 do mesmo semestre fica de fora. Sem janela: `[]`, nunca o histórico em silêncio. Lido à mão, como os filtros do relatório — outro valor é 400 |
-| **`prazoEncerrado`** em cada prova | É a regra da declaração (`exigirEncerrado`) entregue como **dado**: o emissor não tem como saber que o aluno ainda troca de horário. Janela vigente → `situacaoAtual().encerrado`; qualquer outra → `true` (regra 7: o aluno só mexe na vigente) |
+| **`prazoEncerrado`** em cada janela de `periodos[]` | É a regra da declaração (`exigirEncerrado`) entregue como **dado**: o emissor não tem como saber que o aluno ainda troca de horário. Janela vigente → `situacaoAtual().encerrado`; qualquer outra → `true` (regra 7: o aluno só mexe na vigente) |
 | A janela da prova sai do **par** `periodoLetivoId + rodada` | `Agendamento` não guarda o id da janela. `janelaDoAgendamento` casa pela rodada e por `idsDaJanela` (principal **ou** mapa) — só o principal perderia os presenciais. Duas linhas do par: a mais recente |
 | `data` em **`AAAA-MM-DD`** | String, e não instante: o consumidor não repete o bug de ler `@db.Date` no fuso de Brasília e recuar um dia |
 | **404** para RA não importado, **200 `[]`** para quem não tem prova | Quem chama é um sistema confiável, e os dois casos pedem ações diferentes. No portal o 404 é único por outro motivo (aluno sondando URL) |
@@ -2312,6 +2313,31 @@ Testes: `chaves-de-integracao.spec.ts` e `api-key-integracao.guard.spec.ts`
 `test/integracao.e2e-spec.ts` (401 com JWT de aluno, a chave não abre o portal,
 histórico, cancelada fora, `prazoEncerrado`, `?periodo=atual`). A chave do e2e
 mora em `test/setup-e2e.ts` porque o guard a lê quando a aplicação sobe.
+
+### A lista geral: `GET /integracao/agendamentos` (19/10/2026)
+
+As provas de todos os alunos. **A janela vai no topo, uma vez** (`periodos[]`:
+id, rodada, descrição, datas, `prazoEncerrado`, `periodoLetivoIds`), e cada item
+traz só o que é do aluno e aponta para ela pelo `periodoId`. É uma **lista**, e
+não um objeto, porque sem `rodada` a mesma página tem provas da N2 e da SUB. As
+janelas saem do recorte, e não da página: o topo é igual em todas as páginas.
+No `atual`, só a vigente — reconhecida pelo par `principal + rodada`, porque
+outra janela da mesma rodada pode dividir o semestre do Presencial com ela.
+
+**A consulta por RA usa o mesmo formato** (padronizado em 19/10/2026): `periodos[]`
+no topo com só as janelas em que o RA tem prova, e `periodoId` em cada prova. A
+montagem de cada prova é uma função só (`montarAgendamento`), e a das janelas um
+método só (`montarPeriodos`) — as duas rotas não divergem.
+
+| Decisão | Por quê |
+|---|---|
+| **Recorte obrigatório**: `periodo=atual` **ou** `periodoLetivoId` | O histórico de todos os alunos numa chamada é o que uma chave vazada mais quer levar, e ninguém precisa dele de uma vez. Sem recorte ou com os dois: 400 |
+| `periodoLetivoId` aceita **vários** (vírgula, até 10) | Uma janela tem duas grades (módulo do EaD, semestre do Presencial); consultar uma janela antiga inteira pede os dois ids |
+| `rodada` **opcional**, e só com `periodoLetivoId` | Sem ela vêm N2 e SUB juntas (cada item diz a sua). No `atual` a rodada é a da vigente — aceitar outra faria a URL pedir uma coisa e a resposta entregar outra |
+| `filtro` devolve o recorte **aplicado** | No `atual`, já com os `periodoLetivoIds` e a `rodada` resolvidos: o consumidor sabe qual janela leu |
+| Paginada, padrão 100, **máximo 500 (limitado, não recusado)**; ordem data → horário → matrícula → id | ~7 mil alunos por janela. O `id` no fim deixa a ordem estável entre páginas |
+| Parâmetros **lidos à mão** | Mesmo motivo de `lerRecorte`: com `forbidNonWhitelisted`, um parâmetro a mais derrubaria um sistema que não controlamos |
+| Auditoria: **uma linha por página**, sem matrícula | O recorte, a página e quantos itens saíram — é o que mostra uma varredura |
 
 ## Agendamento compulsório (etapa 9)
 

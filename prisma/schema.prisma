@@ -426,6 +426,7 @@ model Agendamento {
   @@index([matricula])
   @@index([modalidadeId])
   @@index([poloId])
+  @@index([periodoLetivoId, rodada]) // a lista geral da integracao recorta por periodo
   @@map("agendamento")
 }
 

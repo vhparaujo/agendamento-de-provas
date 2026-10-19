@@ -6,9 +6,12 @@ import {
   SalaDoPortalDto,
 } from '../../agendamento/dto/portal.dto';
 import type {
+  AgendamentoDaListaIntegracao,
   AgendamentoIntegracao,
   AgendamentosDoAluno,
-  PeriodoDoAgendamento,
+  FiltroAplicado,
+  PaginaDeAgendamentosIntegracao,
+  PeriodoIntegracao,
   RecorteDoPeriodo,
   VinculoIntegracao,
 } from '../service/integracao.service';
@@ -47,9 +50,37 @@ export class VinculoIntegracaoDto implements VinculoIntegracao {
   polo!: PoloDoPortalDto;
 }
 
-export class PeriodoDoAgendamentoDto implements PeriodoDoAgendamento {
+export class PeriodoIntegracaoDto implements PeriodoIntegracao {
+  @ApiProperty({
+    example: 12,
+    description: 'Id da janela — o `periodoId` de cada prova aponta para ca.',
+  })
+  id!: number;
+
+  @ApiProperty({
+    example: 'SUB',
+    description:
+      'Qual prova do semestre ("N2", "SUB"...). Texto livre no cadastro.',
+  })
+  rodada!: string;
+
+  @ApiProperty({
+    example: 'Substitutiva (SUB)',
+    description: 'A rodada por extenso; rodada desconhecida sai como veio.',
+  })
+  rodadaDescricao!: string;
+
   @ApiProperty({ nullable: true, example: '2026/2 e 2026/1' })
   descricao!: string | null;
+
+  @ApiProperty({
+    type: [String],
+    example: ['142286', '142290'],
+    description:
+      'Os periodos letivos que a janela cobre: o do modulo (EaD, Semi, ' +
+      'Modular) e o do semestre (Presencial).',
+  })
+  periodoLetivoIds!: string[];
 
   @ApiProperty({ type: String, format: 'date-time', nullable: true })
   dataAbertura!: Date | null;
@@ -60,9 +91,9 @@ export class PeriodoDoAgendamentoDto implements PeriodoDoAgendamento {
   @ApiProperty({
     example: true,
     description:
-      '**So emita a declaracao com `true`.** Com o prazo aberto o aluno ainda ' +
-      'troca de horario, e o documento afirmaria uma data que ele pode mudar. ' +
-      'Toda janela que nao e a vigente vem `true`.',
+      '**So emita a declaracao de prova desta janela com `true`.** Com o ' +
+      'prazo aberto o aluno ainda troca de horario, e o documento afirmaria ' +
+      'uma data que ele pode mudar. Toda janela que nao e a vigente vem `true`.',
   })
   prazoEncerrado!: boolean;
 }
@@ -72,9 +103,20 @@ export class AgendamentoIntegracaoDto implements AgendamentoIntegracao {
   id!: number;
 
   @ApiProperty({
+    type: Number,
+    nullable: true,
+    example: 12,
+    description:
+      'A janela da prova, em `periodos[]` — e la que estao rodada, datas e ' +
+      '`prazoEncerrado`. `null` so em dado antigo cuja janela nao existe mais.',
+  })
+  periodoId!: number | null;
+
+  @ApiProperty({
     example: 4821,
     description:
-      'De qual vinculo (curso) e a prova — casa com `vinculos[].alunoId`.',
+      'De qual vinculo (curso) e a prova — casa com `vinculos[].alunoId` na ' +
+      'consulta por RA.',
   })
   alunoId!: number;
 
@@ -89,33 +131,12 @@ export class AgendamentoIntegracaoDto implements AgendamentoIntegracao {
   status!: string;
 
   @ApiProperty({
-    example: 'SUB',
+    example: '142286',
     description:
-      'Qual prova do semestre ("N2", "SUB"...). Texto livre no cadastro. A ' +
-      'identidade da prova e o par `periodoLetivoId` + `rodada`.',
-  })
-  rodada!: string;
-
-  @ApiProperty({
-    example: 'Substitutiva (SUB)',
-    description: 'A rodada por extenso; rodada desconhecida sai como veio.',
-  })
-  rodadaDescricao!: string;
-
-  @ApiProperty({
-    example: '12345',
-    description: 'Org unit do Periodo Letivo no Brightspace.',
+      'Org unit do Periodo Letivo no Brightspace, do formato DESTE aluno — na ' +
+      'mesma janela, EaD e Presencial tem ids diferentes.',
   })
   periodoLetivoId!: string;
-
-  @ApiProperty({
-    type: PeriodoDoAgendamentoDto,
-    nullable: true,
-    description:
-      'A janela em que a prova foi marcada. `null` so em dado antigo cuja ' +
-      'janela nao existe mais.',
-  })
-  periodo!: PeriodoDoAgendamentoDto | null;
 
   @ApiProperty({
     type: String,
@@ -199,10 +220,96 @@ export class AgendamentosDoAlunoDto implements AgendamentosDoAluno {
   vinculos!: VinculoIntegracaoDto[];
 
   @ApiProperty({
+    type: [PeriodoIntegracaoDto],
+    description:
+      'As janelas em que este RA tem prova, da mais recente para a mais ' +
+      'antiga — uma vez so, e nao repetidas em cada prova.',
+  })
+  periodos!: PeriodoIntegracaoDto[];
+
+  @ApiProperty({
     type: [AgendamentoIntegracaoDto],
     description:
       'Provas confirmadas, da mais recente para a mais antiga. Vazia quando o ' +
       'aluno nao tem prova no recorte.',
   })
   agendamentos!: AgendamentoIntegracaoDto[];
+}
+
+export class AgendamentoDaListaIntegracaoDto
+  extends AgendamentoIntegracaoDto
+  implements AgendamentoDaListaIntegracao
+{
+  @ApiProperty({ example: 'UC2642816' })
+  matricula!: string;
+
+  @ApiProperty({
+    nullable: true,
+    example: 'DARLYNG AGHATA MARIA PEREIRA',
+    description:
+      'Do vinculo da prova, como veio no CSV. `null` quando a coluna veio vazia.',
+  })
+  nome!: string | null;
+}
+
+export class FiltroAplicadoDto implements FiltroAplicado {
+  @ApiProperty({
+    enum: ['atual'],
+    nullable: true,
+    example: 'atual',
+    description:
+      '`atual` = a janela vigente; `null` = o periodo letivo informado na URL.',
+  })
+  periodo!: 'atual' | null;
+
+  @ApiProperty({
+    type: [String],
+    example: ['12345', '12346'],
+    description:
+      'Os periodos letivos efetivamente consultados. No `atual`, os da janela ' +
+      'vigente (as duas grades); vazio quando nao ha janela cadastrada.',
+  })
+  periodoLetivoIds!: string[];
+
+  @ApiProperty({
+    nullable: true,
+    example: 'SUB',
+    description:
+      'A rodada consultada. `null` = todas as rodadas do periodo letivo.',
+  })
+  rodada!: string | null;
+}
+
+export class PaginaDeAgendamentosIntegracaoDto implements PaginaDeAgendamentosIntegracao {
+  @ApiProperty({ type: FiltroAplicadoDto })
+  filtro!: FiltroAplicadoDto;
+
+  @ApiProperty({
+    type: [PeriodoIntegracaoDto],
+    description:
+      'As janelas do recorte, uma vez so — iguais em todas as paginas. No ' +
+      '`atual`, so a vigente. **So emita declaracao de prova cuja janela tenha ' +
+      '`prazoEncerrado: true`.**',
+  })
+  periodos!: PeriodoIntegracaoDto[];
+
+  @ApiProperty({ example: 6812, description: 'Total que satisfaz o filtro.' })
+  total!: number;
+
+  @ApiProperty({ example: 1 })
+  pagina!: number;
+
+  @ApiProperty({ example: 100, description: 'Maximo 500 por pagina.' })
+  porPagina!: number;
+
+  @ApiProperty({ example: 69 })
+  totalPaginas!: number;
+
+  @ApiProperty({
+    type: [AgendamentoDaListaIntegracaoDto],
+    description:
+      'Provas confirmadas, por data, horario e matricula. Vazia fora do ' +
+      'intervalo de paginas.',
+  })
+  itens!: AgendamentoDaListaIntegracaoDto[];
 }

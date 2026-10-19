@@ -1276,30 +1276,55 @@ nem como aluno, e nenhum JWT vale aqui.
 | Método | Rota | Descrição |
 |---|---|---|
 | `GET` | `/integracao/alunos/:matricula/agendamentos` | Tudo o que a declaração e a tela "Prova agendada" mostram, por RA. `?periodo=atual` restringe à janela vigente |
+| `GET` | `/integracao/agendamentos` | Todas as provas confirmadas de um período, paginadas, sem matrícula. `?periodo=atual` **ou** `?periodoLetivoId=…[&rodada=…]` |
 
 Existe porque a **declaração de agendamento vai passar a ser emitida por outro
 sistema da instituição**, assinada digitalmente — este deixa de ser a fonte do
 documento e passa a ser a fonte dos dados. O PDF do portal continua de pé até lá.
 
 A resposta traz o aluno (`nome`), os **vínculos** (curso, situação, formato e
-polo da matrícula) e cada **prova confirmada** — rodada (`N2`/`SUB` e o nome por
-extenso), período letivo, a janela de agendamento com `prazoEncerrado`, data
+polo da matrícula), as **janelas de agendamento** em `periodos[]` — rodada
+(`N2`/`SUB` e o nome por extenso), descrição, datas, períodos letivos e
+`prazoEncerrado`, uma vez só — e cada **prova confirmada**, apontando para a sua
+janela pelo `periodoId`: período letivo do formato do aluno, data
 (`AAAA-MM-DD`), horário, formato, polo e sala da prova, disciplinas, quando foi
-agendada e se a administração alocou.
+agendada e se a administração alocou. **As duas rotas de integração usam esse
+mesmo formato.**
 
 - **Histórico completo**, só `CONFIRMADO`, da mais recente para a mais antiga.
   Cancelada não aparece: não reserva cadeira, e declará-la afirmaria uma prova
   que não existe.
 - **`?periodo=atual`** = a janela vigente (N2 **ou** SUB, a cadastrada por
   último), o mesmo recorte do portal. Qualquer outro valor responde 400.
-- **Emita a declaração só com `periodo.prazoEncerrado: true`.** Com o prazo
-  aberto o aluno ainda troca de horário. Janela que não é a vigente vem sempre
-  `true`.
+- **Emita a declaração só quando a janela da prova (`periodos[]`, pelo
+  `periodoId`) tiver `prazoEncerrado: true`.** Com o prazo aberto o aluno ainda
+  troca de horário. Janela que não é a vigente vem sempre `true`.
 - **404** = RA não importado; **200 com `agendamentos: []`** = existe e não tem
   prova no recorte.
 - **Fica de fora:** e-mail e notas — a declaração não usa nenhum dos dois.
 - **Toda consulta vai para a auditoria** (`INTEGRACAO_CONSULTA`), com o nome do
   sistema e a matrícula consultada. A chave nunca.
+
+**A lista geral** (`GET /integracao/agendamentos`) traz as provas de todo mundo
+de uma vez. Os dados da **janela de agendamento** (rodada, descrição, datas,
+`prazoEncerrado`, períodos letivos) vêm **uma vez só**, em `periodos[]` no topo
+— iguais em todas as páginas. Cada item traz só o que é do aluno (matrícula,
+nome, curso, período letivo do formato dele, data, horário, formato, polo, sala,
+disciplinas) e aponta para a sua janela pelo `periodoId`:
+
+- **O recorte é obrigatório, e é um só.** `?periodo=atual` = a janela vigente,
+  nas duas grades. `?periodoLetivoId=12345` = um período letivo do Brightspace,
+  para consultar um anterior; aceita vários separados por vírgula (até 10 — o
+  módulo do EaD e o semestre do Presencial são ids diferentes). `&rodada=SUB`
+  estreita para uma prova; sem ela vêm a N2 e a SUB do semestre juntas. Sem
+  recorte, com os dois, ou com `rodada` no `atual`: **400**. O histórico de
+  todos os alunos numa chamada só não existe de propósito.
+- **Paginada:** `pagina` (padrão 1) e `porPagina` (padrão 100, máximo 500 —
+  acima disso é limitado, não recusado). Ordem estável por data, horário,
+  matrícula e id. A resposta diz o `filtro` aplicado — no `atual`, já com os
+  `periodoLetivoIds` e a `rodada` da janela vigente.
+- **Auditoria:** uma linha por página, com o recorte, a página e quantos itens
+  saíram — é assim que uma varredura aparece.
 
 ---
 

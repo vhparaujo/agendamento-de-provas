@@ -29,12 +29,26 @@ describe('Integracao: dados de agendamento por matricula (e2e)', () => {
 
   let vinculoA: number;
   let vinculoB: number;
+  let janelaN2Id: number;
   let janelaSubId: number;
 
   const api = () => request(app.getHttpServer());
   const rota = (matricula = MATRICULA) =>
     `/api/integracao/alunos/${matricula}/agendamentos`;
   const comChave = (r: request.Test) => r.set('X-API-Key', CHAVE);
+  // A prova nao repete a rodada: ela vem da janela, em `periodos[]`. Vale
+  // para as duas rotas — `itens` na lista, `agendamentos` na consulta por RA.
+  const rodadas = (resposta: unknown) => {
+    const body = resposta as {
+      periodos: { id: number; rodada: string }[];
+      itens?: { periodoId: number }[];
+      agendamentos?: { periodoId: number }[];
+    };
+
+    return (body.itens ?? body.agendamentos ?? []).map(
+      (item) => body.periodos.find((p) => p.id === item.periodoId)?.rodada,
+    );
+  };
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -96,16 +110,18 @@ describe('Integracao: dados de agendamento por matricula (e2e)', () => {
     // A N2 e uma janela antiga, ja encerrada; a SUB e a vigente, com o prazo
     // aberto. `createdAt` explicito: vigente = a cadastrada por ultimo, e duas
     // linhas no mesmo milissegundo deixariam isso ao acaso.
-    await prisma.periodoAgendamento.create({
-      data: {
-        periodoLetivoId: PERIODO_LETIVO,
-        rodada: 'N2',
-        descricao: 'e2e integracao N2',
-        aberto: true,
-        dataFechamento: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
-        createdAt: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000),
-      },
-    });
+    janelaN2Id = (
+      await prisma.periodoAgendamento.create({
+        data: {
+          periodoLetivoId: PERIODO_LETIVO,
+          rodada: 'N2',
+          descricao: 'e2e integracao N2',
+          aberto: true,
+          dataFechamento: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+          createdAt: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000),
+        },
+      })
+    ).id;
     janelaSubId = (
       await prisma.periodoAgendamento.create({
         data: {
@@ -296,9 +312,7 @@ describe('Integracao: dados de agendamento por matricula (e2e)', () => {
       ]);
 
       // A cancelada (vinculo B) nao aparece.
-      expect(
-        res.body.agendamentos.map((a: { rodada: string }) => a.rodada),
-      ).toEqual(['SUB', 'N2']);
+      expect(rodadas(res.body)).toEqual(['SUB', 'N2']);
     });
 
     it('traz tudo o que a declaracao e a tela do portal mostram', async () => {
@@ -309,8 +323,7 @@ describe('Integracao: dados de agendamento por matricula (e2e)', () => {
         alunoId: vinculoA,
         curso: 'CURSO E2E INTEG A',
         status: 'CONFIRMADO',
-        rodada: 'SUB',
-        rodadaDescricao: 'Substitutiva (SUB)',
+        periodoId: janelaSubId,
         periodoLetivoId: PERIODO_LETIVO,
         // String AAAA-MM-DD, e nao instante: o consumidor nao tem como ler o
         // dia no fuso errado.
@@ -329,6 +342,9 @@ describe('Integracao: dados de agendamento por matricula (e2e)', () => {
         alocadoManual: true,
       });
       expect(sub.agendadoEm).toEqual(expect.any(String));
+      // Nada da janela repetido na prova: fica em `periodos[]`.
+      expect(sub).not.toHaveProperty('periodo');
+      expect(sub).not.toHaveProperty('rodada');
     });
 
     /**
@@ -336,18 +352,27 @@ describe('Integracao: dados de agendamento por matricula (e2e)', () => {
      * janela passada (encerrada por definicao), a SUB e da vigente, com o prazo
      * ainda correndo — o aluno pode trocar de horario.
      */
-    it('marca o prazo de cada prova pela sua janela', async () => {
+    it('poe cada janela uma vez no topo, com o seu prazo', async () => {
       const res = await comChave(api().get(rota())).expect(200);
-      const [sub, n2] = res.body.agendamentos;
 
-      expect(sub.periodo).toMatchObject({
-        descricao: 'e2e integracao SUB',
-        prazoEncerrado: false,
-      });
-      expect(n2.periodo).toMatchObject({
-        descricao: 'e2e integracao N2',
-        prazoEncerrado: true,
-      });
+      expect(res.body.periodos).toEqual([
+        {
+          id: janelaSubId,
+          rodada: 'SUB',
+          rodadaDescricao: 'Substitutiva (SUB)',
+          descricao: 'e2e integracao SUB',
+          periodoLetivoIds: [PERIODO_LETIVO],
+          dataAbertura: null,
+          dataFechamento: expect.any(String),
+          prazoEncerrado: false,
+        },
+        expect.objectContaining({
+          id: janelaN2Id,
+          rodada: 'N2',
+          descricao: 'e2e integracao N2',
+          prazoEncerrado: true,
+        }),
+      ]);
     });
 
     it('a prova da janela vigente passa a encerrada quando o prazo vence', async () => {
@@ -363,7 +388,10 @@ describe('Integracao: dados de agendamento por matricula (e2e)', () => {
       try {
         const res = await comChave(api().get(rota())).expect(200);
 
-        expect(res.body.agendamentos[0].periodo.prazoEncerrado).toBe(true);
+        expect(res.body.periodos[0]).toMatchObject({
+          id: janelaSubId,
+          prazoEncerrado: true,
+        });
       } finally {
         await prisma.periodoAgendamento.update({
           where: { id: janelaSubId },
@@ -385,9 +413,160 @@ describe('Integracao: dados de agendamento por matricula (e2e)', () => {
 
       expect(res.body.filtro).toEqual({ periodo: 'atual' });
       expect(res.body.vinculos).toHaveLength(2);
+      expect(rodadas(res.body)).toEqual(['SUB']);
+      // So a janela que tem prova no recorte.
+      expect(res.body.periodos).toEqual([
+        expect.objectContaining({ id: janelaSubId }),
+      ]);
+    });
+  });
+
+  /**
+   * GET /integracao/agendamentos — a lista geral, sem matricula. O banco do e2e
+   * pode ter provas de outras suites, entao as asserções olham so as desta
+   * matricula — exceto onde o periodo letivo, que e so deste arquivo, ja isola.
+   */
+  describe('lista geral', () => {
+    const lista = (query: string) =>
+      comChave(api().get(`/api/integracao/agendamentos?${query}`));
+
+    it('401 sem o header X-API-Key', async () => {
+      await api().get('/api/integracao/agendamentos?periodo=atual').expect(401);
+    });
+
+    it.each([
+      ['sem recorte', ''],
+      [
+        'com os dois recortes',
+        `periodo=atual&periodoLetivoId=${PERIODO_LETIVO}`,
+      ],
+      ['`rodada` com `periodo=atual`', 'periodo=atual&rodada=N2'],
+      ['`periodo` diferente de `atual`', 'periodo=todos'],
+      ['`periodoLetivoId` fora do formato', 'periodoLetivoId=a;b'],
+      ['`pagina` zero', `periodoLetivoId=${PERIODO_LETIVO}&pagina=0`],
+      [
+        '`porPagina` nao numerico',
+        `periodoLetivoId=${PERIODO_LETIVO}&porPagina=x`,
+      ],
+    ])('400 %s', async (_caso, query) => {
+      await lista(query).expect(400);
+    });
+
+    it('`periodo=atual` traz so a janela vigente, uma vez, no topo', async () => {
+      const res = await lista('periodo=atual&porPagina=500').expect(200);
+
+      expect(res.body.filtro).toEqual({
+        periodo: 'atual',
+        periodoLetivoIds: [PERIODO_LETIVO],
+        rodada: 'SUB',
+      });
+      expect(res.body.periodos).toEqual([
+        {
+          id: janelaSubId,
+          rodada: 'SUB',
+          rodadaDescricao: 'Substitutiva (SUB)',
+          descricao: 'e2e integracao SUB',
+          periodoLetivoIds: [PERIODO_LETIVO],
+          dataAbertura: null,
+          dataFechamento: expect.any(String),
+          prazoEncerrado: false,
+        },
+      ]);
+
+      const daqui = res.body.itens.filter(
+        (a: { matricula: string }) => a.matricula === MATRICULA,
+      );
+
+      expect(daqui).toEqual([
+        expect.objectContaining({
+          periodoId: janelaSubId,
+          matricula: MATRICULA,
+          nome: 'ALUNO E2E INTEGRACAO',
+          alunoId: vinculoA,
+          periodoLetivoId: PERIODO_LETIVO,
+          data: '2026-09-10',
+        }),
+      ]);
+      // Nada da janela repetido no item.
+      expect(daqui[0]).not.toHaveProperty('periodo');
+      expect(daqui[0]).not.toHaveProperty('rodada');
+    });
+
+    it('pelo periodo letivo vem a N2 e a SUB, sem a cancelada, por data', async () => {
+      const res = await lista(`periodoLetivoId=${PERIODO_LETIVO}`).expect(200);
+
+      expect(res.body).toMatchObject({
+        filtro: {
+          periodo: null,
+          periodoLetivoIds: [PERIODO_LETIVO],
+          rodada: null,
+        },
+        total: 2,
+        pagina: 1,
+        totalPaginas: 1,
+      });
+      expect(rodadas(res.body)).toEqual(['N2', 'SUB']);
+      // As duas janelas no topo, cada uma com o seu prazo.
       expect(
-        res.body.agendamentos.map((a: { rodada: string }) => a.rodada),
-      ).toEqual(['SUB']);
+        res.body.periodos.map((p: { id: number; prazoEncerrado: boolean }) => [
+          p.id,
+          p.prazoEncerrado,
+        ]),
+      ).toEqual([
+        [janelaSubId, false],
+        [janelaN2Id, true],
+      ]);
+    });
+
+    it('`rodada` estreita para uma prova so', async () => {
+      const res = await lista(
+        `periodoLetivoId=${PERIODO_LETIVO}&rodada=N2`,
+      ).expect(200);
+
+      expect(res.body.filtro.rodada).toBe('N2');
+      expect(res.body.periodos).toEqual([
+        expect.objectContaining({ id: janelaN2Id, rodada: 'N2' }),
+      ]);
+      expect(rodadas(res.body)).toEqual(['N2']);
+    });
+
+    it('periodo letivo sem prova nenhuma responde 200 com lista vazia', async () => {
+      const res = await lista('periodoLetivoId=E2E-INTEG-INEXISTENTE').expect(
+        200,
+      );
+
+      expect(res.body).toMatchObject({
+        periodos: [],
+        total: 0,
+        totalPaginas: 1,
+        itens: [],
+      });
+    });
+
+    it('pagina em ordem estavel', async () => {
+      const base = `periodoLetivoId=${PERIODO_LETIVO}&porPagina=1`;
+      const [p1, p2, p3] = await Promise.all(
+        [1, 2, 3].map((n) => lista(`${base}&pagina=${n}`).expect(200)),
+      );
+
+      expect(p1.body).toMatchObject({
+        total: 2,
+        porPagina: 1,
+        totalPaginas: 2,
+      });
+      expect(rodadas(p1.body)).toEqual(['N2']);
+      expect(rodadas(p2.body)).toEqual(['SUB']);
+      expect(p3.body.itens).toEqual([]);
+      // O topo nao depende da pagina: a pagina vazia ainda diz os prazos.
+      expect(p3.body.periodos).toEqual(p1.body.periodos);
+    });
+
+    it('`porPagina` acima do maximo e limitado, nao recusado', async () => {
+      const res = await lista(
+        `periodoLetivoId=${PERIODO_LETIVO}&porPagina=9999`,
+      ).expect(200);
+
+      expect(res.body.porPagina).toBe(500);
     });
   });
 });

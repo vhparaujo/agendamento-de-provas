@@ -60,6 +60,8 @@ interface Reserva {
   periodoLetivoId: string;
   rodada: string;
   status: 'CONFIRMADO' | 'CANCELADO';
+  /** Ausente = feita depois de qualquer janela do fixture. */
+  createdAt?: Date;
 }
 
 /**
@@ -190,38 +192,26 @@ function montar(periodos: Periodo[], reservas: Reserva[] = []) {
       // Reproduz o `where` inteiro de proposito: um duble que ignorasse a
       // `rodada` passaria dizendo que a janela da substitutiva esta travada
       // pelas provas da regular — justamente o que o service deixou de fazer.
+      // O mesmo vale para o corte por `createdAt` (ver `reservasDaJanela`).
       count: ({
         where,
       }: {
-        where: { periodoLetivoId: { in: string[] }; rodada: string };
+        where: {
+          periodoLetivoId: { in: string[] };
+          rodada: string;
+          createdAt: { gte: Date };
+          status?: Reserva['status'];
+        };
       }) =>
         Promise.resolve(
           reservas.filter(
             (r) =>
               where.periodoLetivoId.in.includes(r.periodoLetivoId) &&
-              r.rodada === where.rodada,
+              r.rodada === where.rodada &&
+              (!r.createdAt || r.createdAt >= where.createdAt.gte) &&
+              (!where.status || r.status === where.status),
           ).length,
         ),
-      // Agrupado pelo PAR, como o service pede — agrupar so pelo semestre faria
-      // o teste da contagem por janela passar com a soma das duas rodadas.
-      groupBy: () => {
-        const porPar = new Map<string, { par: Reserva; total: number }>();
-
-        for (const r of reservas.filter((x) => x.status === 'CONFIRMADO')) {
-          const chave = `${r.periodoLetivoId}|${r.rodada}`;
-          const atual = porPar.get(chave);
-          if (atual) atual.total += 1;
-          else porPar.set(chave, { par: r, total: 1 });
-        }
-
-        return Promise.resolve(
-          [...porPar.values()].map(({ par, total }) => ({
-            periodoLetivoId: par.periodoLetivoId,
-            rodada: par.rodada,
-            _count: { _all: total },
-          })),
-        );
-      },
     },
     modalidade: {
       findMany: () => Promise.resolve(MODALIDADES),
@@ -1216,6 +1206,113 @@ describe('PeriodoService — o mapa por formato', () => {
     expect(presencial).toMatchObject({
       periodoLetivoId: 'SEMESTRE-2026-2',
       herdadoDoPrincipal: false,
+    });
+  });
+
+  /**
+   * O caso de 19/10/2026: a janela de 2026/4 foi cadastrada com o Presencial
+   * ainda no letivo da janela anterior, mesma rodada. As provas de agosto
+   * casavam o par e apareciam na janela nova — e a trava recusava a edicao
+   * que corrige o cadastro. Prova feita antes de a janela existir nao e dela.
+   */
+  describe('o mesmo org unit voltando em outra janela', () => {
+    const ANTERIOR: Periodo = {
+      id: 1,
+      periodoLetivoId: 'SEMESTRE-2026-1',
+      rodada: 'N2',
+      descricao: '2026',
+      createdAt: new Date('2026-08-10T12:00:00Z'),
+    };
+
+    const NOVA_COM_PRESENCIAL_ERRADO: Periodo = {
+      id: 3,
+      periodoLetivoId: 'MODULO-2026-4',
+      rodada: 'N2',
+      descricao: '2026/4',
+      createdAt: new Date('2026-10-15T12:00:00Z'),
+      letivosPorModalidade: [
+        { modalidadeId: 1, periodoLetivoId: 'MODULO-2026-4' },
+        { modalidadeId: 2, periodoLetivoId: 'MODULO-2026-4' },
+        { modalidadeId: 3, periodoLetivoId: 'MODULO-2026-4' },
+        { modalidadeId: 4, periodoLetivoId: 'SEMESTRE-2026-1' },
+      ],
+    };
+
+    const PROVA_DE_AGOSTO: Reserva = {
+      periodoLetivoId: 'SEMESTRE-2026-1',
+      rodada: 'N2',
+      status: 'CONFIRMADO',
+      createdAt: new Date('2026-08-27T15:00:00Z'),
+    };
+
+    it('a listagem nao mostra na janela nova as provas da anterior', async () => {
+      const { service } = montar(
+        [{ ...ANTERIOR }, { ...NOVA_COM_PRESENCIAL_ERRADO }],
+        [PROVA_DE_AGOSTO],
+      );
+
+      const janelas = await service.listar();
+
+      expect(janelas.find((j) => j.id === 3)!.totalAgendamentos).toBe(0);
+      expect(janelas.find((j) => j.id === 1)!.totalAgendamentos).toBe(1);
+    });
+
+    it('deixa corrigir o Presencial da janela nova', async () => {
+      const { service, periodos } = montar(
+        [{ ...ANTERIOR }, { ...NOVA_COM_PRESENCIAL_ERRADO }],
+        [PROVA_DE_AGOSTO],
+      );
+
+      await service.atualizar(
+        3,
+        {
+          letivosPorModalidade: [
+            { modalidadeCodigo: 'EAD', periodoLetivoId: 'MODULO-2026-4' },
+            { modalidadeCodigo: 'SEMI', periodoLetivoId: 'MODULO-2026-4' },
+            { modalidadeCodigo: 'MODULAR', periodoLetivoId: 'MODULO-2026-4' },
+            {
+              modalidadeCodigo: 'PRESENCIAL',
+              periodoLetivoId: 'SEMESTRE-2026-2',
+            },
+          ],
+        },
+        'admin@ucb.br',
+      );
+
+      const presencial = periodos
+        .find((p) => p.id === 3)!
+        .letivosPorModalidade!.find((l) => l.modalidadeId === 4);
+
+      expect(presencial?.periodoLetivoId).toBe('SEMESTRE-2026-2');
+    });
+
+    it('deixa apagar a janela nova, e a anterior continua travada', async () => {
+      const { service, periodos } = montar(
+        [{ ...ANTERIOR }, { ...NOVA_COM_PRESENCIAL_ERRADO }],
+        [PROVA_DE_AGOSTO],
+      );
+
+      await service.remover(3, 'admin@ucb.br');
+      expect(periodos.map((p) => p.id)).toEqual([1]);
+
+      await expect(service.remover(1, 'admin@ucb.br')).rejects.toThrow(
+        /não pode ser apagado/,
+      );
+    });
+
+    /** Prova feita DEPOIS de a janela nova existir continua travando-a. */
+    it('a prova marcada na janela nova continua travando', async () => {
+      const { service } = montar(
+        [{ ...ANTERIOR }, { ...NOVA_COM_PRESENCIAL_ERRADO }],
+        [
+          PROVA_DE_AGOSTO,
+          { ...PROVA_DE_AGOSTO, createdAt: new Date('2026-11-05T10:00:00Z') },
+        ],
+      );
+
+      await expect(service.remover(3, 'admin@ucb.br')).rejects.toThrow(
+        /não pode ser apagado/,
+      );
     });
   });
 });

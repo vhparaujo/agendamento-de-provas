@@ -6,7 +6,11 @@ import {
 import { CONFIRMADO } from '../../agendamento/service/lock-de-vagas';
 import { descricaoDaRodada } from '../../agendamento/service/rodada';
 import { PrismaService } from '../../database/prisma.service';
-import { PeriodoService } from '../../periodo/service/periodo.service';
+import type { Prisma } from '../../generated/prisma/client';
+import {
+  idsDaJanela,
+  PeriodoService,
+} from '../../periodo/service/periodo.service';
 import { isoDeDataUtc } from '../../senha-quiz/service/relogio';
 import { janelaDoAgendamento } from './janela-do-agendamento';
 
@@ -34,23 +38,33 @@ export interface VinculoIntegracao {
   polo: Local;
 }
 
-/** A janela de agendamento em que a prova foi marcada. */
-export interface PeriodoDoAgendamento {
+/**
+ * Uma janela de agendamento, UMA vez no topo da resposta — e nao repetida em
+ * cada prova, que so aponta para ela pelo `periodoId`. O mesmo formato nas duas
+ * rotas da integracao.
+ */
+export interface PeriodoIntegracao {
+  id: number;
+  rodada: string;
+  rodadaDescricao: string;
   descricao: string | null;
+  /** Os periodos letivos que a janela cobre — as duas grades. */
+  periodoLetivoIds: string[];
   dataAbertura: Date | null;
   dataFechamento: Date;
   prazoEncerrado: boolean;
 }
 
+/** Uma prova: so o que e da prova do aluno. A janela fica em `periodos[]`. */
 export interface AgendamentoIntegracao {
   id: number;
+  /** A janela da prova, em `periodos[]`. `null` so se a janela nao existe mais. */
+  periodoId: number | null;
   alunoId: number;
   curso: string;
   status: string;
-  rodada: string;
-  rodadaDescricao: string;
+  /** O do formato do aluno: no mesmo periodo, EaD e Presencial diferem. */
   periodoLetivoId: string;
-  periodo: PeriodoDoAgendamento | null;
   /** "AAAA-MM-DD" — string, e nao Date, para ninguem ler o dia no fuso errado. */
   data: string;
   horaInicio: string;
@@ -64,13 +78,76 @@ export interface AgendamentoIntegracao {
   alocadoManual: boolean;
 }
 
+/** Uma prova na lista geral: a mesma, mais quem e o aluno. */
+export interface AgendamentoDaListaIntegracao extends AgendamentoIntegracao {
+  matricula: string;
+  nome: string | null;
+}
+
 export interface AgendamentosDoAluno {
   matricula: string;
   nome: string | null;
   filtro: { periodo: RecorteDoPeriodo };
   vinculos: VinculoIntegracao[];
+  periodos: PeriodoIntegracao[];
   agendamentos: AgendamentoIntegracao[];
 }
+
+/**
+ * O recorte da lista geral. Sempre UM periodo: ou a janela vigente, ou um
+ * periodo letivo escolhido (com ou sem rodada) — nunca o historico inteiro de
+ * todos os alunos de uma vez.
+ */
+export type FiltroDaLista =
+  | { periodo: 'atual' }
+  | { periodo: null; periodoLetivoIds: string[]; rodada: string | null };
+
+/** O recorte como foi APLICADO — no `atual`, ja resolvido para a janela vigente. */
+export interface FiltroAplicado {
+  periodo: 'atual' | null;
+  periodoLetivoIds: string[];
+  rodada: string | null;
+}
+
+export interface PaginaDeAgendamentosIntegracao {
+  filtro: FiltroAplicado;
+  periodos: PeriodoIntegracao[];
+  total: number;
+  pagina: number;
+  porPagina: number;
+  totalPaginas: number;
+  itens: AgendamentoDaListaIntegracao[];
+}
+
+export const PADRAO_POR_PAGINA = 100;
+export const MAXIMO_POR_PAGINA = 500;
+
+/** O vigente, como `janelaVigente` devolve — `undefined` sem janela cadastrada. */
+type Vigente = Awaited<ReturnType<PeriodoService['janelaVigente']>>;
+
+const COM_MAPA = {
+  letivosPorModalidade: { select: { periodoLetivoId: true } },
+} satisfies Prisma.PeriodoAgendamentoInclude;
+
+type JanelaLida = Prisma.PeriodoAgendamentoGetPayload<{
+  include: typeof COM_MAPA;
+}>;
+
+/** A janela vigente, pelo par que a identifica (`criar` recusa a duplicata). */
+const ehAVigente = (janela: JanelaLida, vigente: Vigente) =>
+  !!vigente &&
+  janela.rodada === vigente.rodada &&
+  janela.periodoLetivoId === vigente.principal;
+
+type AgendamentoLido = Prisma.AgendamentoGetPayload<{
+  include: typeof INCLUDE_COMPLETO;
+}>;
+
+/** O `INCLUDE_COMPLETO` com o nome do vinculo, que a lista geral precisa. */
+const INCLUDE_DA_LISTA = {
+  ...INCLUDE_COMPLETO,
+  aluno: { select: { curso: true, nome: true } },
+} satisfies Prisma.AgendamentoInclude;
 
 /**
  * ============================================================================
@@ -90,6 +167,12 @@ export interface AgendamentosDoAluno {
  * aberto o aluno ainda troca de horario, e o documento afirmaria uma data que o
  * portador pode mudar. Toda janela que nao e a vigente conta como encerrada —
  * o aluno so mexe na rodada vigente (regra 7).
+ *
+ * AS DUAS ROTAS TEM O MESMO FORMATO: os dados da JANELA (rodada, datas,
+ * `prazoEncerrado`) vem uma vez so, em `periodos[]`, e cada prova aponta para a
+ * sua pelo `periodoId`. E uma lista, e nao um objeto, porque o historico de um
+ * RA — ou a lista sem `rodada` — tem provas da N2 e da SUB, cada uma com o seu
+ * prazo.
  */
 @Injectable()
 export class IntegracaoService {
@@ -139,12 +222,13 @@ export class IntegracaoService {
           polo: v.polo,
         })),
     };
+    const semProva = { ...base, periodos: [], agendamentos: [] };
 
     const vigente = await this.periodo.janelaVigente();
 
     // Sem janela cadastrada nao ha "periodo atual" — e nao ha o que devolver,
     // em vez de cair em silencio no historico inteiro.
-    if (recorte === 'atual' && !vigente) return { ...base, agendamentos: [] };
+    if (recorte === 'atual' && !vigente) return semProva;
 
     const agendamentos = await this.prisma.agendamento.findMany({
       where: {
@@ -164,63 +248,186 @@ export class IntegracaoService {
       ],
     });
 
-    if (agendamentos.length === 0) return { ...base, agendamentos: [] };
+    if (agendamentos.length === 0) return semProva;
 
-    const janelas = await this.prisma.periodoAgendamento.findMany({
+    const candidatas = await this.prisma.periodoAgendamento.findMany({
       where: {
         rodada: { in: [...new Set(agendamentos.map((a) => a.rodada))] },
       },
-      include: { letivosPorModalidade: { select: { periodoLetivoId: true } } },
+      include: COM_MAPA,
       orderBy: { createdAt: 'desc' },
     });
 
-    const naJanelaVigente = (a: { periodoLetivoId: string; rodada: string }) =>
-      !!vigente &&
-      a.rodada === vigente.rodada &&
-      vigente.periodoLetivoIds.includes(a.periodoLetivoId);
-
-    // A situacao so e consultada se alguma prova for da janela vigente — a
-    // mesma `encerrado` que libera o botao da declaracao no portal, lida no
-    // mesmo lugar, para as duas regras nunca divergirem.
-    const vigenteEncerrada = agendamentos.some(naJanelaVigente)
-      ? (await this.periodo.situacaoAtual(agora)).encerrado
-      : true;
+    // No topo, so as janelas que tem prova deste RA — da mais recente para a
+    // mais antiga, como as provas.
+    const usadas = new Set(
+      agendamentos.map((a) => janelaDoAgendamento(a, candidatas)?.id),
+    );
+    const janelas = candidatas.filter((j) => usadas.has(j.id));
 
     return {
       ...base,
-      agendamentos: agendamentos.map((agendamento) => {
-        const confirmado = montarConfirmado(agendamento);
-        const janela = janelaDoAgendamento(agendamento, janelas);
-
-        return {
-          id: confirmado.id,
-          alunoId: confirmado.alunoId,
-          curso: confirmado.curso,
-          status: confirmado.status,
-          rodada: confirmado.rodada,
-          rodadaDescricao: descricaoDaRodada(confirmado.rodada),
-          periodoLetivoId: agendamento.periodoLetivoId,
-          periodo: janela
-            ? {
-                descricao: janela.descricao,
-                dataAbertura: janela.dataAbertura,
-                dataFechamento: janela.dataFechamento,
-                prazoEncerrado: naJanelaVigente(agendamento)
-                  ? vigenteEncerrada
-                  : true,
-              }
-            : null,
-          data: isoDeDataUtc(confirmado.data),
-          horaInicio: confirmado.horaInicio,
-          horaFim: confirmado.horaFim,
-          formato: confirmado.modalidade,
-          polo: confirmado.polo,
-          sala: confirmado.sala,
-          disciplinas: confirmado.disciplinas,
-          agendadoEm: confirmado.criadoEm,
-          alocadoManual: agendamento.alocadoManual,
-        };
-      }),
+      periodos: await this.montarPeriodos(janelas, vigente, agora),
+      agendamentos: agendamentos.map((a) => montarAgendamento(a, janelas)),
     };
   }
+
+  /**
+   * ==========================================================================
+   * TODAS AS PROVAS DE UM PERIODO — para quem precisa da lista, e nao de um RA
+   * ==========================================================================
+   * O recorte e SEMPRE um periodo: a janela vigente (`atual`) ou um periodo
+   * letivo escolhido. O historico inteiro de todos os alunos numa chamada so
+   * nao e oferecido de proposito — e o que uma chave vazada mais gostaria de
+   * levar, e nenhum consumidor precisa dele de uma vez.
+   *
+   * Pelo `periodoLetivoId`, a `rodada` e opcional: sem ela vem a N2 E a SUB do
+   * semestre juntas. Mais de um id cobre as duas grades de uma janela (o
+   * modulo do EaD e o semestre do Presencial).
+   *
+   * Paginada e em ordem estavel (data, horario, matricula, id), a mesma em que
+   * a prova acontece: quem percorre as paginas nao ve item repetido nem pulado
+   * enquanto ninguem agenda no meio.
+   */
+  async listarAgendamentos(
+    filtro: FiltroDaLista,
+    pagina: number,
+    porPagina: number,
+    agora: Date = new Date(),
+  ): Promise<PaginaDeAgendamentosIntegracao> {
+    const vigente = await this.periodo.janelaVigente();
+
+    const aplicado: FiltroAplicado =
+      filtro.periodo === 'atual'
+        ? {
+            periodo: 'atual',
+            periodoLetivoIds: vigente?.periodoLetivoIds ?? [],
+            rodada: vigente?.rodada ?? null,
+          }
+        : filtro;
+
+    const vazia = {
+      filtro: aplicado,
+      periodos: [],
+      total: 0,
+      pagina,
+      porPagina,
+      totalPaginas: 1,
+      itens: [],
+    };
+
+    // Sem janela cadastrada nao ha "periodo atual" — mesma leitura da consulta
+    // por RA.
+    if (filtro.periodo === 'atual' && !vigente) return vazia;
+
+    const where = {
+      ...CONFIRMADO,
+      periodoLetivoId: { in: aplicado.periodoLetivoIds },
+      ...(aplicado.rodada ? { rodada: aplicado.rodada } : {}),
+    } satisfies Prisma.AgendamentoWhereInput;
+
+    const [total, agendamentos, cadastradas] = await Promise.all([
+      this.prisma.agendamento.count({ where }),
+      this.prisma.agendamento.findMany({
+        where,
+        include: INCLUDE_DA_LISTA,
+        orderBy: [
+          { salaFaixa: { faixa: { data: 'asc' } } },
+          { salaFaixa: { faixa: { horaInicio: 'asc' } } },
+          { matricula: 'asc' },
+          { id: 'asc' },
+        ],
+        skip: (pagina - 1) * porPagina,
+        take: porPagina,
+      }),
+      // As janelas saem do RECORTE, e nao da pagina: o topo da resposta e o
+      // mesmo em todas as paginas, e quem le so a primeira ja sabe os prazos.
+      this.prisma.periodoAgendamento.findMany({
+        where: {
+          ...(aplicado.rodada ? { rodada: aplicado.rodada } : {}),
+          OR: [
+            { periodoLetivoId: { in: aplicado.periodoLetivoIds } },
+            {
+              letivosPorModalidade: {
+                some: { periodoLetivoId: { in: aplicado.periodoLetivoIds } },
+              },
+            },
+          ],
+        },
+        include: COM_MAPA,
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+
+    // No `atual` o topo e a vigente e so ela: outra janela da mesma rodada pode
+    // dividir o semestre do Presencial com ela, e nao e o periodo pedido.
+    const janelas =
+      filtro.periodo === 'atual'
+        ? cadastradas.filter((j) => ehAVigente(j, vigente))
+        : cadastradas;
+
+    return {
+      ...vazia,
+      periodos: await this.montarPeriodos(janelas, vigente, agora),
+      total,
+      totalPaginas: Math.max(1, Math.ceil(total / porPagina)),
+      itens: agendamentos.map((agendamento) => ({
+        ...montarAgendamento(agendamento, janelas),
+        matricula: agendamento.matricula,
+        nome: agendamento.aluno.nome?.trim() || null,
+      })),
+    };
+  }
+
+  /** As janelas do topo da resposta, cada uma com o seu `prazoEncerrado`. */
+  private async montarPeriodos(
+    janelas: JanelaLida[],
+    vigente: Vigente,
+    agora: Date,
+  ): Promise<PeriodoIntegracao[]> {
+    // A situacao so e consultada se a vigente estiver entre elas — a mesma
+    // `encerrado` que libera o botao da declaracao no portal, lida no mesmo
+    // lugar, para as duas regras nunca divergirem. Toda outra janela esta
+    // encerrada (regra 7).
+    const vigenteEncerrada = janelas.some((j) => ehAVigente(j, vigente))
+      ? (await this.periodo.situacaoAtual(agora)).encerrado
+      : true;
+
+    return janelas.map((janela) => ({
+      id: janela.id,
+      rodada: janela.rodada,
+      rodadaDescricao: descricaoDaRodada(janela.rodada),
+      descricao: janela.descricao,
+      periodoLetivoIds: idsDaJanela(janela),
+      dataAbertura: janela.dataAbertura,
+      dataFechamento: janela.dataFechamento,
+      prazoEncerrado: ehAVigente(janela, vigente) ? vigenteEncerrada : true,
+    }));
+  }
+}
+
+/** Uma prova no formato da integracao, apontando para a sua janela. */
+function montarAgendamento(
+  agendamento: AgendamentoLido,
+  janelas: JanelaLida[],
+): AgendamentoIntegracao {
+  const confirmado = montarConfirmado(agendamento);
+
+  return {
+    id: confirmado.id,
+    periodoId: janelaDoAgendamento(agendamento, janelas)?.id ?? null,
+    alunoId: confirmado.alunoId,
+    curso: confirmado.curso,
+    status: confirmado.status,
+    periodoLetivoId: agendamento.periodoLetivoId,
+    data: isoDeDataUtc(confirmado.data),
+    horaInicio: confirmado.horaInicio,
+    horaFim: confirmado.horaFim,
+    formato: confirmado.modalidade,
+    polo: confirmado.polo,
+    sala: confirmado.sala,
+    disciplinas: confirmado.disciplinas,
+    agendadoEm: confirmado.criadoEm,
+    alocadoManual: agendamento.alocadoManual,
+  };
 }

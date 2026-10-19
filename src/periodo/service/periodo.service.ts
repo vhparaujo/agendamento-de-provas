@@ -632,38 +632,24 @@ export class PeriodoService {
       orderBy: { id: 'asc' },
     });
 
-    // Uma consulta agrupada em vez de uma por periodo. O agrupamento e pelo PAR
-    // `periodoLetivoId + rodada`: agrupar so pelo semestre faria a linha da SUB
-    // exibir as provas da N2 como se fossem dela, e o admin leria "412
-    // agendamentos" numa janela que ninguem usou ainda.
-    const contagens = await this.prisma.agendamento.groupBy({
-      by: ['periodoLetivoId', 'rodada'],
-      where: { status: StatusAgendamento.CONFIRMADO },
-      _count: { _all: true },
-    });
-
-    const porPeriodoLetivo = new Map(
-      contagens.map((c) => [
-        chaveDaRodada(c.periodoLetivoId, c.rodada),
-        c._count._all,
-      ]),
+    // Uma contagem por janela, e nao um `groupBy` pelo par: o par nao diz a
+    // qual janela a prova pertence quando o mesmo org unit volta com a mesma
+    // rodada — ver `reservasDaJanela`. Sao poucas linhas (algumas por
+    // semestre), e a tela errar o total e pior que N consultas.
+    //
+    // O total soma TODOS os periodos letivos do mapa: sem a soma, os
+    // presenciais, gravados sob o outro org unit, ficariam invisiveis. A
+    // `rodada` continua separando a N2 da SUB do mesmo semestre.
+    const totais = await Promise.all(
+      periodos.map((p) =>
+        this.prisma.agendamento.count({
+          where: {
+            ...reservasDaJanela(p),
+            status: StatusAgendamento.CONFIRMADO,
+          },
+        }),
+      ),
     );
-
-    /**
-     * O total de uma JANELA e a soma dos periodos letivos que ela cobre.
-     *
-     * Sem a soma, a tela mostraria so as provas dos modulares e o admin leria
-     * "1.200 agendamentos" numa janela com 1.900 — os 700 presenciais estariam
-     * gravados sob o outro org unit, invisiveis. A `rodada` continua separando
-     * a N2 da SUB dentro da mesma janela.
-     */
-    const totalDaJanela = (periodo: JanelaComMapa): number =>
-      idsDaJanela(periodo).reduce(
-        (soma, letivo) =>
-          soma +
-          (porPeriodoLetivo.get(chaveDaRodada(letivo, periodo.rodada)) ?? 0),
-        0,
-      );
 
     const agora = new Date();
 
@@ -684,7 +670,7 @@ export class PeriodoService {
         p.aberto &&
         (!p.dataAbertura || agora >= p.dataAbertura) &&
         agora <= p.dataFechamento,
-      totalAgendamentos: totalDaJanela(p),
+      totalAgendamentos: totais[indice],
       criadoEm: p.createdAt,
     }));
   }
@@ -1025,10 +1011,7 @@ export class PeriodoService {
     // gravadas sob o outro org unit, e conta-las de fora faria o aviso dizer
     // "0 reserva" numa janela cheia — calando justamente quando importa.
     const reservas = await this.prisma.agendamento.count({
-      where: {
-        periodoLetivoId: { in: idsDaJanela(periodo) },
-        rodada: periodo.rodada,
-      },
+      where: reservasDaJanela(periodo),
     });
 
     const faixa = filtro
@@ -1094,10 +1077,7 @@ export class PeriodoService {
        * as provas ja marcadas na N2 nao dizem nada sobre ela.
        */
       const agendamentos = await tx.agendamento.count({
-        where: {
-          periodoLetivoId: { in: idsDaJanela(periodo) },
-          rodada: periodo.rodada,
-        },
+        where: reservasDaJanela(periodo),
       });
 
       // Antes da FK: ela tambem recusaria, mas com um erro que ninguem entende.
@@ -1190,10 +1170,7 @@ export class PeriodoService {
     // provas dos presenciais (gravadas sob o outro org unit) invisiveis, e a
     // trava liberaria a edicao que ela existe para impedir.
     const agendamentos = await tx.agendamento.count({
-      where: {
-        periodoLetivoId: { in: idsDaJanela(periodo) },
-        rodada: periodo.rodada,
-      },
+      where: reservasDaJanela(periodo),
     });
 
     if (agendamentos === 0) return;
@@ -1239,6 +1216,7 @@ type JanelaComMapa = {
   id: number;
   periodoLetivoId: string;
   rodada: string;
+  createdAt: Date;
   letivosPorModalidade: {
     modalidadeId: number;
     periodoLetivoId: string;
@@ -1310,6 +1288,33 @@ export function idsDaJanela(periodo: {
 }
 
 /**
+ * As reservas que PERTENCEM a uma janela — a chave de toda contagem do admin.
+ *
+ * O par `periodoLetivoId + rodada` sozinho nao basta: o mesmo org unit pode
+ * voltar em outra janela com a mesma rodada (19/10/2026: as janelas de 2026/4
+ * foram cadastradas com o Presencial ainda no letivo de 2026/1, e herdaram as
+ * 4.636 provas da N2 e as 959 da SUB de agosto/setembro). Sem o corte, a tela
+ * mostrava provas que nao eram da janela, e a trava de `exigirJanelaVazia`
+ * recusava justamente a edicao que corrigiria o cadastro.
+ *
+ * O corte e `createdAt`: uma prova so e marcada com a janela VIGENTE, e a
+ * janela nao era vigente antes de existir. Duas janelas com o mesmo par ao
+ * mesmo tempo continuam contando uma a outra — conservador, como antes.
+ */
+function reservasDaJanela(periodo: {
+  periodoLetivoId: string;
+  rodada: string;
+  createdAt: Date;
+  letivosPorModalidade: { periodoLetivoId: string }[];
+}): Prisma.AgendamentoWhereInput {
+  return {
+    periodoLetivoId: { in: idsDaJanela(periodo) },
+    rodada: periodo.rodada,
+    createdAt: { gte: periodo.createdAt },
+  };
+}
+
+/**
  * O mapa como a TELA do admin precisa ver: uma linha por formato cadastrado,
  * inclusive as que nao tem entrada propria e caem no principal — sao justamente
  * as que ele precisa enxergar para decidir se aquilo esta certo.
@@ -1364,11 +1369,6 @@ function mudouOMapa(
  * semestre continua criando periodo como antes, sem saber que a rodada existe.
  */
 const RODADA_PADRAO = 'N2';
-
-/** Chave do par que identifica uma janela — nunca so o `periodoLetivoId`. */
-function chaveDaRodada(periodoLetivoId: string, rodada: string): string {
-  return `${periodoLetivoId}\u0000${rodada}`;
-}
 
 function exigirData(valor: string, campo: string): Date {
   const data = new Date(valor);
