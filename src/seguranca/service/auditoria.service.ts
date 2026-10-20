@@ -49,6 +49,11 @@ export type EventoSeguranca =
   // dia a prova de alguem aparecer no cadastro errado, e aqui que se descobre
   // quem mesclou o que.
   | 'VINCULOS_MESCLADOS'
+  // Uma importacao COMPLETA marcou vinculos como fora da planilha (20/10/2026):
+  // de uma vez, centenas de alunos deixam de poder agendar. Os ids vao no
+  // detalhe para responder "quem saiu, e por qual arquivo?" — desfazer e
+  // reenviar a planilha certa, que limpa a marca de quem voltar nela.
+  | 'ALUNOS_FORA_DA_PLANILHA'
   // Um periodo de agendamento deixou de existir. Auditavel porque a linha
   // apagada e o que define QUAL semestre o portal do aluno enxerga: apagar o
   // mais recente entrega o portal ao anterior, e a mudanca nao aparece em

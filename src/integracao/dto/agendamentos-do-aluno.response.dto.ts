@@ -33,7 +33,7 @@ export class VinculoIntegracaoDto implements VinculoIntegracao {
   @ApiProperty({
     example: true,
     description:
-      'Pode agendar? Derivado de `statusCurso` — hoje so "Ativo" agenda.',
+      'Pode agendar? Derivado de `statusCurso` — hoje so "Ativo", "Cursando" e "Matriculado" agendam.',
   })
   ativo!: boolean;
 

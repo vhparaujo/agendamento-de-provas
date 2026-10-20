@@ -7,6 +7,7 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from './../src/app.module';
 import { PrismaService } from './../src/database/prisma.service';
+import { PeriodoService } from './../src/periodo/service/periodo.service';
 
 /**
  * Importacao ponta a ponta. Os CSVs reais ficam fora do repositorio (dados de
@@ -495,7 +496,7 @@ describe('Importacao de CSVs (e2e)', () => {
     });
 
     it('RECUPERAR a elegibilidade nao gera aviso', async () => {
-      await subir(POLO_A, 'EAD', 'Trancado').expect(201);
+      await subir(POLO_A, 'EAD', 'Matrícula Trancada').expect(201);
 
       // Voltar a poder agendar tendo prova marcada nao deixa nada
       // inconsistente — a reserva ja era dele.
@@ -784,8 +785,10 @@ describe('Importacao de CSVs (e2e)', () => {
       // 7.521 linhas nos arquivos - 11 rejeitadas (CAMPUS vazio) = 7.510 gravadas
       expect(podem + bloqueados).toBe(7510);
 
-      // REGRA VIGENTE (11/08/2026): so "Ativo" agenda.
-      // Bloqueados = Cancelado 130 + Trancado 116 + Desistente 20 + Formado 3
+      // REGRA VIGENTE (20/10/2026): "Ativo", "Cursando" e "Matriculado"
+      // agendam (a planilha real nao tem os dois ultimos, entao as contagens
+      // abaixo nao mudam).
+      // Bloqueados = Cancelado 130 + Matrícula Trancada 116 (era "Trancado" ate 20/10/2026) + Desistente 20 + Formado 3
       // + as situacoes de transicao, que voltaram a barrar:
       // Transf. Interna 12 + Transf. de Curriculo 1 + Alter. de Habilitacao 1.
       expect(bloqueados).toBe(269 + 14);
@@ -834,7 +837,7 @@ describe('Importacao de CSVs (e2e)', () => {
       });
 
       // Caso real de dois vinculos com status diferentes. Sob a regra vigente
-      // (so "Ativo" agenda), a transferencia nao entra: ela faz a prova de um
+      // ("Ativo", "Cursando" e "Matriculado" agendam), a transferencia nao entra: ela faz a prova de um
       // curso so.
       expect(karen).toHaveLength(2);
       expect(karen.filter((v) => v.ativo)).toHaveLength(1);
@@ -864,6 +867,309 @@ describe('Importacao de CSVs (e2e)', () => {
       expect(alunos.length).toBeGreaterThanOrEqual(4);
       expect(alunos[0].importadoPor).toBe(EMAIL);
       expect(alunos[0].nomeArquivo).toMatch(/\.csv$/);
+    });
+  });
+
+  /**
+   * FORA DA PLANILHA (20/10/2026): o CSV marcado como lista completa do formato
+   * aponta quem esta no banco e nao veio nele, e so marca no segundo envio.
+   *
+   * ⚠️ Roda em PRESENCIAL de proposito. O e2e usa o banco de desenvolvimento,
+   * com os alunos reais de EaD/Semi/Modular: aplicar uma "lista completa" de
+   * dez alunos em EaD marcaria todos os outros como fora. Se um dia houver
+   * presenciais reais no banco, os testes que aplicam FALHAM com a explicacao,
+   * em vez de marca-los.
+   */
+  describe('lista completa: quem saiu da planilha', () => {
+    const POLO = 'Polo E2E Fora da Planilha';
+    const CURSO = 'CURSO E2E FORA';
+    const RAS = Array.from(
+      { length: 10 },
+      (_, i) => `E2EFORA${String(i + 1).padStart(2, '0')}`,
+    );
+    const RA_COM_PROVA = RAS[9];
+
+    let presencialId: number;
+    let alheios = 0;
+
+    const csv = (ras: string[], semCampus: string[] = []) =>
+      [
+        'RA;ALUNO;EMAIL INSTITUCIONAL;CURSO;STATUS CURSO;CAMPUS',
+        ...ras.map((ra) => `${ra};ALUNO ${ra};;${CURSO};Ativo;${POLO}`),
+        ...semCampus.map((ra) => `${ra};ALUNO ${ra};;${CURSO};Ativo;`),
+      ].join('\r\n');
+
+    const subir = (conteudo: string, campos: Record<string, string> = {}) => {
+      let req = request(app.getHttpServer())
+        .post('/api/importacao/alunos')
+        .set('Authorization', `Bearer ${token}`)
+        .field('modalidade', 'PRESENCIAL');
+
+      for (const [campo, valor] of Object.entries(campos)) {
+        req = req.field(campo, valor);
+      }
+
+      return req.attach(
+        'arquivo',
+        Buffer.from(conteudo, 'utf8'),
+        'alunos-fora.csv',
+      );
+    };
+
+    const vinculo = (ra: string) =>
+      prisma.alunoImportado.findFirstOrThrow({ where: { matricula: ra } });
+
+    function exigirPresencialIsolado() {
+      if (alheios > 0) {
+        throw new Error(
+          `Ha ${alheios} vinculo(s) PRESENCIAL reais neste banco: aplicar a ` +
+            'lista completa do teste os marcaria como fora da planilha. ' +
+            'Rode este bloco num banco sem presenciais.',
+        );
+      }
+    }
+
+    async function limpar() {
+      await prisma.agendamento.deleteMany({
+        where: { matricula: { in: RAS } },
+      });
+
+      const polo = await prisma.polo.findUnique({ where: { nome: POLO } });
+
+      if (polo) {
+        await prisma.salaFaixa.deleteMany({
+          where: { faixa: { poloId: polo.id } },
+        });
+        await prisma.faixa.deleteMany({ where: { poloId: polo.id } });
+        await prisma.sala.deleteMany({ where: { poloId: polo.id } });
+        await prisma.alunoImportado.deleteMany({ where: { poloId: polo.id } });
+        await prisma.polo.delete({ where: { id: polo.id } });
+      }
+    }
+
+    /** Volta os dez ao estado inicial: todos dentro da planilha. */
+    async function recarregarTodos() {
+      await subir(csv(RAS)).expect(201);
+    }
+
+    beforeAll(async () => {
+      await limpar();
+
+      const polo = await prisma.polo.create({ data: { nome: POLO } });
+      presencialId = (
+        await prisma.modalidade.findUniqueOrThrow({
+          where: { codigo: 'PRESENCIAL' },
+        })
+      ).id;
+
+      alheios = await prisma.alunoImportado.count({
+        where: { modalidadeId: presencialId, matricula: { notIn: RAS } },
+      });
+
+      await recarregarTodos();
+
+      // O ultimo da lista tem prova marcada no semestre que a importacao
+      // olha — o mesmo que ela vai resolver para PRESENCIAL.
+      const periodoLetivoId =
+        (await app.get(PeriodoService).periodoLetivoDaModalidade('PRESENCIAL'))
+          ?.periodoLetivoId ?? 'E2E-FORA';
+
+      const sala = await prisma.sala.create({
+        data: { poloId: polo.id, nome: 'FORA-101', capacidade: 5 },
+      });
+      const faixa = await prisma.faixa.create({
+        data: {
+          poloId: polo.id,
+          data: new Date('2026-12-10T00:00:00.000Z'),
+          horaInicio: '08:30',
+          horaFim: '10:30',
+          salaFaixas: {
+            create: {
+              salaId: sala.id,
+              modalidadeId: presencialId,
+              vagas: 5,
+              ordem: 1,
+            },
+          },
+        },
+        include: { salaFaixas: true },
+      });
+
+      await prisma.agendamento.create({
+        data: {
+          alunoId: (await vinculo(RA_COM_PROVA)).id,
+          salaFaixaId: faixa.salaFaixas[0].id,
+          matricula: RA_COM_PROVA,
+          userIdD2L: '88888',
+          periodoLetivoId,
+          rodada: 'N2',
+          modalidadeId: presencialId,
+          poloId: polo.id,
+        },
+      });
+    }, 60_000);
+
+    afterAll(limpar);
+
+    it('arquivo PARCIAL (o padrao) nao compara nada', async () => {
+      const res = await subir(csv([RAS[0]])).expect(201);
+
+      expect(res.body.listaCompleta).toBe(false);
+      expect(res.body.saidas).toBeNull();
+      expect((await vinculo(RAS[1])).foraDaPlanilhaEm).toBeNull();
+    });
+
+    it('aplicar sem lista completa e recusado antes de gravar qualquer coisa', async () => {
+      const antes = await prisma.importacaoCsv.count();
+
+      const res = await subir(csv(RAS), { aplicarSaidas: 'true' }).expect(400);
+
+      expect(res.body.message).toMatch(/lista completa/);
+      expect(await prisma.importacaoCsv.count()).toBe(antes);
+    });
+
+    it('lista completa SIMULA: aponta quem saiu, com prova primeiro, e nao marca ninguem', async () => {
+      const res = await subir(csv(RAS.slice(0, 8)), {
+        listaCompleta: 'true',
+      }).expect(201);
+
+      const saidas = res.body.saidas;
+      const nossos = saidas.vinculos.filter((v: { matricula: string }) =>
+        RAS.includes(v.matricula),
+      );
+
+      expect(saidas.aplicadas).toBe(false);
+      expect(nossos.map((v: { matricula: string }) => v.matricula)).toEqual([
+        RA_COM_PROVA,
+        RAS[8],
+      ]);
+      expect(nossos[0].agendamentosConfirmados).toBe(1);
+      expect((await vinculo(RAS[8])).foraDaPlanilhaEm).toBeNull();
+      expect((await vinculo(RAS[8])).ativo).toBe(true);
+    });
+
+    it('"false" no multipart continua false (nao vira true na conversao)', async () => {
+      const res = await subir(csv(RAS.slice(0, 8)), {
+        listaCompleta: 'false',
+      }).expect(201);
+
+      expect(res.body.saidas).toBeNull();
+    });
+
+    it('APLICAR marca e bloqueia, mantem a prova e registra na importacao', async () => {
+      exigirPresencialIsolado();
+
+      const res = await subir(csv(RAS.slice(0, 9)), {
+        listaCompleta: 'true',
+        aplicarSaidas: 'true',
+      }).expect(201);
+
+      expect(res.body.saidas).toMatchObject({
+        aplicadas: true,
+        total: 1,
+        base: 10,
+        percentual: 10,
+        acimaDoLimite: false,
+      });
+
+      const saiu = await vinculo(RA_COM_PROVA);
+
+      expect(saiu.ativo).toBe(false);
+      expect(saiu.foraDaPlanilhaEm).not.toBeNull();
+      expect(saiu.foraDaPlanilhaImportacaoId).toBe(res.body.importacaoId);
+
+      // A prova NAO e cancelada (decisao do cliente): quem decide e a administracao.
+      expect(
+        await prisma.agendamento.count({
+          where: { matricula: RA_COM_PROVA, status: 'CONFIRMADO' },
+        }),
+      ).toBe(1);
+
+      const importacao = await prisma.importacaoCsv.findUniqueOrThrow({
+        where: { id: res.body.importacaoId },
+      });
+
+      expect(importacao).toMatchObject({
+        listaCompleta: true,
+        saidasMarcadas: 1,
+      });
+
+      const busca = await request(app.getHttpServer())
+        .get('/api/alunos')
+        .query({ busca: 'E2EFORA', foraDaPlanilha: 'true' })
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      expect(
+        busca.body.itens.map((i: { matricula: string }) => i.matricula),
+      ).toEqual([RA_COM_PROVA]);
+    });
+
+    it('voltar num arquivo PARCIAL tira a marca e libera de novo', async () => {
+      exigirPresencialIsolado();
+
+      const res = await subir(csv([RA_COM_PROVA])).expect(201);
+
+      expect(res.body.voltaramParaAPlanilha).toBe(1);
+
+      const voltou = await vinculo(RA_COM_PROVA);
+
+      expect(voltou.foraDaPlanilhaEm).toBeNull();
+      expect(voltou.ativo).toBe(true);
+    });
+
+    it('acima do limite, aplicar sem a segunda confirmacao NAO marca ninguem', async () => {
+      exigirPresencialIsolado();
+      await recarregarTodos();
+
+      // O CSV de UM aluno com a caixa marcada: 90% do formato "sairia".
+      const res = await subir(csv([RAS[0]]), {
+        listaCompleta: 'true',
+        aplicarSaidas: 'true',
+      }).expect(201);
+
+      expect(res.body.saidas).toMatchObject({
+        aplicadas: false,
+        bloqueadasPeloLimite: true,
+        acimaDoLimite: true,
+        total: 9,
+      });
+      expect(
+        await prisma.alunoImportado.count({
+          where: { matricula: { in: RAS }, foraDaPlanilhaEm: { not: null } },
+        }),
+      ).toBe(0);
+    });
+
+    it('acima do limite COM a segunda confirmacao, marca', async () => {
+      exigirPresencialIsolado();
+      await recarregarTodos();
+
+      const res = await subir(csv(RAS.slice(0, 5)), {
+        listaCompleta: 'true',
+        aplicarSaidas: 'true',
+        confirmarAcimaDoLimite: 'true',
+      }).expect(201);
+
+      expect(res.body.saidas.aplicadas).toBe(true);
+      expect(res.body.saidas.total).toBe(5);
+
+      await recarregarTodos();
+    });
+
+    it('linha REJEITADA protege o RA: cadastro errado nao e saida', async () => {
+      exigirPresencialIsolado();
+      await recarregarTodos();
+
+      // RAS[9] veio sem CAMPUS: rejeitada, mas presente na planilha.
+      const res = await subir(csv(RAS.slice(0, 9), [RA_COM_PROVA]), {
+        listaCompleta: 'true',
+        aplicarSaidas: 'true',
+      }).expect(201);
+
+      expect(res.body.rejeitadas).toHaveLength(1);
+      expect(res.body.saidas.total).toBe(0);
+      expect((await vinculo(RA_COM_PROVA)).foraDaPlanilhaEm).toBeNull();
     });
   });
 });

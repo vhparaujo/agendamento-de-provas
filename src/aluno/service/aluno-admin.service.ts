@@ -16,6 +16,8 @@ export interface FiltroAlunos {
   agendado?: boolean;
   /** true = so quem e do NIOP; false = so quem nao e. */
   niop?: boolean;
+  /** true = so quem saiu da planilha; false = so quem continua nela. */
+  foraDaPlanilha?: boolean;
   pagina?: number;
   porPagina?: number;
 }
@@ -28,8 +30,13 @@ export interface AlunoImportadoResumo {
   curso: string;
   /** Valor bruto da coluna STATUS CURSO, como veio no CSV. */
   statusCurso: string;
-  /** Derivado de statusCurso: se este vinculo pode agendar. */
+  /** Se este vinculo pode agendar: status que permite E dentro da planilha. */
   ativo: boolean;
+  /**
+   * Quando uma importacao completa do formato o deixou de fora — o aluno saiu.
+   * null = continua na planilha.
+   */
+  foraDaPlanilhaEm: Date | null;
   modalidade: string;
   polo: string;
   /** Agendamentos CONFIRMADOS deste vinculo — 0 significa "ainda nao marcou". */
@@ -245,6 +252,11 @@ function montarWhere(
     curso: filtro.curso,
     ativo: filtro.ativo,
     importacaoId: filtro.importacaoId,
+    ...(filtro.foraDaPlanilha === undefined
+      ? {}
+      : {
+          foraDaPlanilhaEm: filtro.foraDaPlanilha ? { not: null } : null,
+        }),
     ...(filtro.agendado === undefined
       ? {}
       : {
@@ -286,6 +298,7 @@ type RegistroResumo = {
   curso: string;
   statusCurso: string;
   ativo: boolean;
+  foraDaPlanilhaEm: Date | null;
   modalidade: { nome: string };
   polo: { nome: string };
   _count: { agendamentos: number };
@@ -303,6 +316,7 @@ function montarResumo(
     curso: registro.curso,
     statusCurso: registro.statusCurso,
     ativo: registro.ativo,
+    foraDaPlanilhaEm: registro.foraDaPlanilhaEm,
     modalidade: registro.modalidade.nome,
     polo: registro.polo.nome,
     totalAgendamentos: registro._count.agendamentos,

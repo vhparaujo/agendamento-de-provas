@@ -115,13 +115,13 @@ describe('Catalogo administrativo: alunos e turmas importados (e2e)', () => {
       },
     });
 
-    // Trancado: continua na base (e na busca), mas nao pode agendar.
+    // Matrícula Trancada: continua na base (e na busca), mas nao pode agendar.
     await prisma.alunoImportado.create({
       data: {
         matricula: RA_BLOQUEADO,
         nome: 'JOAO E2E TRANCADO',
         curso: CURSO_EAD,
-        statusCurso: 'Trancado',
+        statusCurso: 'Matrícula Trancada',
         ativo: false,
         modalidadeId: ead.id,
         poloId,
@@ -234,7 +234,7 @@ describe('Catalogo administrativo: alunos e turmas importados (e2e)', () => {
       expect(res.body.total).toBe(1);
       expect(res.body.itens[0]).toMatchObject({
         matricula: RA_BLOQUEADO,
-        statusCurso: 'Trancado',
+        statusCurso: 'Matrícula Trancada',
         ativo: false,
       });
     });

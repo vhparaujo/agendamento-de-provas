@@ -600,7 +600,7 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
     it('"Situação do Curso" traz o STATUS CURSO importado, qualquer que seja', async () => {
       await prisma.alunoImportado.updateMany({
         where: { matricula: SEM_PROVA },
-        data: { statusCurso: 'Trancado', ativo: false },
+        data: { statusCurso: 'Matrícula Trancada', ativo: false },
       });
 
       try {
@@ -613,7 +613,7 @@ describe('Periodo e relatorio de agendamentos (e2e)', () => {
           SEM_PROVA,
         );
 
-        expect(linha).toContain('NUTRIÇÃO;Trancado;');
+        expect(linha).toContain('NUTRIÇÃO;Matrícula Trancada;');
       } finally {
         await prisma.alunoImportado.updateMany({
           where: { matricula: SEM_PROVA },

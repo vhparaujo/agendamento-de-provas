@@ -6,12 +6,14 @@ import {
 } from '../../enums/status-curso.enum';
 import { StatusAgendamento } from '../../generated/prisma/client';
 import { PeriodoService } from '../../periodo/service/periodo.service';
+import { AuditoriaService } from '../../seguranca/service/auditoria.service';
 import {
   candidatasARenomeacao,
   chaveDoVinculo,
   Semelhanca,
 } from './curso-renomeado';
 import { coluna, exigirColunas, lerCsv, LinhaCsv } from './csv.util';
+import { calcularSaidas, LIMITE_SAIDAS_PERCENTUAL } from './saidas-da-planilha';
 
 /** Cabecalhos reais do CSV de alunos (confirmados nos 3 arquivos). */
 export const ALUNO_CSV_COLUNAS = {
@@ -82,7 +84,7 @@ export interface AlteracaoComAgendamento {
    *
    * GANHAR elegibilidade nao entra: voltar a poder agendar tendo prova marcada
    * nao deixa nada inconsistente. Trocar entre dois status que ja bloqueavam
-   * ("Trancado" -> "Cancelado") tambem nao — o aluno ja estava barrado, e um
+   * ("Matricula Trancada" -> "Cancelado") tambem nao — o aluno ja estava barrado, e um
    * aviso que se repete a cada planilha e o que ensina o time a ignora-lo.
    */
   statusCurso?: Mudanca;
@@ -138,6 +140,51 @@ export interface CursoRenomeado {
   candidatas: CandidataRenomeacao[];
 }
 
+/** Um vinculo que nao veio no CSV completo do formato. */
+export interface VinculoForaDaPlanilha {
+  alunoId: number;
+  matricula: string;
+  nome: string | null;
+  curso: string;
+  polo: string;
+  statusCurso: string;
+  /**
+   * Reservas confirmadas no semestre vigente, como em
+   * `alteracoesComAgendamento`. A prova NAO e cancelada: quem decide e a
+   * administracao (decisao do cliente, 20/10/2026).
+   */
+  agendamentosConfirmados: number;
+}
+
+/**
+ * O que a comparacao com o banco encontrou — e se aplicou. Ver
+ * `saidas-da-planilha.ts`.
+ */
+export interface ResumoSaidas {
+  /** false = simulacao, ou recusada pelo limite sem a segunda confirmacao. */
+  aplicadas: boolean;
+  /** So quando `aplicadas` e false e o motivo foi o limite. */
+  bloqueadasPeloLimite: boolean;
+  total: number;
+  /** Vinculos do formato dentro da planilha, contando os deste arquivo. */
+  base: number;
+  percentual: number;
+  limitePercentual: number;
+  acimaDoLimite: boolean;
+  /** Quem tem prova marcada vem primeiro: e quem pede decisao. */
+  vinculos: VinculoForaDaPlanilha[];
+}
+
+/** O que o admin pediu sobre a comparacao com o banco. */
+export interface OpcoesDeSaida {
+  /** "Este arquivo e a lista completa do formato". Sem isto, nada e comparado. */
+  listaCompleta: boolean;
+  /** false = so mostra quem sairia (o padrao). */
+  aplicarSaidas: boolean;
+  /** Segunda confirmacao, exigida acima de `LIMITE_SAIDAS_PERCENTUAL`. */
+  confirmarAcimaDoLimite: boolean;
+}
+
 export interface ResultadoImportacaoAlunos {
   importacaoId: number;
   arquivo: string;
@@ -156,6 +203,14 @@ export interface ResultadoImportacaoAlunos {
   alteracoesComAgendamento: AlteracaoComAgendamento[];
   /** Vinculos que nasceram duplicados por mudanca de grafia do curso. */
   cursosRenomeados: CursoRenomeado[];
+  /**
+   * Vinculos que estavam FORA DA PLANILHA e vieram neste arquivo — voltaram a
+   * poder agendar (se o status permitir). Vale para arquivo parcial tambem.
+   */
+  voltaramParaAPlanilha: number;
+  listaCompleta: boolean;
+  /** null quando o arquivo nao foi marcado como lista completa. */
+  saidas: ResumoSaidas | null;
 }
 
 /** Quantas linhas gravar em paralelo (o pool do MySQL tem 10 conexoes). */
@@ -177,13 +232,28 @@ export class ImportacaoAlunosService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly periodo: PeriodoService,
+    private readonly auditoria: AuditoriaService,
   ) {}
 
   async importar(
     arquivo: Express.Multer.File,
     codigoModalidade: string,
     importadoPor?: string,
+    opcoes: OpcoesDeSaida = {
+      listaCompleta: false,
+      aplicarSaidas: false,
+      confirmarAcimaDoLimite: false,
+    },
   ): Promise<ResultadoImportacaoAlunos> {
+    // Antes de qualquer escrita: aplicar saidas de um arquivo que ninguem
+    // afirmou ser a lista inteira e exatamente o acidente que a caixa evita.
+    if (opcoes.aplicarSaidas && !opcoes.listaCompleta) {
+      throw new BadRequestException(
+        'Só é possível marcar quem saiu da planilha quando o arquivo é a lista ' +
+          'completa do formato. Marque "Este arquivo é a lista completa" e envie de novo.',
+      );
+    }
+
     const modalidade = await this.prisma.modalidade.findUnique({
       where: { codigo: codigoModalidade },
     });
@@ -275,6 +345,7 @@ export class ImportacaoAlunosService {
         nomeArquivo: arquivo.originalname,
         totalLinhas: linhas.length,
         importadoPor,
+        listaCompleta: opcoes.listaCompleta,
       },
     });
 
@@ -283,9 +354,12 @@ export class ImportacaoAlunosService {
     const cursosRenomeados: CursoRenomeado[] = [];
     const desconhecidos = new Map<string, number>();
     const semPolo = new Map<string, number>();
+    const gravados = new Set<number>();
+    const rasRejeitados = new Set<string>();
     let criados = 0;
     let atualizados = 0;
     let podemAgendar = 0;
+    let voltaramParaAPlanilha = 0;
 
     for (let inicio = 0; inicio < linhas.length; inicio += LOTE) {
       const lote = linhas.slice(inicio, inicio + LOTE);
@@ -308,6 +382,7 @@ export class ImportacaoAlunosService {
       for (const r of resultados) {
         if (r.tipo === 'rejeitada') {
           rejeitadas.push(r.rejeicao);
+          if (r.rejeicao.matricula) rasRejeitados.add(r.rejeicao.matricula);
           if (r.campusNaoEncontrado) {
             semPolo.set(
               r.campusNaoEncontrado,
@@ -317,8 +392,10 @@ export class ImportacaoAlunosService {
           continue;
         }
 
+        gravados.add(r.alunoId);
         if (r.criado) criados++;
         else atualizados++;
+        if (r.voltouParaAPlanilha) voltaramParaAPlanilha++;
         if (r.podeAgendar) podemAgendar++;
         if (r.alteracao) alteracoesComAgendamento.push(r.alteracao);
         if (r.renomeacao) cursosRenomeados.push(r.renomeacao);
@@ -329,6 +406,21 @@ export class ImportacaoAlunosService {
     }
 
     const gravadas = criados + atualizados;
+
+    const saidas = opcoes.listaCompleta
+      ? await this.compararComOBanco({
+          modalidadeId: modalidade.id,
+          codigoModalidade,
+          importacaoId: importacao.id,
+          arquivo: arquivo.originalname,
+          importadoPor,
+          gravados,
+          rasRejeitados,
+          periodoLetivoVigente,
+          nomeDoPolo,
+          opcoes,
+        })
+      : null;
 
     this.logger.log(
       `Importacao de alunos (${codigoModalidade}) "${arquivo.originalname}": ` +
@@ -389,7 +481,162 @@ export class ImportacaoAlunosService {
       })),
       alteracoesComAgendamento,
       cursosRenomeados,
+      voltaramParaAPlanilha,
+      listaCompleta: opcoes.listaCompleta,
+      saidas,
     };
+  }
+
+  /**
+   * A lista completa do formato contra o banco: quem nao veio no arquivo saiu
+   * da universidade. Ver `saidas-da-planilha.ts` para a regra e as protecoes.
+   *
+   * Roda DEPOIS dos upserts, de proposito: "esta no arquivo" e o id que o
+   * upsert gravou, e nao uma comparacao de texto (a collation do banco ignora
+   * caixa e acento, a comparacao em memoria nao).
+   *
+   * Aplicar e o segundo passo. O primeiro envio so mostra a lista; a tela
+   * reenvia o MESMO arquivo com `aplicarSaidas` — a importacao e idempotente,
+   * e recalcular no segundo envio evita guardar a lista entre as duas chamadas.
+   */
+  private async compararComOBanco(ctx: {
+    modalidadeId: number;
+    codigoModalidade: string;
+    importacaoId: number;
+    arquivo: string;
+    importadoPor?: string;
+    gravados: Set<number>;
+    rasRejeitados: Set<string>;
+    periodoLetivoVigente?: string;
+    nomeDoPolo: Map<number, string>;
+    opcoes: OpcoesDeSaida;
+  }): Promise<ResumoSaidas> {
+    const doFormato = await this.prisma.alunoImportado.findMany({
+      where: { modalidadeId: ctx.modalidadeId },
+      select: { id: true, matricula: true, foraDaPlanilhaEm: true },
+    });
+
+    const calculo = calcularSaidas(doFormato, ctx.gravados, ctx.rasRejeitados);
+
+    const bloqueadasPeloLimite =
+      ctx.opcoes.aplicarSaidas &&
+      calculo.acimaDoLimite &&
+      !ctx.opcoes.confirmarAcimaDoLimite;
+
+    const aplicar =
+      ctx.opcoes.aplicarSaidas &&
+      !bloqueadasPeloLimite &&
+      calculo.ids.length > 0;
+
+    const vinculos = await this.detalharSaidas(
+      calculo.ids,
+      ctx.periodoLetivoVigente,
+      ctx.nomeDoPolo,
+    );
+
+    if (aplicar) {
+      // `ativo` junto com a marca: e a coluna que portal, compulsorio e
+      // estatisticas ja consultam, e nenhum deles precisa saber da marca.
+      // O filtro repete `foraDaPlanilhaEm: null` para nao reescrever a data
+      // de quem ja estava fora.
+      await this.prisma.alunoImportado.updateMany({
+        where: { id: { in: calculo.ids }, foraDaPlanilhaEm: null },
+        data: {
+          ativo: false,
+          foraDaPlanilhaEm: new Date(),
+          foraDaPlanilhaImportacaoId: ctx.importacaoId,
+        },
+      });
+
+      await this.prisma.importacaoCsv.update({
+        where: { id: ctx.importacaoId },
+        data: { saidasMarcadas: calculo.ids.length },
+      });
+
+      const comProva = vinculos.filter((v) => v.agendamentosConfirmados > 0);
+
+      this.auditoria.registrar('ALUNOS_FORA_DA_PLANILHA', {
+        ator: ctx.importadoPor,
+        detalhe:
+          `importacao ${ctx.importacaoId} (${ctx.codigoModalidade}, "${ctx.arquivo}"): ` +
+          `${calculo.ids.length} de ${calculo.base} vinculo(s) (${calculo.percentual}%) ` +
+          `marcados como fora da planilha, ${comProva.length} com prova marcada` +
+          (calculo.acimaDoLimite ? ', ACIMA DO LIMITE com confirmacao' : '') +
+          `. ids: ${calculo.ids.join(',')}`,
+      });
+
+      // WARN pelo mesmo motivo de `alteracoesComAgendamento`: quem saiu com
+      // prova marcada continua na lista de presenca ate alguem decidir.
+      if (comProva.length > 0) {
+        this.logger.warn(
+          `${comProva.length} vinculo(s) FORA DA PLANILHA com prova marcada em ` +
+            `"${ctx.arquivo}": ${comProva.map((v) => v.matricula).join(', ')}`,
+        );
+      }
+    }
+
+    return {
+      aplicadas: aplicar,
+      bloqueadasPeloLimite,
+      total: calculo.ids.length,
+      base: calculo.base,
+      percentual: calculo.percentual,
+      limitePercentual: LIMITE_SAIDAS_PERCENTUAL,
+      acimaDoLimite: calculo.acimaDoLimite,
+      vinculos,
+    };
+  }
+
+  /** Nome, curso, polo e reservas de quem sai — com prova primeiro. */
+  private async detalharSaidas(
+    ids: number[],
+    periodoLetivoVigente: string | undefined,
+    nomeDoPolo: Map<number, string>,
+  ): Promise<VinculoForaDaPlanilha[]> {
+    if (ids.length === 0) return [];
+
+    const [registros, reservas] = await Promise.all([
+      this.prisma.alunoImportado.findMany({
+        where: { id: { in: ids } },
+        select: {
+          id: true,
+          matricula: true,
+          nome: true,
+          curso: true,
+          poloId: true,
+          statusCurso: true,
+        },
+      }),
+      this.prisma.agendamento.groupBy({
+        by: ['alunoId'],
+        where: {
+          alunoId: { in: ids },
+          status: StatusAgendamento.CONFIRMADO,
+          // undefined = sem filtro (nenhum periodo cadastrado)
+          periodoLetivoId: periodoLetivoVigente,
+        },
+        _count: { _all: true },
+      }),
+    ]);
+
+    const porAluno = new Map(reservas.map((r) => [r.alunoId, r._count._all]));
+
+    return registros
+      .map((r) => ({
+        alunoId: r.id,
+        matricula: r.matricula,
+        nome: r.nome,
+        curso: r.curso,
+        polo: nomeDoPolo.get(r.poloId) ?? `#${r.poloId}`,
+        statusCurso: r.statusCurso,
+        agendamentosConfirmados: porAluno.get(r.id) ?? 0,
+      }))
+      .sort(
+        (a, b) =>
+          b.agendamentosConfirmados - a.agendamentosConfirmados ||
+          (a.nome ?? '').localeCompare(b.nome ?? '', 'pt-BR') ||
+          a.matricula.localeCompare(b.matricula),
+      );
   }
 
   private async gravarLinha(
@@ -449,6 +696,9 @@ export class ImportacaoAlunosService {
       modalidadeId: ctx.modalidadeId,
       poloId,
       importacaoId: ctx.importacaoId,
+      // Estar no arquivo — completo ou parcial — e estar na planilha.
+      foraDaPlanilhaEm: null,
+      foraDaPlanilhaImportacaoId: null,
     };
 
     // Idempotente: reenviar o mesmo arquivo atualiza, nunca duplica.
@@ -462,6 +712,7 @@ export class ImportacaoAlunosService {
         // elegibilidade: e o estado ANTERIOR, e o upsert logo abaixo o apaga.
         ativo: true,
         statusCurso: true,
+        foraDaPlanilhaEm: true,
       },
     });
 
@@ -498,7 +749,9 @@ export class ImportacaoAlunosService {
 
     return {
       tipo: 'gravada' as const,
+      alunoId: gravado.id,
       criado: !existente,
+      voltouParaAPlanilha: !!existente?.foraDaPlanilhaEm,
       podeAgendar,
       status,
       statusDesconhecido: statusDesconhecido(status),
@@ -590,7 +843,7 @@ export class ImportacaoAlunosService {
    *
    * ⚠️ A pergunta e "PERDEU a elegibilidade?", nao "o status mudou?" — a
    * comparacao e sobre `ativo` (o campo derivado), nunca sobre o texto do
-   * status. "Trancado" -> "Cancelado" nao muda nada para o aluno e viraria
+   * status. "Matricula Trancada" -> "Cancelado" nao muda nada para o aluno e viraria
    * aviso em toda planilha; a regra de quais grafias bloqueiam ja mora num
    * lugar so (`status-curso.enum.ts`), e ler o texto aqui seria a segunda
    * copia dela.

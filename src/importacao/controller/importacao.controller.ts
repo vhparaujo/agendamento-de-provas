@@ -88,6 +88,14 @@ export class ImportacaoController {
       'valores sem correspondencia sao reportados em `polosNaoEncontrados` em vez de derrubar a carga.\n\n' +
       '**Nada e apagado**: quem nao esta no arquivo nao e tocado. Para incluir uma pessoa, ' +
       'basta um CSV com a linha dela.\n\n' +
+      '**Lista completa** (`listaCompleta=true`, 20/10/2026): o arquivo e afirmado como a ' +
+      'lista inteira do formato, e quem esta no banco naquele formato e NAO veio nele ' +
+      'saiu da universidade. A resposta traz a lista em `saidas`; nada e marcado enquanto ' +
+      '`aplicarSaidas` nao vier `true` (a tela reenvia o mesmo arquivo para confirmar). ' +
+      'Marcado = `ativo` false e `foraDaPlanilhaEm` preenchido; o vinculo **nao e apagado** ' +
+      'e a prova marcada **nao e cancelada**. Acima de 10% do formato, aplicar exige ' +
+      '`confirmarAcimaDoLimite`. Linhas rejeitadas protegem o RA. Aparecer em qualquer ' +
+      'arquivo depois, completo ou parcial, tira a marca.\n\n' +
       '⚠️ O formato vem do dropdown e sobrescreve a de TODAS as linhas do arquivo, e o polo ' +
       'segue a coluna CAMPUS. Quando uma dessas duas muda em quem **ja tem prova marcada**, a ' +
       'reserva continua na sala antiga (outra duracao, ou outro campus) e nada mais reclama — ' +
@@ -108,6 +116,22 @@ export class ImportacaoController {
       required: ['arquivo', 'modalidade'],
       properties: {
         arquivo: CAMPO_ARQUIVO,
+        listaCompleta: {
+          type: 'boolean',
+          default: false,
+          description:
+            'O arquivo e a lista completa do formato: compara com o banco.',
+        },
+        aplicarSaidas: {
+          type: 'boolean',
+          default: false,
+          description: 'Marca quem saiu da planilha (exige listaCompleta).',
+        },
+        confirmarAcimaDoLimite: {
+          type: 'boolean',
+          default: false,
+          description: 'Segunda confirmacao acima de 10% do formato.',
+        },
         modalidade: {
           type: 'string',
           enum: [...MODALIDADES_UPLOAD],
@@ -129,7 +153,11 @@ export class ImportacaoController {
   ) {
     exigirExtensaoCsv(arquivo);
 
-    return this.alunosService.importar(arquivo, dto.modalidade, admin.email);
+    return this.alunosService.importar(arquivo, dto.modalidade, admin.email, {
+      listaCompleta: dto.listaCompleta ?? false,
+      aplicarSaidas: dto.aplicarSaidas ?? false,
+      confirmarAcimaDoLimite: dto.confirmarAcimaDoLimite ?? false,
+    });
   }
 
   /**

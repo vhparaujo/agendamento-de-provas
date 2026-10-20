@@ -1154,13 +1154,13 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
 
       await prisma.alunoImportado.update({
         where: { id: aluno.alunoId },
-        data: { statusCurso: 'Trancado', ativo: false },
+        data: { statusCurso: 'Matrícula Trancada', ativo: false },
       });
 
       const recusa = await comoAdmin(api().post('/api/agendamentos'))
         .send({ alunoId: aluno.alunoId, faixaId: faixaAdmin })
         .expect(409);
-      expect(recusa.body.message).toMatch(/Trancado/);
+      expect(recusa.body.message).toMatch(/Matrícula Trancada/);
 
       const res = await comoAdmin(api().post('/api/agendamentos'))
         .send({
@@ -1170,7 +1170,7 @@ describe('Remanejo, troca e cancelamento (e2e)', () => {
         })
         .expect(201);
 
-      expect(res.body.avisos.join(' ')).toMatch(/Trancado/);
+      expect(res.body.avisos.join(' ')).toMatch(/Matrícula Trancada/);
     });
 
     it('funciona com o periodo FECHADO — e o caso de uso', async () => {

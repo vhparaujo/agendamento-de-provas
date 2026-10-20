@@ -1,8 +1,10 @@
 /**
  * STATUS CURSO — coluna do CSV de alunos. Fonte unica da regra de elegibilidade.
  *
- * DECISAO VIGENTE (11/08/2026): **so "Ativo" agenda.** Qualquer outro status
- * bloqueia, incluindo as situacoes de transicao.
+ * DECISAO VIGENTE (20/10/2026): **"Ativo", "Cursando" e "Matriculado"
+ * agendam.** Qualquer outro status bloqueia, incluindo as situacoes de
+ * transicao. "Cursando" e "Matriculado" entraram a pedido do cliente em
+ * 20/10/2026; ate entao so "Ativo" agendava (11/08/2026).
  *
  * Isto REVERTE a decisao de 31/07/2026, que tratava transferencia e mudanca de
  * habilitacao como aptas. O registro das duas fica aqui de proposito: quem
@@ -20,11 +22,18 @@
  * comparacao e feita de forma tolerante (ver `normalizar`), justamente para nao
  * depender disso.
  */
-export const STATUS_PERMITEM_AGENDAR = ['Ativo'] as const;
+export const STATUS_PERMITEM_AGENDAR = [
+  'Ativo',
+  'Cursando',
+  'Matriculado',
+] as const;
 
 export const STATUS_BLOQUEIAM_AGENDAR = [
   'Desistente',
-  'Trancado',
+  // Era "Trancado" ate 20/10/2026, quando o CSV passou a trazer esta grafia.
+  // Linha antiga gravada como "Trancado" continua bloqueada: status fora das
+  // listas bloqueia (ver `permiteAgendar`).
+  'Matrícula Trancada',
   'Cancelado',
   'Formado',
   // Situacoes de transicao. Estiveram na lista de permitidos entre 31/07 e

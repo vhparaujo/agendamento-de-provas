@@ -91,7 +91,7 @@ mesma faixa, porém, a sala fica travada num único formato (garantido pelo
 1. **Aluno não tem senha.** É reconhecido via LTI 1.3; a matrícula do launch é
    cruzada com o CSV. Nunca confie em dados auto-declarados pelo cliente.
 2. **Só aluno ATIVO agenda.** O `STATUS CURSO` do CSV precisa ser `Ativo` — e
-   nenhum outro valor serve. Desistente, Trancado, Cancelado, Formado, as
+   nenhum outro valor serve. Desistente, Matrícula Trancada, Cancelado, Formado, as
    situações de transição (`Transf. Interna`, `Transf. de Curriculo`,
    `Alter. de Habilitação`) e qualquer grafia desconhecida **bloqueiam**. A lista
    está em [`src/enums/status-curso.enum.ts`](src/enums/status-curso.enum.ts),
@@ -1536,7 +1536,7 @@ não é preciso converter nada à mão.
 alterar. Não é configurável por `.env`.
 
 - **Permite agendar:** `Ativo` — e só ele (regra vigente desde 11/08/2026).
-- **Bloqueiam:** `Desistente`, `Trancado`, `Cancelado`, `Formado`,
+- **Bloqueiam:** `Desistente`, `Matrícula Trancada`, `Cancelado`, `Formado`,
   `Transf. Interna`, `Transf. de Curriculo`, `Alter. de Habilitação`.
   As três últimas são situações de *transição*; estiveram na lista de permitidos
   entre 31/07 e 11/08/2026 e voltaram a barrar. Continuam **listadas** (e não
@@ -1565,6 +1565,16 @@ valores de `CAMPUS` que não casaram com nenhum polo do seed, e
 
 **A importação nunca apaga**: quem não está no arquivo não é tocado. Para incluir
 uma pessoa, basta um CSV com a linha dela — o `upsert` é por `[matricula, curso]`.
+
+**Lista completa (20/10/2026).** Com a caixa "Este arquivo é a lista completa do
+formato" (`listaCompleta=true`), a importação compara o arquivo com o banco e
+lista em `saidas` quem está no sistema naquele formato e não veio nele — alunos
+que saíram da universidade. Nada é marcado no primeiro envio; a tela reenvia o
+mesmo arquivo com `aplicarSaidas=true` para confirmar. Marcados ficam com
+`foraDaPlanilhaEm` preenchido e `ativo=false` (**não são apagados**, e a prova já
+marcada **não é cancelada**). Acima de 10% do formato, aplicar exige
+`confirmarAcimaDoLimite=true`. Linhas rejeitadas protegem o RA, e aparecer em
+qualquer arquivo depois tira a marca. Detalhes em `CLAUDE.md`.
 
 > ⚠️ **`alteracoesComAgendamento[]` — mudança em quem já tem prova marcada.**
 > São os três campos que a importação muda *por baixo* de uma reserva

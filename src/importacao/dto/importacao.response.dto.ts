@@ -6,6 +6,8 @@ import type {
   LinhaRejeitada,
   Mudanca,
   ResultadoImportacaoAlunos,
+  ResumoSaidas,
+  VinculoForaDaPlanilha,
 } from '../service/importacao-alunos.service';
 import { SEMELHANCA, type Semelhanca } from '../service/curso-renomeado';
 import type { ResultadoImportacaoTurmas } from '../service/importacao-turmas.service';
@@ -220,6 +222,87 @@ export class CursoRenomeadoDto implements CursoRenomeado {
   candidatas!: CandidataRenomeacaoDto[];
 }
 
+/** Um vinculo que nao veio no CSV completo do formato. */
+export class VinculoForaDaPlanilhaDto implements VinculoForaDaPlanilha {
+  @ApiProperty({ example: 9134, description: 'Id do vinculo.' })
+  alunoId!: number;
+
+  @ApiProperty({ example: 'UC24424289' })
+  matricula!: string;
+
+  @ApiProperty({ type: String, nullable: true, example: 'ANA PAULA SOUZA' })
+  nome!: string | null;
+
+  @ApiProperty({ example: 'PEDAGOGIA' })
+  curso!: string;
+
+  @ApiProperty({ example: 'Câmpus Taguatinga' })
+  polo!: string;
+
+  @ApiProperty({
+    example: 'Ativo',
+    description:
+      'O ultimo STATUS CURSO gravado, de quando ele ainda vinha na planilha.',
+  })
+  statusCurso!: string;
+
+  @ApiProperty({
+    example: 1,
+    description:
+      'Reservas confirmadas no semestre vigente. A prova NAO e cancelada: ' +
+      'remanejar, cancelar ou manter e decisao da administracao.',
+  })
+  agendamentosConfirmados!: number;
+}
+
+export class ResumoSaidasDto implements ResumoSaidas {
+  @ApiProperty({
+    example: false,
+    description:
+      'true = os vinculos foram marcados. false = simulacao (o padrao), ou ' +
+      'recusada pelo limite sem a segunda confirmacao.',
+  })
+  aplicadas!: boolean;
+
+  @ApiProperty({
+    example: false,
+    description:
+      'Pediu para aplicar, mas o percentual passou do limite e faltou ' +
+      '`confirmarAcimaDoLimite`. Nada foi marcado.',
+  })
+  bloqueadasPeloLimite!: boolean;
+
+  @ApiProperty({ example: 312, description: 'Vinculos fora deste arquivo.' })
+  total!: number;
+
+  @ApiProperty({
+    example: 4300,
+    description:
+      'Vinculos do formato dentro da planilha, os deste arquivo inclusive.',
+  })
+  base!: number;
+
+  @ApiProperty({ example: 7.3, description: '`total / base`, em %.' })
+  percentual!: number;
+
+  @ApiProperty({ example: 10 })
+  limitePercentual!: number;
+
+  @ApiProperty({
+    example: false,
+    description:
+      'Acima do limite, aplicar exige `confirmarAcimaDoLimite`: e o sinal de ' +
+      'arquivo cortado, aba errada ou CSV parcial com a caixa marcada.',
+  })
+  acimaDoLimite!: boolean;
+
+  @ApiProperty({
+    type: [VinculoForaDaPlanilhaDto],
+    description: 'Quem tem prova marcada vem primeiro.',
+  })
+  vinculos!: VinculoForaDaPlanilhaDto[];
+}
+
 /**
  * Alem dos numeros, a resposta destaca tudo que precisa de decisao humana:
  * linhas rejeitadas, status nunca vistos, polos que nao casaram, trocas que
@@ -290,6 +373,28 @@ export class ResultadoImportacaoAlunosDto implements ResultadoImportacaoAlunos {
       'em POST /alunos/:id/mesclar.',
   })
   cursosRenomeados!: CursoRenomeadoDto[];
+
+  @ApiProperty({
+    example: 2,
+    description:
+      'Vinculos que estavam fora da planilha e vieram neste arquivo (completo ' +
+      'ou parcial). A marca sai e eles voltam a agendar, se o status permitir.',
+  })
+  voltaramParaAPlanilha!: number;
+
+  @ApiProperty({
+    example: true,
+    description: 'Se o arquivo foi enviado como a lista completa do formato.',
+  })
+  listaCompleta!: boolean;
+
+  @ApiPropertyOptional({
+    type: ResumoSaidasDto,
+    nullable: true,
+    description:
+      'A comparacao com o banco. null quando o arquivo nao e a lista completa.',
+  })
+  saidas!: ResumoSaidasDto | null;
 }
 
 export class TurmaRejeitadaDto {
@@ -355,4 +460,17 @@ export class ImportacaoCsvDto {
     example: '2026-07-30T14:11:57.000Z',
   })
   createdAt!: Date;
+
+  @ApiProperty({
+    example: false,
+    description:
+      'So alunos: o arquivo foi enviado como a lista completa do formato.',
+  })
+  listaCompleta!: boolean;
+
+  @ApiProperty({
+    example: 0,
+    description: 'Vinculos que esta importacao marcou como fora da planilha.',
+  })
+  saidasMarcadas!: number;
 }

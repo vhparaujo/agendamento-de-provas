@@ -79,7 +79,8 @@ export class AlunoAdminController {
       'campo unico do balcao, onde nem sempre se sabe qual dado a pessoa tem em maos.\n\n' +
       'Atencao a `ativo`: ele significa **pode agendar**, derivado de `statusCurso` ' +
       'pela lista de `status-curso.enum.ts`, e nao e o mesmo que STATUS CURSO igual ' +
-      'a "Ativo" (transferencia e mudanca de habilitacao tambem agendam).',
+      'a "Ativo" ("Cursando" e "Matriculado" tambem agendam), e e false tambem para ' +
+      'quem esta fora da planilha (`foraDaPlanilhaEm`).',
   })
   @ApiQuery({
     name: 'busca',
@@ -124,6 +125,14 @@ export class AlunoAdminController {
     required: false,
     type: Boolean,
     description: 'true = so quem e do NIOP; false = so quem nao e.',
+  })
+  @ApiQuery({
+    name: 'foraDaPlanilha',
+    required: false,
+    type: Boolean,
+    description:
+      'true = so quem a ultima lista completa do formato deixou de fora; ' +
+      'false = so quem continua na planilha.',
   })
   @ApiQuery({ name: 'pagina', required: false, type: Number, example: 1 })
   @ApiQuery({
@@ -270,6 +279,7 @@ function lerFiltro(query: Record<string, string>) {
     importacaoId: inteiro(query.importacaoId),
     agendado: booleano(query.agendado),
     niop: booleano(query.niop),
+    foraDaPlanilha: booleano(query.foraDaPlanilha),
     pagina: inteiro(query.pagina),
     porPagina: inteiro(query.porPagina),
   };

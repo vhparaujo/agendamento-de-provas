@@ -630,13 +630,17 @@ como opção alternativa secundária; o padrão é manual.
 
   | Permitem agendar | Bloqueiam |
   |---|---|
-  | Ativo | Desistente · Trancado · Cancelado · Formado · Transf. Interna · Transf. de Curriculo · Alter. de Habilitação |
+  | Ativo · Cursando · Matriculado | Desistente · Matrícula Trancada · Cancelado · Formado · Transf. Interna · Transf. de Curriculo · Alter. de Habilitação |
 
-  **Regra vigente (11/08/2026): só "Ativo" agenda.** Isto **reverte** a decisão
-  de 31/07/2026, que tratava as situações de transição como aptas. As grafias de
+  **Regra vigente (20/10/2026): "Ativo", "Cursando" e "Matriculado" agendam.**
+  "Cursando" e "Matriculado" entraram a pedido do cliente; de 11/08 a 20/10/2026 só "Ativo" agendava. A regra de
+  11/08 **reverteu** a decisão de 31/07/2026, que tratava as situações de transição como aptas. As grafias de
   transição continuam listadas (do lado que bloqueia) de propósito: são valores
   reais dos arquivos, e sinalizá-las como "desconhecidas" pediria a cada
   importação uma decisão que já foi tomada.
+  **"Trancado" virou "Matrícula Trancada" em 20/10/2026**, quando o CSV mudou a
+  grafia. Linha antiga gravada como "Trancado" continua bloqueada (status fora
+  das listas bloqueia); só deixa de ser "conhecida".
   Status fora das duas listas **bloqueia** e é reportado na importação, para que
   alguém decida em qual lista ele entra. A comparação ignora acento e caixa.
 
@@ -681,7 +685,7 @@ ninguém perceber. Correção se faz no CSV e reimporta — que é idempotente.
 de busca é coisa que se cola, edita e compartilha.
 
 Dois detalhes que a tela não deve traduzir errado: `ativo` significa **pode
-agendar** — hoje, só `STATUS CURSO == "Ativo"` (comparado sem acento/caixa);
+agendar** — hoje, só `STATUS CURSO` "Ativo", "Cursando" ou "Matriculado" (comparado sem acento/caixa);
 qualquer outro status deixa `ativo=false`. É um campo **derivado** de
 `statusCurso`, não uma cópia dele: a regra mora em `status-curso.enum.ts` e já
 mudou uma vez, então leia `ativo`, nunca compare a string na tela. E
@@ -698,7 +702,55 @@ também: sem CAMPUS não há como definir o polo, e polo é obrigatório para al
 sala. O admin corrige a planilha e reenvia.
 
 **A importação nunca apaga.** Quem não está no arquivo não é tocado — para
-incluir uma pessoa, basta um CSV com a linha dela.
+incluir uma pessoa, basta um CSV com a linha dela. A exceção é a **lista
+completa**, que **marca** (não apaga) quem saiu — ver a seção abaixo.
+
+### Quem saiu da universidade: a lista completa (20/10/2026)
+
+O upload de alunos tem a caixa **"Este arquivo é a lista completa do formato"**
+(`listaCompleta`). Marcada, a importação compara o arquivo com o banco: quem
+está no banco **naquele formato** e não veio no arquivo saiu da universidade.
+Regra pura em `importacao/service/saidas-da-planilha.ts`.
+
+**Marca, não apaga.** O vínculo ganha `foraDaPlanilhaEm` (+ a importação que
+marcou) e `ativo = false`. A FK de `agendamento` recusaria o `DELETE` de quem já
+teve prova, e apagar a prova junto tiraria dos relatórios provas que
+aconteceram. Como portal, compulsório, estatísticas e o balcão já leem `ativo`,
+nenhum deles precisou mudar de regra — só de **frase**: o motivo do bloqueio
+nomeia "não consta na lista de alunos mais recente" em vez de citar um status
+"Ativo" que não permite agendar (`motivoDoBloqueio`, e a mensagem de
+`agendarPeloAdmin`). `ignorarStatusCurso` libera os dois casos.
+
+⚠️ **Pode agendar = status que permite E dentro da planilha.** É isso que
+`ativo` passou a significar. `npm run alunos:recalcular` respeita a marca — sem
+isso ele devolveria `ativo = true` a quem saiu, em silêncio.
+
+| Decisão | Por quê |
+|---|---|
+| A caixa nasce **desmarcada** | Esquecer de marcar só adia a comparação. Marcar por engano no CSV de um aluno só apontaria o formato inteiro como fora — subir um aluno para corrigir o status é uso normal |
+| **Dois envios**: o primeiro só lista (`saidas.aplicadas: false`); a tela reenvia o MESMO arquivo com `aplicarSaidas` | A importação é idempotente, e recalcular no segundo envio evita guardar a lista entre as chamadas |
+| `aplicarSaidas` sem `listaCompleta` → **400 antes de gravar** | É o acidente que a caixa existe para evitar |
+| "Está no arquivo" = o **id que o upsert gravou**, nunca comparação de texto | O unique `[matricula, curso]` vive numa collation que ignora caixa e acento: "Pedagogia" no CSV atualiza "PEDAGOGIA". Comparar strings marcaria como fora o vínculo recém-atualizado |
+| **Linha rejeitada protege o RA** | CAMPUS vazio é cadastro errado na planilha, não aluno que saiu |
+| Acima de **10%** do formato (`LIMITE_SAIDAS_PERCENTUAL`), aplicar exige `confirmarAcimaDoLimite` | Arquivo cortado, aba errada no dropdown ou CSV parcial com a caixa marcada. Sem a confirmação, responde `bloqueadasPeloLimite` e não marca ninguém |
+| **A prova marcada não é cancelada** (decisão do cliente) | Vem em `saidas.vinculos` com `agendamentosConfirmados`, com prova primeiro — a mesma postura de `alteracoesComAgendamento` |
+| **Voltar em qualquer arquivo**, completo ou parcial, tira a marca | Erro de planilha se conserta reenviando; `voltaramParaAPlanilha` conta quem voltou |
+| Quem já estava fora **não é marcado de novo** | A data é a da saída original |
+
+Auditado como `ALUNOS_FORA_DA_PLANILHA`, com os ids. `ImportacaoCsv` guarda
+`listaCompleta` e `saidasMarcadas`. Na busca de Alunos, filtro
+`foraDaPlanilha`; na exportação de cobrança, "Situação do Curso" sai com o
+sufixo "(fora da planilha)" — o status gravado é o último de quando ele vinha na
+planilha, em geral "Ativo", e sem o sufixo pareceria alguém a cobrar.
+
+⚠️ **Mudança de formato aparece como saída temporária.** O aluno que passou de
+EaD para Semi some do CSV de EaD: se o EaD for importado antes do Semi, ele fica
+marcado até o Semi entrar, e aí a marca sai sozinha. Importe as abas na mesma
+sessão.
+
+⚠️ **Curso renomeado também sai**: a grafia antiga não está no arquivo. É o
+efeito desejado — o vínculo duplicado deixa de entrar no compulsório —, e a
+prova presa nele aparece na lista para a mesclagem resolver.
 
 ⚠️ **`cursosRenomeados[]`: a grafia do curso mudou e o vínculo se duplicou.**
 A chave é `[matricula, curso]`, então "PSICOLOGIA" virando "Psicologia —
@@ -767,7 +819,7 @@ lista de presença do dia. Era **completamente silenciosa**, porque
 
 ⚠️ **A pergunta é "PERDEU a elegibilidade?", não "o status mudou?".** A
 comparação é sobre `ativo`, o campo derivado, **nunca** sobre o texto do status:
-"Trancado" → "Cancelado" não muda nada para o aluno e viraria aviso em toda
+"Matrícula Trancada" → "Cancelado" não muda nada para o aluno e viraria aviso em toda
 planilha, e ler a string aqui seria a segunda cópia da regra que já mora em
 `status-curso.enum.ts`. Ganhar elegibilidade também não avisa — voltar a poder
 agendar tendo prova marcada não deixa nada inconsistente.
@@ -1372,7 +1424,7 @@ alocador precisam ver o mesmo número, senão um dos dois está mentindo.
 
 | Situação | Resposta |
 |---|---|
-| STATUS CURSO bloqueia (Cancelado, Trancado…) | 403 com o status citado |
+| STATUS CURSO bloqueia (Cancelado, Matrícula Trancada…) | 403 com o status citado |
 | Período fechado / ainda não abriu / não configurado | 403 com o motivo exato |
 | Nenhuma disciplina com prova | 403 com o motivo do cruzamento (turma divergente, semestre sem disciplina, nada do curso escolhido) |
 | Faixa de outro polo | 403 |

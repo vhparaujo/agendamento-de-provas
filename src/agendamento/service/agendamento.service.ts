@@ -236,7 +236,7 @@ export class AgendamentoService {
       })),
       podeAgendar: vinculo.ativo && agendaveis.length > 0,
       motivo: !vinculo.ativo
-        ? motivoStatus(vinculo.curso, vinculo.statusCurso)
+        ? motivoDoBloqueio(vinculo)
         : agendaveis.length === 0
           ? // O motivo especifico (turma divergente, semestre sem disciplina,
             // curso que nao bate) diz mais que a frase generica. Ela fica de
@@ -270,8 +270,10 @@ export class AgendamentoService {
 
     if (!vinculo.ativo) {
       recusar(
-        motivoStatus(vinculo.curso, vinculo.statusCurso),
-        `status curso "${vinculo.statusCurso}" nao permite agendar`,
+        motivoDoBloqueio(vinculo),
+        vinculo.foraDaPlanilhaEm
+          ? 'vinculo fora da planilha'
+          : `status curso "${vinculo.statusCurso}" nao permite agendar`,
       );
     }
 
@@ -798,10 +800,29 @@ const SEM_DISCIPLINA =
   'Nenhuma disciplina sua tem prova cadastrada neste período. ' +
   'Se você tem prova, acesse o formulário de suporte disponível na sua turma no AVA.';
 
-function motivoStatus(curso: string, statusCurso: string): string {
+/**
+ * `ativo` false tem duas causas, e a frase precisa nomear a certa: citar o
+ * status de quem saiu da planilha diria ao aluno que "Ativo" nao permite
+ * agendar.
+ */
+function motivoDoBloqueio(vinculo: {
+  curso: string;
+  statusCurso: string;
+  foraDaPlanilhaEm: Date | null;
+}): string {
+  const suporte =
+    'Se você acredita que isso está errado, acesse o formulário de suporte disponível na sua turma no AVA.';
+
+  if (vinculo.foraDaPlanilhaEm) {
+    return (
+      `Seu cadastro no curso ${vinculo.curso} não consta na lista de alunos ` +
+      `mais recente, e por isso não é possível agendar prova. ${suporte}`
+    );
+  }
+
   return (
-    `Sua situação no curso ${curso} está como "${statusCurso}", que não permite ` +
-    'agendar prova. Se você acredita que isso está errado, acesse o formulário de suporte disponível na sua turma no AVA.'
+    `Sua situação no curso ${vinculo.curso} está como "${vinculo.statusCurso}", ` +
+    `que não permite agendar prova. ${suporte}`
   );
 }
 

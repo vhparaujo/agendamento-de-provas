@@ -26,7 +26,7 @@
 // - Salas    -> CADASTRO MANUAL pelo admin (nome + capacidade + polo via dropdown).
 //               Import por CSV existe so como opcao alternativa secundaria.
 // - Alunos   -> CSV. RA=matricula, ALUNO=nome, CURSO=curso (exibicao),
-//               STATUS CURSO=ativo (so "Ativo" agenda), CAMPUS=polo.
+//               STATUS CURSO=ativo ("Ativo"/"Cursando"/"Matriculado" agendam), CAMPUS=polo.
 //               Formato vem do dropdown no upload (aba EaD/Semi/Modular).
 // - Turmas   -> CSV. Turmas/disciplinas reais que TERAO prova. Filtro final.
 //
@@ -264,20 +264,34 @@ model AlunoImportado {
   // que a regra de elegibilidade possa mudar sem reimportar as planilhas.
   statusCurso  String
   // Derivado de statusCurso pela lista em src/enums/status-curso.enum.ts.
-  // "ativo" aqui significa PODE AGENDAR. Regra vigente (11/08/2026): SO "Ativo"
-  // agenda — qualquer outro status (Desistente, Trancado, Cancelado, Formado,
+  // "ativo" aqui significa PODE AGENDAR. Regra vigente (20/10/2026): SO "Ativo",
+  // "Cursando" e "Matriculado" agendam — qualquer outro status (Desistente, Matricula Trancada, Cancelado, Formado,
   // Transf. Interna, Transf. de Curriculo, Alter. de Habilitacao, ou grafia
   // desconhecida) grava ativo=false. Continua sendo campo DERIVADO e nao copia
   // da string: a regra ja mudou uma vez e o enum e o unico ponto de alteracao.
+  //
+  // ⚠️ `ativo` tambem e false quando o vinculo esta FORA DA PLANILHA (abaixo):
+  // pode agendar = status que permite E presente na ultima lista completa.
   ativo        Boolean @default(true)
   modalidadeId Int
   poloId       Int
   importacaoId Int?
 
-  modalidade   Modalidade     @relation(fields: [modalidadeId], references: [id])
-  polo         Polo           @relation(fields: [poloId], references: [id])
-  importacao   ImportacaoCsv? @relation(fields: [importacaoId], references: [id])
-  agendamentos Agendamento[]
+  // FORA DA PLANILHA (20/10/2026): o vinculo nao veio no ultimo CSV COMPLETO do
+  // formato dele — o aluno saiu da universidade. E uma MARCA, nao um DELETE:
+  // apagar levaria junto as provas ja feitas (a FK de agendamento recusa, e com
+  // razao). Enquanto marcado, `ativo` = false. Voltar em qualquer CSV, completo
+  // ou parcial, limpa a marca. Ver `saidas-da-planilha.ts`.
+  foraDaPlanilhaEm           DateTime?
+  foraDaPlanilhaImportacaoId Int?
+
+  modalidade               Modalidade     @relation(fields: [modalidadeId], references: [id])
+  polo                     Polo           @relation(fields: [poloId], references: [id])
+  importacao               ImportacaoCsv? @relation("VinculosGravados", fields: [importacaoId], references: [id])
+  // A importacao completa que marcou a saida. SetNull: apagar o registro de
+  // auditoria nao pode devolver o aluno a lista.
+  foraDaPlanilhaImportacao ImportacaoCsv? @relation("VinculosForaDaPlanilha", fields: [foraDaPlanilhaImportacaoId], references: [id], onDelete: SetNull)
+  agendamentos             Agendamento[]
 
   excecoesCompulsorio ExcecaoCompulsorio[]
 
@@ -287,6 +301,7 @@ model AlunoImportado {
   @@index([modalidadeId])
   @@index([poloId])
   @@index([ativo])
+  @@index([modalidadeId, foraDaPlanilhaEm])
   @@map("aluno_importado")
 }
 
@@ -352,15 +367,22 @@ model TurmaImportada {
 // ----------------------------------------------------------------------------
 
 model ImportacaoCsv {
-  id           Int            @id @default(autoincrement())
-  tipo         TipoImportacao
-  nomeArquivo  String
-  totalLinhas  Int
-  importadoPor String?
-  createdAt    DateTime       @default(now())
+  id             Int            @id @default(autoincrement())
+  tipo           TipoImportacao
+  nomeArquivo    String
+  totalLinhas    Int
+  importadoPor   String?
+  createdAt      DateTime       @default(now())
+  // So no CSV de alunos: o admin marcou "este arquivo e a lista completa do
+  // formato", e por isso a importacao comparou com o banco.
+  listaCompleta  Boolean        @default(false)
+  // Quantos vinculos ESTA importacao marcou como fora da planilha (0 na
+  // simulacao e nas parciais).
+  saidasMarcadas Int            @default(0)
 
-  alunos AlunoImportado[]
-  turmas TurmaImportada[]
+  alunos                 AlunoImportado[] @relation("VinculosGravados")
+  vinculosForaDaPlanilha AlunoImportado[] @relation("VinculosForaDaPlanilha")
+  turmas                 TurmaImportada[]
 
   @@map("importacao_csv")
 }
@@ -1006,8 +1028,8 @@ model ConfiguracaoSenhaQuiz {
   /// RESTRICT, e nao SetNull: apagar o periodo escolhido voltaria os disparos ao
   /// vigente em silencio — exatamente o sintoma que a coluna existe para evitar.
   /// `PeriodoService.remover` recusa antes, com a frase de como destravar.
-  periodoDosDisparosId Int?
-  periodoDosDisparos   PeriodoAgendamento? @relation(fields: [periodoDosDisparosId], references: [id], onDelete: Restrict)
+  periodoDosDisparosId  Int?
+  periodoDosDisparos    PeriodoAgendamento? @relation(fields: [periodoDosDisparosId], references: [id], onDelete: Restrict)
   /// Quem escolheu e quando — separados de `atualizadoPor`/`atualizadoEm`,
   /// que sao do questionario-alvo: a tela mostra os dois, e um autor so
   /// atribuiria a troca de um a quem mexeu no outro.

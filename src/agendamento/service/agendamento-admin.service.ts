@@ -277,18 +277,24 @@ export class AgendamentoAdminService {
     // Nao ha "avisa e nao bloqueia" possivel antes de gravar: ou a prova entra,
     // ou nao. Por isso a recusa e o padrao e a liberacao e explicita — o admin
     // que reenvia com `ignorarStatusCurso` esta tomando a decisao por escrito.
+    // A mesma valvula vale para quem esta FORA DA PLANILHA (20/10/2026): e o
+    // outro motivo de `ativo` ser false, e a frase nomeia qual dos dois.
     if (!vinculo.ativo) {
+      const motivo = vinculo.foraDaPlanilhaEm
+        ? `não consta na última planilha completa do formato (marcado em ${dataBr(vinculo.foraDaPlanilhaEm)})`
+        : `está com a situação "${vinculo.statusCurso}" no curso`;
+
       if (!dados.ignorarStatusCurso) {
         throw new ConflictException(
-          `A situação deste aluno no curso ${vinculo.curso} está como ` +
-            `"${vinculo.statusCurso}", que não permite agendar prova. Se for o ` +
-            'caso mesmo assim, marque "Agendar mesmo assim" e confirme de novo.',
+          `Este aluno ${motivo} ${vinculo.curso}, e por isso não pode agendar ` +
+            'prova. Se for o caso mesmo assim, marque "Agendar mesmo assim" e ' +
+            'confirme de novo.',
         );
       }
 
       avisos.push(
-        `Agendado apesar da situação no curso ser "${vinculo.statusCurso}", ` +
-          'que normalmente não permite agendar.',
+        `Agendado mesmo assim: o aluno ${motivo} ${vinculo.curso}, o que ` +
+          'normalmente impede o agendamento.',
       );
     }
 
@@ -414,7 +420,9 @@ export class AgendamentoAdminService {
         `${vinculo.id} (${vinculo.matricula}), sala_faixa ${criado.salaFaixaId}, ` +
         `${fonte.disciplinas.length} disciplina(s) via ${fonte.origem}` +
         (dados.ignorarStatusCurso && !vinculo.ativo
-          ? `, com statusCurso "${vinculo.statusCurso}" ignorado`
+          ? vinculo.foraDaPlanilhaEm
+            ? ', com vinculo fora da planilha ignorado'
+            : `, com statusCurso "${vinculo.statusCurso}" ignorado`
           : ''),
     });
 
@@ -1030,7 +1038,7 @@ export class AgendamentoAdminService {
    * versus o compulsorio, e em que ritmo.
    *
    * A BASE sao os vinculos ATIVOS — os mesmos que o compulsorio considera
-   * elegiveis. Trancado ou cancelado nao pode agendar, e conta-lo no total
+   * elegiveis. Matricula trancada ou cancelada nao pode agendar, e conta-lo no total
    * deixaria a adesao eternamente abaixo de 100% sem ninguem para cobrar.
    *
    * Formato e polo aqui sao os de HOJE (`AlunoImportado`), e nao a
@@ -1300,6 +1308,7 @@ export class AgendamentoAdminService {
         email: true,
         curso: true,
         statusCurso: true,
+        foraDaPlanilhaEm: true,
         modalidade: { select: { nome: true } },
         polo: { select: { nome: true } },
         agendamentos: {
@@ -1346,9 +1355,13 @@ export class AgendamentoAdminService {
         aluno.nome,
         aluno.email,
         aluno.curso,
-        // Valor BRUTO do CSV importado ("Ativo", "Trancado"...), e o de HOJE:
+        // Valor BRUTO do CSV importado ("Ativo", "Matricula Trancada"...), e o de HOJE:
         // a pergunta da cobranca e se ainda vale a pena ligar para a pessoa.
-        aluno.statusCurso,
+        // Quem saiu da planilha ficou com o ultimo status de quando vinha nela
+        // (em geral "Ativo"), e sem o sufixo pareceria alguem a cobrar.
+        aluno.foraDaPlanilhaEm
+          ? `${aluno.statusCurso} (fora da planilha)`
+          : aluno.statusCurso,
       ];
 
       if (aluno.agendamentos.length === 0) {

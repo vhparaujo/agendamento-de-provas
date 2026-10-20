@@ -38,8 +38,18 @@ describe('elegibilidade por STATUS CURSO', () => {
     });
   });
 
-  it('so "Ativo" esta na lista de permitidos', () => {
-    expect([...STATUS_PERMITEM_AGENDAR]).toEqual(['Ativo']);
+  it('so "Ativo", "Cursando" e "Matriculado" estao na lista de permitidos', () => {
+    expect([...STATUS_PERMITEM_AGENDAR]).toEqual([
+      'Ativo',
+      'Cursando',
+      'Matriculado',
+    ]);
+  });
+
+  it('"Matriculado" agenda em qualquer caixa — e nao vira status desconhecido', () => {
+    expect(permiteAgendar('MATRICULADO')).toBe(true);
+    expect(permiteAgendar(' matriculado ')).toBe(true);
+    expect(statusDesconhecido('Matriculado')).toBe(false);
   });
 
   describe('tolerancia de grafia', () => {
@@ -59,6 +69,7 @@ describe('elegibilidade por STATUS CURSO', () => {
     it('ignora caixa e espacos sobrando', () => {
       expect(permiteAgendar('  ATIVO ')).toBe(true);
       expect(permiteAgendar('ativo')).toBe(true);
+      expect(permiteAgendar(' CURSANDO')).toBe(true);
       expect(permiteAgendar('transf.  interna')).toBe(false);
     });
   });

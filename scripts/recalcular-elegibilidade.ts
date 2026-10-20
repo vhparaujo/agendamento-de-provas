@@ -21,6 +21,11 @@ import { PrismaClient } from '../src/generated/prisma/client';
  *   npm run alunos:recalcular            # mostra o que mudaria e NAO grava
  *   npm run alunos:recalcular -- --gravar
  *
+ * ⚠️ Pode agendar = status que permite **E** dentro da planilha. Quem esta
+ * marcado como fora da planilha (`foraDaPlanilhaEm`, 20/10/2026) continua
+ * bloqueado qualquer que seja o status — senao este script desfaria, em
+ * silencio, a saida que uma importacao completa marcou.
+ *
  * O padrao ser simulacao e proposital: isto reescreve a elegibilidade de
  * milhares de vinculos, e a diferenca precisa ser lida antes de ser aplicada.
  *
@@ -43,16 +48,13 @@ async function main(): Promise<void> {
         curso: true,
         statusCurso: true,
         ativo: true,
+        foraDaPlanilhaEm: true,
       },
       orderBy: { matricula: 'asc' },
     });
 
-    const ganham = vinculos.filter(
-      (v) => !v.ativo && permiteAgendar(v.statusCurso),
-    );
-    const perdem = vinculos.filter(
-      (v) => v.ativo && !permiteAgendar(v.statusCurso),
-    );
+    const ganham = vinculos.filter((v) => !v.ativo && podeAgendar(v));
+    const perdem = vinculos.filter((v) => v.ativo && !podeAgendar(v));
 
     console.log(`Vinculos na base: ${vinculos.length}`);
     console.log(`Passam a PODER agendar: ${ganham.length}`);
@@ -118,7 +120,12 @@ type Vinculo = {
   curso: string;
   statusCurso: string;
   ativo: boolean;
+  foraDaPlanilhaEm: Date | null;
 };
+
+function podeAgendar(v: Vinculo): boolean {
+  return permiteAgendar(v.statusCurso) && v.foraDaPlanilhaEm === null;
+}
 
 /** Quantos por STATUS CURSO — e assim que se confere se a mudanca e a esperada. */
 function resumirPorStatus(titulo: string, vinculos: Vinculo[]): void {

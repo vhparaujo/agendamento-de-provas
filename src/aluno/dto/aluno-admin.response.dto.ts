@@ -40,9 +40,22 @@ export class AlunoImportadoDto implements AlunoImportadoResumo {
     example: true,
     description:
       'Se este vinculo PODE AGENDAR. Derivado de `statusCurso` pela lista de ' +
-      'src/enums/status-curso.enum.ts — nao e o mesmo que STATUS CURSO == "Ativo".',
+      'src/enums/status-curso.enum.ts — nao e o mesmo que STATUS CURSO == "Ativo" —, ' +
+      'e false tambem quando o vinculo esta fora da planilha.',
   })
   ativo!: boolean;
+
+  @ApiProperty({
+    type: String,
+    format: 'date-time',
+    nullable: true,
+    example: null,
+    description:
+      'Quando a ultima lista COMPLETA do formato deixou este vinculo de fora ' +
+      '(o aluno saiu da universidade). null = continua na planilha. Voltar em ' +
+      'qualquer CSV limpa a marca.',
+  })
+  foraDaPlanilhaEm!: Date | null;
 
   @ApiProperty({ example: 'EaD' })
   modalidade!: string;

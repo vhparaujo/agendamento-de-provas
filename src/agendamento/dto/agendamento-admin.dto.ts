@@ -337,7 +337,7 @@ export class AgendarPeloAdminDto {
     example: false,
     default: false,
     description:
-      'Agenda mesmo com a situacao do curso bloqueando (Trancado, Cancelado…). ' +
+      'Agenda mesmo com a situacao do curso bloqueando (Matrícula Trancada, Cancelado…). ' +
       'Sem ele a rota recusa com 409. A decisao fica registrada na auditoria e ' +
       'volta em `avisos`.',
   })

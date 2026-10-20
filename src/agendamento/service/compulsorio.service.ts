@@ -527,7 +527,7 @@ export class CompulsorioService {
    * Os vinculos que o lote vai tentar alocar.
    *
    * `ativo` e a coluna derivada de STATUS CURSO na importacao — a mesma que o
-   * portal consulta. Quem esta Trancado ou Cancelado nao entra: alocar sala para
+   * portal consulta. Quem esta com Matricula Trancada ou Cancelado nao entra: alocar sala para
    * quem nao pode fazer prova gastaria vaga de quem pode.
    *
    * O `none` cobre os dois casos de uma vez: quem nunca agendou e quem cancelou.

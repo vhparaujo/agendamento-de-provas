@@ -100,7 +100,7 @@ describe('Integracao: dados de agendamento por matricula (e2e)', () => {
           matricula: MATRICULA,
           nome: null,
           curso: 'CURSO E2E INTEG B',
-          statusCurso: 'Trancado',
+          statusCurso: 'Matrícula Trancada',
           ativo: false,
           modalidadeId: ead.id,
           poloId: polo.id,
@@ -320,7 +320,7 @@ describe('Integracao: dados de agendamento por matricula (e2e)', () => {
         }),
         expect.objectContaining({
           alunoId: vinculoB,
-          statusCurso: 'Trancado',
+          statusCurso: 'Matrícula Trancada',
           ativo: false,
         }),
       ]);

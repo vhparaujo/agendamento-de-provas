@@ -228,7 +228,7 @@ export class AgendamentoAdminController {
       'e `Status = Não Agendado`. E essa a lista que a administração usa para cobrar ' +
       'quem falta.\n\n' +
       'Colunas: Matrícula, Aluno, E-mail, Curso, Situação do Curso (o STATUS ' +
-      'CURSO importado: `Ativo`, `Trancado`...), Formato, Polo, Rodada, ' +
+      'CURSO importado: `Ativo`, `Matrícula Trancada`...), Formato, Polo, Rodada, ' +
       'Data da prova, Início, Fim, Sala, Status (`Agendado` | `Não Agendado`), ' +
       'Agendado em e Agendado por (`Aluno` | `Compulsório` | `Admin`; vazia ' +
       'para quem nao agendou).\n\n' +
