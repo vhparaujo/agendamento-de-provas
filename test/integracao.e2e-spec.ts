@@ -26,6 +26,7 @@ describe('Integracao: dados de agendamento por matricula (e2e)', () => {
   const POLO_NOME = 'Polo E2E Integracao';
   const PERIODO_LETIVO = 'E2E-INTEG-103';
   const MATRICULA = 'E2EINTEG01';
+  const CODIGO_TURMA = 'E2EINTEGT01';
 
   let vinculoA: number;
   let vinculoB: number;
@@ -184,6 +185,16 @@ describe('Integracao: dados de agendamento por matricula (e2e)', () => {
         },
       });
 
+    // So a disciplina da SUB esta no CSV de turmas: a da N2 testa o `null`.
+    await prisma.turmaImportada.create({
+      data: {
+        codigoTurma: CODIGO_TURMA,
+        nomeDisciplina: 'Disciplina Integ SUB',
+        codigoEad: 'E2EINTEGD01',
+        orgUnitId: 'ou-Disciplina Integ SUB',
+      },
+    });
+
     await agendar({
       alunoId: vinculoA,
       salaFaixaId: await oferta('2026-06-12', '15:00', '18:00'),
@@ -214,6 +225,9 @@ describe('Integracao: dados de agendamento por matricula (e2e)', () => {
 
   async function limpar() {
     await prisma.agendamento.deleteMany({ where: { matricula: MATRICULA } });
+    await prisma.turmaImportada.deleteMany({
+      where: { codigoTurma: CODIGO_TURMA },
+    });
 
     const polo = await prisma.polo.findUnique({ where: { nome: POLO_NOME } });
 
@@ -337,11 +351,22 @@ describe('Integracao: dados de agendamento por matricula (e2e)', () => {
           {
             orgUnitId: 'ou-Disciplina Integ SUB',
             nomeDisciplina: 'Disciplina Integ SUB',
+            codigoTurma: CODIGO_TURMA,
+            codigoDisciplina: 'E2EINTEGD01',
           },
         ],
         alocadoManual: true,
       });
       expect(sub.agendadoEm).toEqual(expect.any(String));
+      // Disciplina fora do CSV de turmas: os codigos vem `null`, nao somem.
+      expect(res.body.agendamentos[1].disciplinas).toEqual([
+        {
+          orgUnitId: 'ou-Disciplina Integ N2',
+          nomeDisciplina: 'Disciplina Integ N2',
+          codigoTurma: null,
+          codigoDisciplina: null,
+        },
+      ]);
       // Nada da janela repetido na prova: fica em `periodos[]`.
       expect(sub).not.toHaveProperty('periodo');
       expect(sub).not.toHaveProperty('rodada');
@@ -485,6 +510,12 @@ describe('Integracao: dados de agendamento por matricula (e2e)', () => {
           alunoId: vinculoA,
           periodoLetivoId: PERIODO_LETIVO,
           data: '2026-09-10',
+          disciplinas: [
+            expect.objectContaining({
+              codigoTurma: CODIGO_TURMA,
+              codigoDisciplina: 'E2EINTEGD01',
+            }),
+          ],
         }),
       ]);
       // Nada da janela repetido no item.

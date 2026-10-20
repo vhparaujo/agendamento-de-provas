@@ -9,6 +9,7 @@ import type {
   AgendamentoDaListaIntegracao,
   AgendamentoIntegracao,
   AgendamentosDoAluno,
+  DisciplinaIntegracao,
   FiltroAplicado,
   PaginaDeAgendamentosIntegracao,
   PeriodoIntegracao,
@@ -98,6 +99,30 @@ export class PeriodoIntegracaoDto implements PeriodoIntegracao {
   prazoEncerrado!: boolean;
 }
 
+export class DisciplinaIntegracaoDto
+  extends DisciplinaDoPortalDto
+  implements DisciplinaIntegracao
+{
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    example: 'GSPS0I10227',
+    description:
+      'Codigo da turma, do CSV de turmas. `null` quando a turma nao esta la.',
+  })
+  codigoTurma!: string | null;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    example: 'GSPS02EAD003',
+    description:
+      'Codigo da disciplina, do CSV de turmas. `null` quando a turma nao esta ' +
+      'la ou o CSV nao trouxe o codigo.',
+  })
+  codigoDisciplina!: string | null;
+}
+
 export class AgendamentoIntegracaoDto implements AgendamentoIntegracao {
   @ApiProperty({ example: 501 })
   id!: number;
@@ -168,10 +193,10 @@ export class AgendamentoIntegracaoDto implements AgendamentoIntegracao {
   sala!: SalaDoPortalDto;
 
   @ApiProperty({
-    type: [DisciplinaDoPortalDto],
+    type: [DisciplinaIntegracaoDto],
     description: 'Todas as disciplinas cobertas por esta prova.',
   })
-  disciplinas!: DisciplinaDoPortalDto[];
+  disciplinas!: DisciplinaIntegracaoDto[];
 
   @ApiProperty({
     type: String,

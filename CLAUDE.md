@@ -2301,6 +2301,7 @@ isso ganhou credencial própria, que só abre `@SomenteIntegracao()`:
 | `data` em **`AAAA-MM-DD`** | String, e não instante: o consumidor não repete o bug de ler `@db.Date` no fuso de Brasília e recuar um dia |
 | **404** para RA não importado, **200 `[]`** para quem não tem prova | Quem chama é um sistema confiável, e os dois casos pedem ações diferentes. No portal o 404 é único por outro motivo (aluno sondando URL) |
 | Polo **da matrícula** (vínculo) e polo **da prova** (faixa) | São perguntas diferentes, como na tela: "Campus/Polo da Matrícula" é o cadastro de hoje; o da prova é onde a pessoa senta |
+| `codigoTurma` e `codigoDisciplina` em cada disciplina (20/10/2026) | Saem de `TurmaImportada` pelo `orgUnitId` (único lá), numa consulta só por resposta (`codigosDasTurmas`). `codigoDisciplina` é o `codigoEad` do CSV. São os de **hoje**, não fotografia — a reserva nunca gravou os códigos. Turma fora do CSV: `null`, a mesma "—" da tela de Turmas |
 | Fora: **e-mail e notas** | Minimização (LGPD). A declaração não usa nenhum dos dois |
 
 **A montagem da prova é a do portal, não uma cópia**: `INCLUDE_COMPLETO` e

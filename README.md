@@ -1287,8 +1287,10 @@ polo da matrícula), as **janelas de agendamento** em `periodos[]` — rodada
 (`N2`/`SUB` e o nome por extenso), descrição, datas, períodos letivos e
 `prazoEncerrado`, uma vez só — e cada **prova confirmada**, apontando para a sua
 janela pelo `periodoId`: período letivo do formato do aluno, data
-(`AAAA-MM-DD`), horário, formato, polo e sala da prova, disciplinas, quando foi
-agendada e se a administração alocou. **As duas rotas de integração usam esse
+(`AAAA-MM-DD`), horário, formato, polo e sala da prova, disciplinas (código no
+AVA, nome, **código da turma** e **código da disciplina** do CSV de turmas —
+`null` quando a turma não está lá), quando foi agendada e se a administração
+alocou. **As duas rotas de integração usam esse
 mesmo formato.**
 
 - **Histórico completo**, só `CONFIRMADO`, da mais recente para a mais antiga.

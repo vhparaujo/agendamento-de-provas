@@ -55,6 +55,18 @@ export interface PeriodoIntegracao {
   prazoEncerrado: boolean;
 }
 
+/**
+ * Uma disciplina da prova. Os codigos saem da turma importada (CSV de turmas)
+ * pelo `orgUnitId`, e ficam `null` quando a turma nao esta la ou o CSV nao
+ * trouxe o codigo — a mesma "—" da tela de Turmas.
+ */
+export interface DisciplinaIntegracao {
+  orgUnitId: string;
+  nomeDisciplina: string | null;
+  codigoTurma: string | null;
+  codigoDisciplina: string | null;
+}
+
 /** Uma prova: so o que e da prova do aluno. A janela fica em `periodos[]`. */
 export interface AgendamentoIntegracao {
   id: number;
@@ -73,7 +85,7 @@ export interface AgendamentoIntegracao {
   /** Onde a prova ACONTECE — o polo da faixa, nao o do cadastro. */
   polo: Local;
   sala: Local;
-  disciplinas: { orgUnitId: string; nomeDisciplina: string | null }[];
+  disciplinas: DisciplinaIntegracao[];
   agendadoEm: Date;
   alocadoManual: boolean;
 }
@@ -142,6 +154,11 @@ const ehAVigente = (janela: JanelaLida, vigente: Vigente) =>
 type AgendamentoLido = Prisma.AgendamentoGetPayload<{
   include: typeof INCLUDE_COMPLETO;
 }>;
+
+type CodigosDaTurma = Map<
+  string,
+  { codigoTurma: string; codigoDisciplina: string | null }
+>;
 
 /** O `INCLUDE_COMPLETO` com o nome do vinculo, que a lista geral precisa. */
 const INCLUDE_DA_LISTA = {
@@ -265,10 +282,14 @@ export class IntegracaoService {
     );
     const janelas = candidatas.filter((j) => usadas.has(j.id));
 
+    const codigos = await this.codigosDasTurmas(agendamentos);
+
     return {
       ...base,
       periodos: await this.montarPeriodos(janelas, vigente, agora),
-      agendamentos: agendamentos.map((a) => montarAgendamento(a, janelas)),
+      agendamentos: agendamentos.map((a) =>
+        montarAgendamento(a, janelas, codigos),
+      ),
     };
   }
 
@@ -366,17 +387,49 @@ export class IntegracaoService {
         ? cadastradas.filter((j) => ehAVigente(j, vigente))
         : cadastradas;
 
+    const codigos = await this.codigosDasTurmas(agendamentos);
+
     return {
       ...vazia,
       periodos: await this.montarPeriodos(janelas, vigente, agora),
       total,
       totalPaginas: Math.max(1, Math.ceil(total / porPagina)),
       itens: agendamentos.map((agendamento) => ({
-        ...montarAgendamento(agendamento, janelas),
+        ...montarAgendamento(agendamento, janelas, codigos),
         matricula: agendamento.matricula,
         nome: agendamento.aluno.nome?.trim() || null,
       })),
     };
+  }
+
+  /**
+   * Codigo da turma e da disciplina de cada `orgUnitId` das provas, numa
+   * consulta so. Sao os de HOJE na turma importada, e nao fotografia: a reserva
+   * nunca gravou os codigos, e o `orgUnitId` (unico na tabela) e o que liga as
+   * duas.
+   */
+  private async codigosDasTurmas(
+    agendamentos: AgendamentoLido[],
+  ): Promise<CodigosDaTurma> {
+    const orgUnitIds = [
+      ...new Set(
+        agendamentos.flatMap((a) => a.disciplinas.map((d) => d.orgUnitId)),
+      ),
+    ];
+
+    if (orgUnitIds.length === 0) return new Map();
+
+    const turmas = await this.prisma.turmaImportada.findMany({
+      where: { orgUnitId: { in: orgUnitIds } },
+      select: { orgUnitId: true, codigoTurma: true, codigoEad: true },
+    });
+
+    return new Map(
+      turmas.map((t) => [
+        t.orgUnitId!,
+        { codigoTurma: t.codigoTurma, codigoDisciplina: t.codigoEad },
+      ]),
+    );
   }
 
   /** As janelas do topo da resposta, cada uma com o seu `prazoEncerrado`. */
@@ -410,6 +463,7 @@ export class IntegracaoService {
 function montarAgendamento(
   agendamento: AgendamentoLido,
   janelas: JanelaLida[],
+  codigos: CodigosDaTurma,
 ): AgendamentoIntegracao {
   const confirmado = montarConfirmado(agendamento);
 
@@ -426,7 +480,12 @@ function montarAgendamento(
     formato: confirmado.modalidade,
     polo: confirmado.polo,
     sala: confirmado.sala,
-    disciplinas: confirmado.disciplinas,
+    disciplinas: confirmado.disciplinas.map((d) => ({
+      orgUnitId: d.orgUnitId,
+      nomeDisciplina: d.nomeDisciplina,
+      codigoTurma: codigos.get(d.orgUnitId)?.codigoTurma ?? null,
+      codigoDisciplina: codigos.get(d.orgUnitId)?.codigoDisciplina ?? null,
+    })),
     agendadoEm: confirmado.criadoEm,
     alocadoManual: agendamento.alocadoManual,
   };
