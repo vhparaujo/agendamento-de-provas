@@ -191,6 +191,7 @@ describe('Integracao: dados de agendamento por matricula (e2e)', () => {
         codigoTurma: CODIGO_TURMA,
         nomeDisciplina: 'Disciplina Integ SUB',
         codigoEad: 'E2EINTEGD01',
+        idTurmaDisc: 'E2E-TD-01',
         orgUnitId: 'ou-Disciplina Integ SUB',
       },
     });
@@ -353,6 +354,7 @@ describe('Integracao: dados de agendamento por matricula (e2e)', () => {
             nomeDisciplina: 'Disciplina Integ SUB',
             codigoTurma: CODIGO_TURMA,
             codigoDisciplina: 'E2EINTEGD01',
+            idTurmaDisc: 'E2E-TD-01',
           },
         ],
         alocadoManual: true,
@@ -365,6 +367,7 @@ describe('Integracao: dados de agendamento por matricula (e2e)', () => {
           nomeDisciplina: 'Disciplina Integ N2',
           codigoTurma: null,
           codigoDisciplina: null,
+          idTurmaDisc: null,
         },
       ]);
       // Nada da janela repetido na prova: fica em `periodos[]`.
@@ -514,6 +517,7 @@ describe('Integracao: dados de agendamento por matricula (e2e)', () => {
             expect.objectContaining({
               codigoTurma: CODIGO_TURMA,
               codigoDisciplina: 'E2EINTEGD01',
+              idTurmaDisc: 'E2E-TD-01',
             }),
           ],
         }),

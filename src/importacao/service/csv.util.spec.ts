@@ -86,6 +86,15 @@ describe('leitura de CSV', () => {
       expect(() => exigirColunas(linhas, ['RA', 'CAMPUS'])).not.toThrow();
     });
 
+    it('aceita qualquer sinonimo da coluna, e cita o primeiro quando falta', () => {
+      const sinonimos = ['Código da Turma', 'codigoTurma'];
+      const comSinonimo = lerCsv(Buffer.from('codigoTurma;X\nT1;a\n'));
+      const sem = lerCsv(Buffer.from('Outra;X\nT1;a\n'));
+
+      expect(() => exigirColunas(comSinonimo, [sinonimos])).not.toThrow();
+      expect(() => exigirColunas(sem, [sinonimos])).toThrow(/Código da Turma/);
+    });
+
     it('recusa CSV sem linha de dados', () => {
       expect(() => exigirColunas([], ['RA'])).toThrow(BadRequestException);
     });

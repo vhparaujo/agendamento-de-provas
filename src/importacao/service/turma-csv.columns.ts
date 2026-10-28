@@ -27,6 +27,10 @@ import { coluna, LinhaCsv } from './csv.util';
  *    rotula-la com um curso so seria falso — ver o comentario em
  *    `TurmaImportada` (schema.prisma).
  *
+ * 4. **A coluna `idTurmaDisc` e OPCIONAL.** E o id da turma-disciplina no
+ *    sistema academico, que so a API de integracao devolve. Arquivo sem ela
+ *    importa normalmente, e a turma fica com `null`.
+ *
  * `coluna()` tolera diferenca de caixa e espacos no cabecalho; a lista de
  * sinonimos cobre variacoes de exportacao (com e sem acento).
  */
@@ -44,16 +48,19 @@ export const TURMA_CSV_COLUNAS = {
     'Disciplina',
     'nomeDisciplina',
   ],
+  idTurmaDisc: ['idTurmaDisc', 'Id Turma Disc', 'ID Turma Disciplina'],
 } as const;
 
-/** A coluna que precisa existir para o arquivo fazer sentido. */
-export const COLUNA_OBRIGATORIA = TURMA_CSV_COLUNAS.codigoTurma[0];
+/** A coluna que precisa existir para o arquivo fazer sentido (qualquer sinonimo). */
+export const COLUNA_OBRIGATORIA = TURMA_CSV_COLUNAS.codigoTurma;
 
 export interface TurmaMapeada {
   codigoTurma: string;
   nomeDisciplina: string;
   /** Codigo da DISCIPLINA, sem o prefixo do sistema de origem. */
   codigoEad: string | null;
+  /** Coluna opcional: `null` quando o arquivo nao a tem ou a celula esta vazia. */
+  idTurmaDisc: string | null;
 }
 
 /** Ou a turma, ou o motivo — a linha rejeitada precisa explicar o que houve. */
@@ -145,6 +152,7 @@ export function mapRowToTurma(linha: LinhaCsv): LinhaMapeada {
       codigoTurma: codigoTurma.toUpperCase(),
       nomeDisciplina: nome,
       codigoEad: disciplina,
+      idTurmaDisc: primeira(linha, TURMA_CSV_COLUNAS.idTurmaDisc) || null,
     },
   };
 }

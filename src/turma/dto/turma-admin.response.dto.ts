@@ -50,6 +50,16 @@ export class TurmaImportadaDto implements TurmaImportadaResumo {
       'em vez de criar outra.',
   })
   nomeNaPlanilha!: string | null;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    example: '45678',
+    description:
+      'Id da turma-disciplina no sistema academico, da coluna opcional ' +
+      '`idTurmaDisc` do CSV. Null = o CSV nao trouxe.',
+  })
+  idTurmaDisc!: string | null;
 }
 
 export class PaginaDeTurmasDto implements PaginaDeTurmas {

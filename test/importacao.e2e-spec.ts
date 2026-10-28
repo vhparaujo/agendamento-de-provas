@@ -171,11 +171,24 @@ describe('Importacao de CSVs (e2e)', () => {
       });
       expect(semParentese.nomeDisciplina).toBe('SAÚDE COLETIVA');
       expect(semParentese.codigoEad).toBeNull();
+      // Arquivo sem a coluna opcional idTurmaDisc: importa, e fica null.
+      expect(semParentese.idTurmaDisc).toBeNull();
 
       // reenviar nao duplica: tudo vira atualizacao
       const segunda = await subir('turmas-exemplo.csv').expect(201);
       expect(segunda.body.criadas).toBe(0);
       expect(segunda.body.atualizadas).toBe(4);
+    });
+
+    it('le a coluna opcional idTurmaDisc, e celula vazia vira null', async () => {
+      const res = await subir('turmas-com-id-turma-disc.csv').expect(201);
+      expect(res.body.rejeitadas).toEqual([]);
+
+      const turmas = await prisma.turmaImportada.findMany({
+        where: { codigoTurma: { startsWith: 'E2EIDT' } },
+        orderBy: { codigoTurma: 'asc' },
+      });
+      expect(turmas.map((t) => t.idTurmaDisc)).toEqual(['987654', null]);
     });
 
     it('rejeita as linhas ruins sem derrubar a boa', async () => {

@@ -577,6 +577,7 @@ describe('Catalogo administrativo: alunos e turmas importados (e2e)', () => {
         codigoEad: 'E2ECATEAD004',
         orgUnitId: ORG_UNIT_RENOMEAR,
         nomeNaPlanilha: NOME_PLANILHA,
+        idTurmaDisc: null,
       });
       // O aviso do cruzamento faz parte da resposta de proposito.
       expect(res.body.mensagem).toContain('AVA');

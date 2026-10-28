@@ -361,6 +361,10 @@ model TurmaImportada {
   /// orgUnitId aprendido e empatando com a renomeada no cruzamento (AMBIGUA),
   /// o que bloquearia o agendamento da disciplina.
   nomeNaPlanilha String?
+  /// Id da turma-disciplina no sistema academico (coluna OPCIONAL do CSV).
+  /// Serve so para a API de integracao identificar a turma do lado de la.
+  /// Null = o CSV nao trouxe. A reimportacao sobrescreve, como o `codigoEad`.
+  idTurmaDisc    String?
 
   importacao ImportacaoCsv? @relation(fields: [importacaoId], references: [id])
 

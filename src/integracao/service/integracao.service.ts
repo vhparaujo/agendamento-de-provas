@@ -65,6 +65,8 @@ export interface DisciplinaIntegracao {
   nomeDisciplina: string | null;
   codigoTurma: string | null;
   codigoDisciplina: string | null;
+  /** Coluna opcional do CSV de turmas: `null` quando o CSV nao a trouxe. */
+  idTurmaDisc: string | null;
 }
 
 /** Uma prova: so o que e da prova do aluno. A janela fica em `periodos[]`. */
@@ -157,7 +159,11 @@ type AgendamentoLido = Prisma.AgendamentoGetPayload<{
 
 type CodigosDaTurma = Map<
   string,
-  { codigoTurma: string; codigoDisciplina: string | null }
+  {
+    codigoTurma: string;
+    codigoDisciplina: string | null;
+    idTurmaDisc: string | null;
+  }
 >;
 
 /** O `INCLUDE_COMPLETO` com o nome do vinculo, que a lista geral precisa. */
@@ -403,7 +409,7 @@ export class IntegracaoService {
   }
 
   /**
-   * Codigo da turma e da disciplina de cada `orgUnitId` das provas, numa
+   * Codigo da turma, da disciplina e `idTurmaDisc` de cada `orgUnitId`, numa
    * consulta so. Sao os de HOJE na turma importada, e nao fotografia: a reserva
    * nunca gravou os codigos, e o `orgUnitId` (unico na tabela) e o que liga as
    * duas.
@@ -421,13 +427,22 @@ export class IntegracaoService {
 
     const turmas = await this.prisma.turmaImportada.findMany({
       where: { orgUnitId: { in: orgUnitIds } },
-      select: { orgUnitId: true, codigoTurma: true, codigoEad: true },
+      select: {
+        orgUnitId: true,
+        codigoTurma: true,
+        codigoEad: true,
+        idTurmaDisc: true,
+      },
     });
 
     return new Map(
       turmas.map((t) => [
         t.orgUnitId!,
-        { codigoTurma: t.codigoTurma, codigoDisciplina: t.codigoEad },
+        {
+          codigoTurma: t.codigoTurma,
+          codigoDisciplina: t.codigoEad,
+          idTurmaDisc: t.idTurmaDisc,
+        },
       ]),
     );
   }
@@ -485,6 +500,7 @@ function montarAgendamento(
       nomeDisciplina: d.nomeDisciplina,
       codigoTurma: codigos.get(d.orgUnitId)?.codigoTurma ?? null,
       codigoDisciplina: codigos.get(d.orgUnitId)?.codigoDisciplina ?? null,
+      idTurmaDisc: codigos.get(d.orgUnitId)?.idTurmaDisc ?? null,
     })),
     agendadoEm: confirmado.criadoEm,
     alocadoManual: agendamento.alocadoManual,

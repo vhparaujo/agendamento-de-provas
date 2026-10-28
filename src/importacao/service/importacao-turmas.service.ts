@@ -113,6 +113,7 @@ export class ImportacaoTurmasService {
                 where: { id: renomeada.id },
                 data: {
                   codigoEad: turma.codigoEad,
+                  idTurmaDisc: turma.idTurmaDisc,
                   importacaoId: importacao.id,
                 },
               });
@@ -125,6 +126,7 @@ export class ImportacaoTurmasService {
             where: chave,
             update: {
               codigoEad: turma.codigoEad,
+              idTurmaDisc: turma.idTurmaDisc,
               importacaoId: importacao.id,
             },
             create: { ...turma, importacaoId: importacao.id },

@@ -1652,6 +1652,12 @@ GSPS0N10257;PRÁTICA PROFISSIONAL E ÉTICA EM NUTRIÇÃO (1-GSPS06EAD003)
 `,` ou `;` e UTF-8/latin1 são detectados, não presumidos. `Código da Turma` é a
 única coluna exigida no cabeçalho.
 
+**`idTurmaDisc` é opcional** (28/10/2026): o id da turma-disciplina no sistema
+acadêmico, que só a API de integração devolve (em cada disciplina da prova).
+Arquivo sem a coluna, ou célula vazia, importa normalmente e o campo sai `null`.
+Reimportar sobrescreve, como o código da disciplina — um arquivo sem a coluna
+limpa o valor.
+
 **Este arquivo é quem diz quais turmas têm prova.** Nada fora dele é agendável
 (`TURMAS_FILTER_ENABLED`, default `true`).
 

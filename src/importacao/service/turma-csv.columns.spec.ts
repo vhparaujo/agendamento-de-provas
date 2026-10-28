@@ -72,8 +72,22 @@ describe('mapRowToTurma', () => {
         codigoTurma: 'GSPS0I10259',
         nomeDisciplina: 'PRÁTICA PROFISSIONAL E ÉTICA EM NUTRIÇÃO',
         codigoEad: 'GSPS06EAD003',
+        idTurmaDisc: null,
       },
     });
+  });
+
+  it('le a coluna opcional idTurmaDisc quando o arquivo a tem', () => {
+    const r = mapRowToTurma(linha({ ...BASE, idTurmaDisc: ' 123456 ' }));
+
+    expect(r.ok === true && r.turma.idTurmaDisc).toBe('123456');
+  });
+
+  it('celula vazia de idTurmaDisc vira null, e nao rejeita a linha', () => {
+    const r = mapRowToTurma(linha({ ...BASE, idTurmaDisc: '' }));
+
+    expect(r.ok).toBe(true);
+    expect(r.ok === true && r.turma.idTurmaDisc).toBeNull();
   });
 
   it('descarta o codigo da disciplina quando ele e IGUAL ao da turma', () => {

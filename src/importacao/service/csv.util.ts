@@ -87,10 +87,14 @@ export function coluna(linha: LinhaCsv, nome: string): string {
   return '';
 }
 
-/** Confere que o arquivo tem as colunas esperadas antes de processar 7 mil linhas. */
+/**
+ * Confere que o arquivo tem as colunas esperadas antes de processar 7 mil linhas.
+ * Cada obrigatoria pode ser uma lista de sinonimos: basta UM deles no cabecalho
+ * (a mesma tolerancia do mapeamento das linhas). A mensagem cita o primeiro.
+ */
 export function exigirColunas(
   linhas: LinhaCsv[],
-  obrigatorias: string[],
+  obrigatorias: (string | readonly string[])[],
 ): void {
   if (linhas.length === 0) {
     throw new BadRequestException(
@@ -102,9 +106,12 @@ export function exigirColunas(
     Object.keys(linhas[0]).map((c) => c.trim().toLowerCase()),
   );
 
-  const faltando = obrigatorias.filter(
-    (c) => !presentes.has(c.trim().toLowerCase()),
-  );
+  const faltando = obrigatorias
+    .map((c) => (typeof c === 'string' ? [c] : c))
+    .filter(
+      (nomes) => !nomes.some((n) => presentes.has(n.trim().toLowerCase())),
+    )
+    .map((nomes) => nomes[0]);
 
   if (faltando.length > 0) {
     throw new BadRequestException(

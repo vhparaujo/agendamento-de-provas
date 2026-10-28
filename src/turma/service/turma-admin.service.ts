@@ -30,6 +30,8 @@ export interface TurmaImportadaResumo {
   orgUnitId: string | null;
   /** O nome que a planilha usa, quando a turma foi renomeada. Null = nunca foi. */
   nomeNaPlanilha: string | null;
+  /** Coluna opcional do CSV. Null = o CSV nao trouxe. */
+  idTurmaDisc: string | null;
 }
 
 export interface PaginaDeTurmas {
@@ -307,4 +309,5 @@ const SELECT_RESUMO = {
   codigoEad: true,
   orgUnitId: true,
   nomeNaPlanilha: true,
+  idTurmaDisc: true,
 } satisfies Prisma.TurmaImportadaSelect;

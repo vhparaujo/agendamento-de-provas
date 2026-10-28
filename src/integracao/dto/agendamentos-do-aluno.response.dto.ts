@@ -121,6 +121,17 @@ export class DisciplinaIntegracaoDto
       'la ou o CSV nao trouxe o codigo.',
   })
   codigoDisciplina!: string | null;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    example: '123456',
+    description:
+      'Id da turma-disciplina no sistema academico, da coluna opcional ' +
+      '`idTurmaDisc` do CSV de turmas. `null` quando a turma nao esta la ou ' +
+      'o CSV nao trouxe a coluna.',
+  })
+  idTurmaDisc!: string | null;
 }
 
 export class AgendamentoIntegracaoDto implements AgendamentoIntegracao {
