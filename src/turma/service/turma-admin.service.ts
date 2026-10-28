@@ -28,6 +28,8 @@ export interface TurmaImportadaResumo {
   codigoEad: string | null;
   /** Id no D2L. Null enquanto nenhum launch tiver vindo desta turma. */
   orgUnitId: string | null;
+  /** O nome que a planilha usa, quando a turma foi renomeada. Null = nunca foi. */
+  nomeNaPlanilha: string | null;
 }
 
 export interface PaginaDeTurmas {
@@ -49,6 +51,13 @@ export interface TurmaImportadaDetalhe extends TurmaImportadaResumo {
   totalAgendamentos: number | null;
 }
 
+export interface ResultadoRenomeacao {
+  mensagem: string;
+  turma: TurmaImportadaResumo;
+  /** Agendamentos confirmados que passaram a mostrar o nome novo. */
+  agendamentosAtualizados: number;
+}
+
 const PADRAO_POR_PAGINA = 50;
 const MAXIMO_POR_PAGINA = 200;
 
@@ -57,10 +66,11 @@ const MAXIMO_POR_PAGINA = 200;
  * esta tela responde e "esta disciplina esta liberada para agendamento?", que
  * antes so se descobria abrindo o banco.
  *
- * Leitura, mais UM delete. Nada aqui EDITA turma pelo mesmo motivo dos alunos —
- * a planilha e a fonte de verdade e o proximo upload desfaria a correcao —, mas
- * apagar e outro caso: a importacao e upsert e nunca remove o que saiu do CSV,
- * entao sem este delete uma linha errada ficaria agendavel para sempre.
+ * Leitura, mais o delete e a troca de NOME. Os codigos nao se editam: eles sao
+ * o que casa a turma com a oferta do Brightspace. Apagar existe porque a
+ * importacao e upsert e nunca remove o que saiu do CSV; renomear, porque o nome
+ * e o que o aluno e a administracao leem, e reimportar com outro nome criaria
+ * uma turma nova em vez de corrigir a existente.
  */
 @Injectable()
 export class TurmaAdminService {
@@ -165,6 +175,108 @@ export class TurmaAdminService {
         'traria de volta.',
     };
   }
+
+  /**
+   * Troca o nome da disciplina sem perder nada do que ja esta ligado a turma:
+   * o id, o `orgUnitId` aprendido, o formato escolhido e as provas marcadas
+   * continuam apontando para ela — nenhum deles depende do nome.
+   *
+   * O que muda junto:
+   * - os agendamentos CONFIRMADOS desta disciplina, que guardam o nome como
+   *   fotografia (`AgendamentoDisciplina.nomeDisciplina`) e sao o que o portal
+   *   e o relatorio mostram. Cancelados e os relatorios de execucao (senhas,
+   *   grupos, special access) ficam como estavam: sao historico;
+   * - o CRUZAMENTO com o Brightspace. O nome desempata quando o codigo nao
+   *   resolve sozinho, e passa a ser comparado o nome novo — por isso o aviso
+   *   na resposta.
+   *
+   * A reimportacao nao duplica: o nome da planilha fica em `nomeNaPlanilha`, e
+   * a importacao reconhece a turma por ele (ver ImportacaoTurmasService).
+   */
+  async renomear(id: number, nome: string): Promise<ResultadoRenomeacao> {
+    const novo = nome.trim();
+
+    const turma = await this.prisma.turmaImportada.findUnique({
+      where: { id },
+      select: SELECT_RESUMO,
+    });
+
+    if (!turma)
+      throw new NotFoundException(
+        'Turma não encontrada. Atualize a página e tente de novo.',
+      );
+
+    if (novo === turma.nomeDisciplina) {
+      return {
+        mensagem: 'O nome informado é igual ao atual. Nada foi alterado.',
+        turma,
+        agendamentosAtualizados: 0,
+      };
+    }
+
+    const repetida = await this.prisma.turmaImportada.findUnique({
+      where: {
+        codigoTurma_nomeDisciplina: {
+          codigoTurma: turma.codigoTurma,
+          nomeDisciplina: novo,
+        },
+      },
+      select: { id: true },
+    });
+
+    if (repetida) {
+      throw new ConflictException(
+        `Já existe outra turma "${turma.codigoTurma} — ${novo}". Escolha outro ` +
+          'nome ou, se as duas são a mesma turma, apague a que sobrou.',
+      );
+    }
+
+    // O primeiro nome da planilha e o que vale: renomear duas vezes nao pode
+    // perder a referencia. Voltar ao nome da planilha desfaz a marca.
+    const original = turma.nomeNaPlanilha ?? turma.nomeDisciplina;
+
+    const [atualizada, agendamentos] = await this.prisma.$transaction([
+      this.prisma.turmaImportada.update({
+        where: { id },
+        data: {
+          nomeDisciplina: novo,
+          nomeNaPlanilha: novo === original ? null : original,
+        },
+        select: SELECT_RESUMO,
+      }),
+      // Sem orgUnitId nao ha agendamento ligado a turma: e por ele que a prova
+      // aponta para a disciplina.
+      ...(turma.orgUnitId
+        ? [
+            this.prisma.agendamentoDisciplina.updateMany({
+              where: {
+                orgUnitId: turma.orgUnitId,
+                agendamento: { status: StatusAgendamento.CONFIRMADO },
+              },
+              data: { nomeDisciplina: novo },
+            }),
+          ]
+        : []),
+    ]);
+
+    const agendamentosAtualizados = agendamentos?.count ?? 0;
+
+    return {
+      mensagem:
+        `Turma "${turma.codigoTurma}" renomeada de "${turma.nomeDisciplina}" ` +
+        `para "${novo}"` +
+        (agendamentosAtualizados > 0
+          ? `, e ${agendamentosAtualizados} agendamento(s) confirmado(s) ` +
+            'passaram a mostrar o nome novo.'
+          : '.') +
+        // O orgUnitId nao decide o cruzamento sozinho (turma-match.ts): mesmo
+        // com ele aprendido, o nome desempata quando o codigo nao basta.
+        ' O nome também é usado para reconhecer a disciplina no AVA: se algum ' +
+        'aluno deixar de conseguir agendá-la, deixe o nome igual ao do AVA.',
+      turma: atualizada,
+      agendamentosAtualizados,
+    };
+  }
 }
 
 function montarWhere(filtro: FiltroTurmas): Prisma.TurmaImportadaWhereInput {
@@ -194,4 +306,5 @@ const SELECT_RESUMO = {
   nomeDisciplina: true,
   codigoEad: true,
   orgUnitId: true,
+  nomeNaPlanilha: true,
 } satisfies Prisma.TurmaImportadaSelect;

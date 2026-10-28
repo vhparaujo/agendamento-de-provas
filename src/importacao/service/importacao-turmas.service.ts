@@ -17,7 +17,8 @@ const LOTE = 20;
 /**
  * Importacao das turmas reais (as que TERAO prova). Estrutura identica a de
  * alunos: auditoria em ImportacaoCsv e idempotencia — aqui pelo PAR
- * [codigoTurma, nomeDisciplina], que e o que identifica a turma.
+ * [codigoTurma, nomeDisciplina], que e o que identifica a turma. Turma
+ * renomeada pela tela e reconhecida pelo nome da planilha (`nomeNaPlanilha`).
  *
  * O mapeamento das colunas vive em turma-csv.columns.ts.
  */
@@ -92,6 +93,33 @@ export class ImportacaoTurmasService {
             where: chave,
             select: { id: true },
           });
+
+          // Turma renomeada pela tela: a planilha ainda a chama pelo nome
+          // antigo, e o par nao casa. Sem isto o upload criaria uma SEGUNDA
+          // linha, sem o orgUnitId aprendido e empatando com a renomeada no
+          // cruzamento — a disciplina deixaria de ser agendavel. O nome dado
+          // na tela e mantido.
+          if (!existente) {
+            const renomeada = await this.prisma.turmaImportada.findFirst({
+              where: {
+                codigoTurma: turma.codigoTurma,
+                nomeNaPlanilha: turma.nomeDisciplina,
+              },
+              select: { id: true },
+            });
+
+            if (renomeada) {
+              await this.prisma.turmaImportada.update({
+                where: { id: renomeada.id },
+                data: {
+                  codigoEad: turma.codigoEad,
+                  importacaoId: importacao.id,
+                },
+              });
+
+              return { criada: false };
+            }
+          }
 
           await this.prisma.turmaImportada.upsert({
             where: chave,

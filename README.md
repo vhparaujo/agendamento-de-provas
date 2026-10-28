@@ -376,6 +376,7 @@ explícita, a linha errada fica no banco para sempre — reimportar não a apaga
 | `POST` | `/alunos/:id/mesclar` | Funde o vínculo duplicado pela troca de grafia do curso |
 | `GET` | `/turmas` | Pesquisa as turmas/disciplinas do CSV — paginada |
 | `GET` | `/turmas/:id` | A turma: origem e quantos agendamentos a cobrem |
+| `PATCH` | `/turmas/:id` | Renomeia a disciplina sem perder id, `orgUnitId` nem provas marcadas |
 | `DELETE` | `/turmas/:id` | Tira a turma do catálogo — ela deixa de ser agendável |
 
 **`POST /alunos/:id/mesclar`** resolve a duplicata que a troca de grafia do curso
@@ -385,6 +386,27 @@ importação nunca apaga. O `:id` da URL é o vínculo que **fica** e `absorverI
 Recusa matrículas diferentes (400) e recusa quando os dois têm prova confirmada
 no mesmo período letivo (409); divergência de formato ou polo não bloqueia e
 volta em `avisos`.
+
+**`PATCH /turmas/:id`** renomeia a disciplina (28/10/2026) **sem perder as
+ligações**: id, `orgUnitId` aprendido, formato escolhido e provas marcadas
+continuam apontando para a turma — nenhum deles depende do nome. Os códigos não
+se editam.
+
+- **Os agendamentos CONFIRMADOS acompanham**: `AgendamentoDisciplina.nomeDisciplina`
+  (a fotografia que o portal e os relatórios mostram) recebe o nome novo, pelo
+  `orgUnitId`. Cancelados e os relatórios de execução (senhas, grupos, acesso
+  especial) ficam como estavam — são histórico.
+- ⚠️ **O nome entra no cruzamento com o Brightspace.** O `orgUnitId` não decide
+  sozinho (`turma-match.ts`): quando o código não resolve, o nome desempata, e um
+  nome que não bata com o título no AVA deixa a turma `DIVERGENTE`. A tela e a
+  resposta avisam.
+- **A reimportação não duplica.** O nome original da planilha fica em
+  `TurmaImportada.nomeNaPlanilha` (só o primeiro; voltar a ele limpa a marca). Se
+  o par `[codigoTurma, nomeDisciplina]` do CSV não casar, a importação procura
+  `codigoTurma + nomeNaPlanilha` e atualiza a renomeada, mantendo o nome da tela.
+  Sem isso nasceria uma segunda linha, sem `orgUnitId`, empatando com a renomeada
+  no cruzamento (`AMBIGUA`) — e ninguém agendaria a disciplina.
+- Nome já usado por outra turma do mesmo código: 409 (o par é único).
 
 **`DELETE /turmas/:id`** desfaz carga errada — linha duplicada, turma que entrou
 na planilha sem ter prova. O efeito é imediato: a disciplina sai do filtro final

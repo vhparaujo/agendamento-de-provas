@@ -541,7 +541,8 @@ Todos sob `{API_PREFIX}` (default `api`). Detalhe completo: `{API_PREFIX}/docs`.
 | `POST /importacao/alunos` · `/importacao/turmas` · `GET /importacao` | admin | CSVs + auditoria |
 | `GET /alunos` · `/alunos/cursos` · `/alunos/:id` | admin | Pesquisa os vínculos importados (só leitura) |
 | `POST /alunos/:id/mesclar` | admin | Funde o vínculo duplicado pela troca de grafia do curso |
-| `GET /turmas` · `/turmas/:id` | admin | Pesquisa as turmas/disciplinas do CSV (só leitura) |
+| `GET /turmas` · `/turmas/:id` | admin | Pesquisa as turmas/disciplinas do CSV |
+| `PATCH /turmas/:id` · `DELETE /turmas/:id` | admin | Renomeia a disciplina (sem perder as ligações) e tira a turma do catálogo |
 | `GET /modalidades` · `GET/POST/PATCH/DELETE /polos` · `/salas` · `/faixas` · `/sala-faixas` | admin | Estrutura física e oferta de vagas |
 | `POST /faixas/desativar-em-lote` | admin | A virada de período: desativa de uma vez as faixas até uma data. **Simula por padrão** |
 | `GET /portal/periodo` · `/portal/disciplinas` · `/portal/faixas` | aluno | O que ele pode escolher |
@@ -656,7 +657,8 @@ como opção alternativa secundária; o padrão é manual.
 Todo upload registra auditoria (`ImportacaoCsv`: tipo, arquivo, linhas, quem, quando).
 Importação **idempotente**: upsert por `[matricula, curso]` (alunos) e
 `[codigoTurma, nomeDisciplina]` (turmas). Re-subir o mesmo arquivo atualiza,
-nunca duplica.
+nunca duplica. Turma renomeada pela tela é reconhecida por
+`codigoTurma + nomeNaPlanilha` — ver "Renomear turma", abaixo.
 
 **Endpoints** (todos exigem JWT de admin):
 - `POST /api/importacao/alunos` — multipart: `arquivo` (.csv) + `modalidade`
@@ -679,6 +681,7 @@ nunca duplica.
 **São só leitura, de propósito.** A planilha é a fonte de verdade: um aluno
 editado ou criado pela API seria sobrescrito/ignorado no próximo upload sem
 ninguém perceber. Correção se faz no CSV e reimporta — que é idempotente.
+As exceções nas turmas são o `DELETE` e o renomear (ver "Renomear turma").
 
 **Os filtros são lidos à mão, sem DTO** (como no relatório de agendamentos): com
 `forbidNonWhitelisted`, um parâmetro a mais na URL derrubaria a requisição, e URL
@@ -837,6 +840,30 @@ prova marcada é o caso normal, e já está em `bloqueados`.
 **Turmas vazias = comportamento seguro.** Enquanto não houver turmas importadas, o
 default é **bloquear agendamento** (não liberar prova para disciplina errada),
 controlado por um flag claro e invertível (`TURMAS_FILTER_ENABLED`, default `true`).
+
+### Renomear turma: `PATCH /turmas/:id` (28/10/2026)
+
+Troca o nome da disciplina **sem perder as ligações**: id, `orgUnitId`
+aprendido, formato escolhido e provas marcadas continuam apontando para a
+turma — nenhum deles depende do nome. Os códigos não se editam: são eles que
+casam a turma com a oferta do Brightspace. Regra em `turma-admin.service.ts`
+(`renomear`) e na importação (`importacao-turmas.service.ts`).
+
+- **Os agendamentos CONFIRMADOS acompanham**: `AgendamentoDisciplina.nomeDisciplina`
+  (a fotografia que o portal e os relatórios mostram) recebe o nome novo, pelo
+  `orgUnitId`. Cancelados e os relatórios de execução (senhas, grupos, acesso
+  especial) ficam como estavam — são histórico.
+- ⚠️ **O nome entra no cruzamento com o Brightspace.** O `orgUnitId` não decide
+  sozinho (`turma-match.ts`): quando o código não resolve, o nome desempata, e um
+  nome que não bata com o título no AVA deixa a turma `DIVERGENTE`. A tela e a
+  resposta avisam.
+- **A reimportação não duplica.** O nome original da planilha fica em
+  `TurmaImportada.nomeNaPlanilha` (só o primeiro; voltar a ele limpa a marca). Se
+  o par `[codigoTurma, nomeDisciplina]` do CSV não casar, a importação procura
+  `codigoTurma + nomeNaPlanilha` e atualiza a renomeada, mantendo o nome da tela.
+  Sem isso nasceria uma segunda linha, sem `orgUnitId`, empatando com a renomeada
+  no cruzamento (`AMBIGUA`) — e ninguém agendaria a disciplina.
+- Nome já usado por outra turma do mesmo código: 409 (o par é único).
 
 ### O cruzamento é por CÓDIGO DA TURMA + CÓDIGO DA DISCIPLINA
 

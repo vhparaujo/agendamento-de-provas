@@ -467,6 +467,229 @@ describe('Catalogo administrativo: alunos e turmas importados (e2e)', () => {
     });
   });
 
+  /**
+   * Renomear existe porque reimportar com outro nome cria uma turma NOVA — sem
+   * o orgUnitId aprendido e empatando com a antiga no cruzamento. O que precisa
+   * ficar provado e que nada do que esta ligado a turma se perde.
+   */
+  describe('PATCH /turmas/:id — renomear sem perder as ligacoes', () => {
+    const TURMA_RENOMEAR = 'E2ECAT-T4';
+    const ORG_UNIT_RENOMEAR = 'ou-e2ecat-4';
+    const NOME_PLANILHA = 'GESTAO E2E';
+    const NOME_NOVO = 'GESTAO DE PESSOAS E2E';
+
+    let turmaId: number;
+
+    const csvDeTurmas = (linhas: string[]) =>
+      Buffer.from(
+        '\ufeffCódigo da Turma;Disciplina / Código EAD\n' +
+          linhas.join('\n') +
+          '\n',
+        'utf8',
+      );
+
+    beforeEach(async () => {
+      turmaId = (
+        await prisma.turmaImportada.create({
+          data: {
+            codigoTurma: TURMA_RENOMEAR,
+            nomeDisciplina: NOME_PLANILHA,
+            codigoEad: 'E2ECATEAD004',
+            orgUnitId: ORG_UNIT_RENOMEAR,
+          },
+        })
+      ).id;
+    });
+
+    afterEach(async () => {
+      await prisma.agendamento.deleteMany({
+        where: { disciplinas: { some: { orgUnitId: ORG_UNIT_RENOMEAR } } },
+      });
+      await prisma.salaFaixa.deleteMany({
+        where: { faixa: { poloId } },
+      });
+      await prisma.faixa.deleteMany({ where: { poloId } });
+      await prisma.sala.deleteMany({ where: { poloId } });
+      await prisma.turmaImportada.deleteMany({
+        where: { codigoTurma: TURMA_RENOMEAR },
+      });
+    });
+
+    async function agendar(status: 'CONFIRMADO' | 'CANCELADO') {
+      const ead = await prisma.modalidade.findUniqueOrThrow({
+        where: { codigo: 'EAD' },
+      });
+
+      const sala = await prisma.sala.create({
+        data: { poloId, nome: `SALA E2E RENOMEAR ${status}`, capacidade: 10 },
+      });
+      const faixa = await prisma.faixa.create({
+        data: {
+          poloId,
+          data: new Date('2026-11-11'),
+          horaInicio: status === 'CONFIRMADO' ? '08:30' : '14:00',
+          horaFim: status === 'CONFIRMADO' ? '11:30' : '17:00',
+        },
+      });
+      const salaFaixa = await prisma.salaFaixa.create({
+        data: {
+          salaId: sala.id,
+          faixaId: faixa.id,
+          modalidadeId: ead.id,
+          vagas: 10,
+          ordem: 1,
+        },
+      });
+
+      return prisma.agendamento.create({
+        data: {
+          alunoId: vinculoEadId,
+          salaFaixaId: salaFaixa.id,
+          matricula: RA_DUPLO,
+          userIdD2L: '99999',
+          periodoLetivoId: 'e2e-catalogo-periodo',
+          rodada: status === 'CONFIRMADO' ? 'N2' : 'SUB',
+          modalidadeId: ead.id,
+          poloId,
+          status,
+          disciplinas: {
+            create: {
+              orgUnitId: ORG_UNIT_RENOMEAR,
+              nomeDisciplina: NOME_PLANILHA,
+            },
+          },
+        },
+        include: { disciplinas: true },
+      });
+    }
+
+    it('troca o nome e mantem id, codigos e orgUnitId', async () => {
+      const res = await comoAdmin(
+        api()
+          .patch(`/api/turmas/${turmaId}`)
+          .send({ nomeDisciplina: NOME_NOVO }),
+      ).expect(200);
+
+      expect(res.body.turma).toEqual({
+        id: turmaId,
+        codigoTurma: TURMA_RENOMEAR,
+        nomeDisciplina: NOME_NOVO,
+        codigoEad: 'E2ECATEAD004',
+        orgUnitId: ORG_UNIT_RENOMEAR,
+        nomeNaPlanilha: NOME_PLANILHA,
+      });
+      // O aviso do cruzamento faz parte da resposta de proposito.
+      expect(res.body.mensagem).toContain('AVA');
+    });
+
+    it('atualiza o nome nos agendamentos CONFIRMADOS, e so neles', async () => {
+      const confirmado = await agendar('CONFIRMADO');
+      const cancelado = await agendar('CANCELADO');
+
+      const res = await comoAdmin(
+        api()
+          .patch(`/api/turmas/${turmaId}`)
+          .send({ nomeDisciplina: NOME_NOVO }),
+      ).expect(200);
+
+      expect(res.body.agendamentosAtualizados).toBe(1);
+
+      const [doConfirmado, doCancelado] = await Promise.all(
+        [confirmado, cancelado].map((a) =>
+          prisma.agendamentoDisciplina.findUniqueOrThrow({
+            where: { id: a.disciplinas[0].id },
+          }),
+        ),
+      );
+
+      expect(doConfirmado.nomeDisciplina).toBe(NOME_NOVO);
+      // Cancelado e historico: continua dizendo o que dizia.
+      expect(doCancelado.nomeDisciplina).toBe(NOME_PLANILHA);
+    });
+
+    it('renomear duas vezes guarda o PRIMEIRO nome da planilha, e voltar a ele limpa a marca', async () => {
+      await comoAdmin(
+        api()
+          .patch(`/api/turmas/${turmaId}`)
+          .send({ nomeDisciplina: NOME_NOVO }),
+      ).expect(200);
+
+      const segunda = await comoAdmin(
+        api()
+          .patch(`/api/turmas/${turmaId}`)
+          .send({ nomeDisciplina: 'OUTRO NOME E2E' }),
+      ).expect(200);
+
+      expect(segunda.body.turma.nomeNaPlanilha).toBe(NOME_PLANILHA);
+
+      const volta = await comoAdmin(
+        api()
+          .patch(`/api/turmas/${turmaId}`)
+          .send({ nomeDisciplina: NOME_PLANILHA }),
+      ).expect(200);
+
+      expect(volta.body.turma.nomeNaPlanilha).toBeNull();
+    });
+
+    it('reimportar a planilha com o nome antigo NAO cria outra turma', async () => {
+      await comoAdmin(
+        api()
+          .patch(`/api/turmas/${turmaId}`)
+          .send({ nomeDisciplina: NOME_NOVO }),
+      ).expect(200);
+
+      const res = await comoAdmin(
+        api()
+          .post('/api/importacao/turmas')
+          .attach(
+            'arquivo',
+            csvDeTurmas([
+              `${TURMA_RENOMEAR};${NOME_PLANILHA} (1-E2ECATEAD004)`,
+            ]),
+            'turmas-renomear.csv',
+          ),
+      ).expect(201);
+
+      expect(res.body.criadas).toBe(0);
+      expect(res.body.atualizadas).toBe(1);
+
+      const turmas = await prisma.turmaImportada.findMany({
+        where: { codigoTurma: TURMA_RENOMEAR },
+      });
+
+      expect(turmas).toHaveLength(1);
+      expect(turmas[0]).toMatchObject({
+        id: turmaId,
+        nomeDisciplina: NOME_NOVO,
+        orgUnitId: ORG_UNIT_RENOMEAR,
+      });
+    });
+
+    it('recusa (409) nome de outra turma com o mesmo codigo', async () => {
+      await prisma.turmaImportada.create({
+        data: { codigoTurma: TURMA_RENOMEAR, nomeDisciplina: NOME_NOVO },
+      });
+
+      await comoAdmin(
+        api()
+          .patch(`/api/turmas/${turmaId}`)
+          .send({ nomeDisciplina: NOME_NOVO }),
+      ).expect(409);
+    });
+
+    it('recusa (400) nome vazio', async () => {
+      await comoAdmin(
+        api().patch(`/api/turmas/${turmaId}`).send({ nomeDisciplina: '   ' }),
+      ).expect(400);
+    });
+
+    it('404 para turma inexistente', async () => {
+      await comoAdmin(
+        api().patch('/api/turmas/99999999').send({ nomeDisciplina: NOME_NOVO }),
+      ).expect(404);
+    });
+  });
+
   describe('protecao das rotas', () => {
     it.each([
       ['/api/alunos'],
@@ -480,6 +703,13 @@ describe('Catalogo administrativo: alunos e turmas importados (e2e)', () => {
 
     it('DELETE /turmas/:id exige token de admin', async () => {
       await api().delete('/api/turmas/1').expect(401);
+    });
+
+    it('PATCH /turmas/:id exige token de admin', async () => {
+      await api()
+        .patch('/api/turmas/1')
+        .send({ nomeDisciplina: 'X' })
+        .expect(401);
     });
 
     it('o token do aluno nao abre a base de alunos', async () => {

@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import type {
   PaginaDeTurmas,
+  ResultadoRenomeacao,
   TurmaImportadaDetalhe,
   TurmaImportadaResumo,
 } from '../service/turma-admin.service';
@@ -39,6 +40,16 @@ export class TurmaImportadaDto implements TurmaImportadaResumo {
       'Null = nenhum aluno entrou por esta turma ainda.',
   })
   orgUnitId!: string | null;
+
+  @ApiProperty({
+    nullable: true,
+    example: 'SAUDE COLET.',
+    description:
+      'Como a planilha chama esta turma, quando ela foi renomeada pela tela. ' +
+      'Null = nunca renomeada. E por ele que a reimportacao reconhece a turma ' +
+      'em vez de criar outra.',
+  })
+  nomeNaPlanilha!: string | null;
 }
 
 export class PaginaDeTurmasDto implements PaginaDeTurmas {
@@ -106,4 +117,24 @@ export class RemocaoTurmaDto {
       'so dura ate o proximo upload se a linha continuar no CSV.',
   })
   mensagem!: string;
+}
+
+export class RenomeacaoTurmaDto implements ResultadoRenomeacao {
+  @ApiProperty({
+    example:
+      'Turma "GSPS0I10227" renomeada de "SAUDE COLET." para "SAUDE COLETIVA", ' +
+      'e 42 agendamento(s) confirmado(s) passaram a mostrar o nome novo.',
+  })
+  mensagem!: string;
+
+  @ApiProperty({ type: TurmaImportadaDto })
+  turma!: TurmaImportadaDto;
+
+  @ApiProperty({
+    example: 42,
+    description:
+      'Agendamentos confirmados desta disciplina que passaram a mostrar o nome ' +
+      'novo. Cancelados e relatorios de execucao ficam com o nome antigo.',
+  })
+  agendamentosAtualizados!: number;
 }

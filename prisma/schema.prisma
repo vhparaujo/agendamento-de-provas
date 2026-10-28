@@ -352,6 +352,15 @@ model TurmaImportada {
   codigoEad      String? // "GSPS02EAD003" — o outro token do Code composto
   orgUnitId      String? @unique // id no D2L, aprendido nos launches
   importacaoId   Int?
+  /// Como a PLANILHA chama esta turma, quando o admin a renomeou pela tela
+  /// (`PATCH /turmas/:id`). Null = nunca renomeada: o nome e o do CSV.
+  ///
+  /// Existe para a reimportacao nao perder a turma. O upsert e pelo par
+  /// [codigoTurma, nomeDisciplina]; com o nome trocado e a planilha ainda com o
+  /// antigo, o par nao casaria e o upload criaria uma SEGUNDA linha — sem o
+  /// orgUnitId aprendido e empatando com a renomeada no cruzamento (AMBIGUA),
+  /// o que bloquearia o agendamento da disciplina.
+  nomeNaPlanilha String?
 
   importacao ImportacaoCsv? @relation(fields: [importacaoId], references: [id])
 

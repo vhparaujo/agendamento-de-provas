@@ -1,12 +1,15 @@
 import {
+  Body,
   Controller,
   Delete,
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Query,
 } from '@nestjs/common';
 import {
+  ApiBadRequestResponse,
   ApiConflictResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
@@ -17,9 +20,11 @@ import {
 } from '@nestjs/swagger';
 import { SomenteAdmin } from '../../auth/roles.decorator';
 import { TAGS } from '../../config/swagger';
+import { RenomearTurmaDto } from '../dto/turma-admin.dto';
 import {
   PaginaDeTurmasDto,
   RemocaoTurmaDto,
+  RenomeacaoTurmaDto,
   TurmaImportadaDetalheDto,
 } from '../dto/turma-admin.response.dto';
 import { TurmaAdminService } from '../service/turma-admin.service';
@@ -28,10 +33,11 @@ import { TurmaAdminService } from '../service/turma-admin.service';
  * O catalogo do que TEM prova, do jeito que o admin precisa ler: por nome de
  * disciplina, por codigo, ou pelo que ainda nao apareceu em nenhum launch.
  *
- * Leitura, mais UM delete. Editar turma aqui continua fora — a planilha e a
- * fonte de verdade e o proximo upload desfaria a correcao —, mas APAGAR nao
- * tinha substituto: a importacao e upsert e nunca remove o que saiu do CSV,
- * entao a linha errada ficava agendavel para sempre.
+ * Leitura, mais o delete e a troca de nome. APAGAR nao tinha substituto: a
+ * importacao e upsert e nunca remove o que saiu do CSV, entao a linha errada
+ * ficava agendavel para sempre. RENOMEAR tambem nao: reimportar com outro nome
+ * cria uma turma nova, sem o orgUnitId aprendido. Os codigos nao se editam —
+ * sao eles que casam a turma com a oferta do Brightspace.
  */
 @ApiTags(TAGS.TURMAS)
 @Controller('turmas')
@@ -103,6 +109,37 @@ export class TurmaAdminController {
   @ApiNotFoundResponse({ description: 'Turma nao encontrada' })
   buscar(@Param('id', ParseIntPipe) id: number) {
     return this.service.buscar(id);
+  }
+
+  @Patch(':id')
+  @ApiOperation({
+    summary: 'Renomeia a disciplina de uma turma importada',
+    description:
+      'Troca o nome **sem perder as ligacoes**: o id, o `orgUnitId` aprendido, ' +
+      'o formato escolhido e as provas marcadas continuam apontando para a ' +
+      'turma. Os agendamentos **confirmados** dela passam a mostrar o nome novo ' +
+      '(cancelados e relatorios de execucao ficam como estavam).\n\n' +
+      '⚠️ **O nome entra no cruzamento com o Brightspace** quando o codigo nao ' +
+      'resolve sozinho (`turma-match.ts`): um nome que nao bata com o titulo da ' +
+      'disciplina no AVA pode deixar a turma `DIVERGENTE` e impedir o ' +
+      'agendamento.\n\n' +
+      'A reimportacao **nao duplica**: o nome da planilha fica guardado em ' +
+      '`nomeNaPlanilha`, e o upload reconhece a turma por ele, mantendo o nome ' +
+      'dado aqui.',
+  })
+  @ApiParam({ name: 'id', type: Number, example: 214 })
+  @ApiOkResponse({ type: RenomeacaoTurmaDto })
+  @ApiBadRequestResponse({ description: 'Nome vazio ou longo demais' })
+  @ApiNotFoundResponse({ description: 'Turma nao encontrada' })
+  @ApiConflictResponse({
+    description:
+      'Ja existe outra turma com o mesmo codigo e este nome — o par e unico',
+  })
+  renomear(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: RenomearTurmaDto,
+  ) {
+    return this.service.renomear(id, dto.nomeDisciplina);
   }
 
   @Delete(':id')

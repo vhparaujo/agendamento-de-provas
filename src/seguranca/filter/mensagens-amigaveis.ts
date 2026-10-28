@@ -30,6 +30,7 @@ const ROTULOS: Record<string, string> = {
   matricula: 'matrícula',
   codigo: 'código',
   codigoTurma: 'código da turma',
+  nomeDisciplina: 'nome da disciplina',
   rodada: 'rodada',
   turno: 'turno',
   data: 'data',
